@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="560" font-family="Helvetica, Arial, sans-serif">
+  <rect width="900" height="560" fill="#f6f7fa"/>
+  <rect x="0" y="0" width="900" height="56" fill="#ffffff"/>
+  <text x="24" y="35" fill="#111725" font-size="18" font-weight="bold">Acme status</text>
+  <text x="760" y="35" fill="#1B45C9" font-size="14">Subscribe</text>
+
+  <rect x="40" y="84" width="820" height="86" fill="#fff7e6" stroke="#e2b453" rx="10"/>
+  <text x="64" y="118" fill="#8a5a00" font-size="16" font-weight="bold">🔧 Scheduled maintenance: Database maintenance — EU region</text>
+  <text x="64" y="146" fill="#8a5a00" font-size="14">Aug 19, 21:00 – 23:00 (your local time) · Affected: API, Database (EU)</text>
+
+  <text x="40" y="216" fill="#111725" font-size="16" font-weight="bold">Components</text>
+
+  <rect x="40" y="232" width="820" height="52" fill="#ffffff" stroke="#e2e8f0" rx="8"/>
+  <text x="64" y="264" fill="#111725" font-size="15">API</text>
+  <text x="770" y="264" fill="#8a5a00" font-size="18">🔧</text>
+
+  <rect x="40" y="292" width="820" height="52" fill="#ffffff" stroke="#e2e8f0" rx="8"/>
+  <text x="64" y="324" fill="#111725" font-size="15">Database (EU)</text>
+  <text x="770" y="324" fill="#8a5a00" font-size="18">🔧</text>
+
+  <rect x="40" y="352" width="820" height="52" fill="#ffffff" stroke="#e2e8f0" rx="8"/>
+  <text x="64" y="384" fill="#111725" font-size="15">Dashboard</text>
+  <circle cx="778" cy="378" r="8" fill="#16a34a"/>
+
+  <rect x="40" y="412" width="820" height="52" fill="#ffffff" stroke="#e2e8f0" rx="8"/>
+  <text x="64" y="444" fill="#111725" font-size="15">Notifications</text>
+  <circle cx="778" cy="438" r="8" fill="#16a34a"/>
+
+  <text x="40" y="512" fill="#94a3b8" font-size="12">Maintenance banner shows between start and end; component status dots are replaced by a wrench for affected components.</text>
+</svg>

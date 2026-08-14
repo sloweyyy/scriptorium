@@ -1,0 +1,25 @@
+{
+  "name": "scriptorium",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx apps/slack/src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "eval": "vitest run evals",
+    "draft": "tsx scripts/draft.ts",
+    "render:wireframes": "tsx scripts/render-wireframes.ts"
+  },
+  "devDependencies": {
+    "@scriptorium/core": "workspace:*",
+    "@scriptorium/curator": "workspace:*",
+    "@scriptorium/scribe": "workspace:*",
+    "@types/node": "^26.2.0",
+    "sharp": "^0.35.3",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

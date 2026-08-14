@@ -1,0 +1,12 @@
+{
+  "name": "@scriptorium/slack-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@scriptorium/core": "workspace:*",
+    "@scriptorium/curator": "workspace:*",
+    "@scriptorium/scribe": "workspace:*",
+    "@slack/bolt": "^5.0.0"
+  }
+}

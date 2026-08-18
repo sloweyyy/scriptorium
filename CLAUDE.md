@@ -58,14 +58,33 @@ pnpm render:wireframes  # samples/wireframes/*.svg -> .png
 
 ## Engineering TODO (in order)
 
-1. **Scribe Slack thread flow** — mention w/ PRD (file upload via `message` events +
-   `files:read` download) → contract check → draft posted in thread → feedback
-   replies → revise → ✅ approve button (Block Kit) → `publishDoc` → distill lesson →
-   lesson-approval button → `saveLesson`/`approveLesson`.
-2. **Publish → organize hook** — `publishDoc` currently writes `docs/` but only the
-   `_inbox` watcher triggers `linkRelated`/`updateMoc`; call both after publish.
-3. `samples/prd-002-*` (second PRD to demo lesson transfer) + full demo run.
-4. README: add "Design note: one agent or two?" section; record demo video.
+> **Pivot (reviewer request): Agent A (Scribe) demos through JIRA, not Slack.**
+> Curator stays on Slack. The reviewer will be invited to the Jira project and
+> will exercise Scribe himself — the Scribe surface must survive unsupervised use.
+
+1. **`packages/jira` adapter** — REST v2 (plain-text/wiki bodies; avoid v3 ADF),
+   API-token auth. Poll (~15s JQL) for new "Doc Request" issues + new comments;
+   read description + attachments (PRD .md, wireframe images); post comments.
+   Polling is the transport (no public endpoint needed, runs anywhere); a system
+   webhook fast-path can be added later behind the same handler.
+2. **Scribe Jira flow** — issue created → contract check (comment asks for missing
+   fields) → draft posted as comment (+ .md attachment) → feedback comments →
+   revise → **approve = workflow transition to "Approved"** (or `approve` comment)
+   → `publishDoc` → distill lesson → lesson proposal comment → `approve lesson`
+   comment → `approveLesson`. Idempotency: track processed comment ids in
+   `audit/`-adjacent state file; never double-post.
+3. **Publish → organize hook** — call `linkRelated` + `updateMoc` after `publishDoc`
+   (watcher only covers `_inbox`).
+4. **Cross-surface loop** — Curator's `fileGapNote` also opens a Jira "Doc Request"
+   issue: Agent B's unanswered Slack question becomes Agent A's Jira ticket.
+5. Hosting for the reviewer's async testing — single always-on container (Cloud Run
+   min-instances=1) running the Jira poller + Curator socket-mode; vault persistence
+   via push to a `vault-live` branch (or run locally during an announced window).
+6. `samples/prd-002-*` (second PRD to demo lesson transfer) + full demo run.
+7. README: "Design note: one agent or two?" + Jira-vs-Slack transport note; demo video.
+
+Slack Scribe bot (`apps/slack/src/scribe-bot.ts`) stays as a thin secondary surface —
+do not extend it further; Jira is Agent A's primary interface now.
 
 If `NOTES.local.md` exists in the repo root, read it at session start — it carries
 local working context that is not committed.

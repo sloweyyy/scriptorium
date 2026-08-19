@@ -19,6 +19,17 @@ interface IndexedNote {
   body: string;
 }
 
+/**
+ * Question words carry no signal but plenty of weight: without this, "how do I
+ * authenticate to the API?" ranks the longest documents that happen to contain
+ * "how", "do" and "the" above the one page named Authentication.
+ */
+const STOPWORDS = new Set([
+  "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do", "does", "for", "from", "how", "i",
+  "in", "is", "it", "its", "me", "my", "of", "on", "or", "our", "that", "the", "their", "there", "these",
+  "this", "to", "was", "we", "what", "when", "where", "which", "who", "why", "will", "with", "you", "your",
+]);
+
 function makeSnippet(body: string, query: string): string {
   const terms = query.toLowerCase().split(/\W+/).filter((term) => term.length >= 3);
   const haystack = body.toLowerCase();
@@ -36,7 +47,11 @@ export async function buildIndex(vault: Vault): Promise<VaultIndex> {
   const mini = new MiniSearch<IndexedNote>({
     fields: ["title", "body"],
     storeFields: ["title", "body"],
-    searchOptions: { boost: { title: 2 }, prefix: true, fuzzy: 0.2 },
+    processTerm: (term) => {
+      const normalized = term.toLowerCase();
+      return STOPWORDS.has(normalized) ? null : normalized;
+    },
+    searchOptions: { boost: { title: 3 }, prefix: true, fuzzy: 0.2 },
   });
 
   let size = 0;

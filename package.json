@@ -11,7 +11,8 @@
     "eval": "vitest run evals",
     "draft": "tsx scripts/draft.ts",
     "render:wireframes": "tsx scripts/render-wireframes.ts",
-    "jira:doctor": "tsx scripts/jira-doctor.ts"
+    "jira:doctor": "tsx scripts/jira-doctor.ts",
+    "seed:corpus": "tsx scripts/seed-corpus.ts"
   },
   "devDependencies": {
     "@scriptorium/core": "workspace:*",

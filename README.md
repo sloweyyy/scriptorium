@@ -38,6 +38,7 @@ organize and retrieve. Author ≠ archivist ≠ approver.
 pnpm install
 cp .env.example .env          # ANTHROPIC_API_KEY + the Jira block (Slack optional)
 pnpm jira:doctor              # verifies auth, JQL, comments, attachments, transitions
+pnpm seed:corpus              # load the reference corpus into the vault (Curator's demo knowledge)
 pnpm dev                      # vault watcher + Jira poller + any Slack bot with tokens
 ```
 
@@ -102,6 +103,26 @@ RUN_LLM_EVALS=1 pnpm eval     # + live grounded-Q&A evals
 4. `pnpm dev`, invite Curator to a channel, then `@Curator <question>` → a grounded
    answer with `[[citations]]`, or a filed gap note **plus a new Jira doc request**.
 
+## The demo knowledge base
+
+`corpus/` holds 63 pages retrieved from Acme's public website and its
+public developer documentation (product, channels, API reference, security/compliance,
+policies). Every file carries the `source_url` it came from and the date it was
+retrieved; nothing in it is generated. `pnpm seed:corpus` files them into
+`vault/reference/`, which is deliberately **not committed** — the retrieved corpus is the
+record, the vault copy is derived, and the assignment's own artifacts (PRDs, published
+docs, lessons, gaps) stay the visible content of the vault.
+
+That gives Curator a real knowledge base to be graded on: ask it about rate limits,
+iMessage onboarding, retention deletion or an ethical wall and it answers from those
+notes, citing each one — and when the corpus doesn't cover something, that question
+becomes a gap note and a Jira doc request.
+
+Scribe's PRDs stay the fictional **Beacon** product on purpose. A PRD describes behavior
+that does not exist yet; writing one about someone else's real product would mean
+publishing invented requirements as documentation, which is exactly what the guardrails
+in this repo exist to prevent.
+
 ## Design decisions (short version)
 
 - **Learning = human-gated lessons, not fine-tuning.** Feedback that generalizes becomes
@@ -152,6 +173,7 @@ handful of lines, and buys segregation of duties that an auditor can see.
 | `packages/jira` | REST v2 client, wiki-markup translation, comment commands, poller state |
 | `apps/agents` | the surfaces: Jira poller (Scribe) + Socket-Mode bots (Curator, thin Scribe) |
 | `vault/` | the knowledge vault (open it in Obsidian) |
+| `corpus/` | retrieved public Acme pages (read-only, each with `source_url`) |
 | `samples/` | fictional "Beacon" PRDs + wireframes for the demo |
 | `evals/` | scripted checks for every guardrail |
 

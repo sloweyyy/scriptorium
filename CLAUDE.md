@@ -16,6 +16,7 @@ pnpm eval               # contract / lint / organizer evals, no API key needed
 RUN_LLM_EVALS=1 pnpm eval   # + live grounded-Q&A evals (needs ANTHROPIC_API_KEY)
 pnpm draft <prd.md> [images...]   # full Scribe pipeline from the CLI
 pnpm render:wireframes  # samples/wireframes/*.svg -> .png
+pnpm seed:corpus        # corpus/*.md -> vault/reference/ (--inbox to let the watcher file them)
 ```
 
 ## Architecture
@@ -27,6 +28,7 @@ pnpm render:wireframes  # samples/wireframes/*.svg -> .png
 | `packages/curator` | `_inbox` watcher, organizer + MOC (idempotent regen), BM25 index (minisearch), tool-runner Q&A (`search_vault` + `read_note`), gap notes |
 | `packages/jira` | REST v2 client (search fallback, attachments, transitions), markdown↔wiki markup, comment commands, poller state (gitignored `.scriptorium-state/`) |
 | `apps/agents` | the surfaces: `scribe-jira.ts` (poller + full flow), Bolt Socket-Mode bots, `gap-ticket.ts` (cross-surface loop); manifests in `slack-manifests/` |
+| `corpus/` | retrieved public Acme pages, each with `source_url`; seeded into `vault/reference/` (gitignored, regenerate with `pnpm seed:corpus`) |
 | `vault/` | the knowledge plane — plain Obsidian folder, git history = audit trail |
 | `evals/` | vitest checks for every guardrail |
 

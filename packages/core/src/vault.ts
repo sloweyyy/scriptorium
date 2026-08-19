@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import matter from "gray-matter";
 
-export const VAULT_DIRS = ["_inbox", "prd", "design", "docs", "_lessons", "_gaps"] as const;
+export const VAULT_DIRS = ["_inbox", "prd", "design", "docs", "reference", "_lessons", "_gaps"] as const;
 export type VaultDir = (typeof VAULT_DIRS)[number];
 
 export type Frontmatter = Record<string, unknown>;

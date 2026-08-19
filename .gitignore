@@ -6,3 +6,6 @@ out/
 vault/.obsidian/workspace*
 NOTES.local.md
 .scriptorium-state/
+
+# Reference corpus is seeded on demand (pnpm seed:corpus), not committed
+vault/reference/

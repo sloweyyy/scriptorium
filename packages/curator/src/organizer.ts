@@ -4,15 +4,17 @@ import { firstHeading, slugify, type Note, type Vault } from "@scriptorium/core"
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
 
 export interface OrganizeResult {
-  action: "filed-prd" | "filed-doc" | "filed-design" | "skipped";
+  action: "filed-prd" | "filed-doc" | "filed-design" | "filed-reference" | "skipped";
   from: string;
   to?: string;
   note?: string;
 }
 
-function classifyMarkdown(note: Note): "prd" | "docs" {
+function classifyMarkdown(note: Note): "prd" | "docs" | "reference" {
   const kind = String(note.frontmatter.kind ?? "").toLowerCase();
   if (kind === "prd") return "prd";
+  // Retrieved external material: kept apart from what this team authored.
+  if (kind === "reference") return "reference";
   if (kind === "doc" || kind === "docs") return "docs";
   if (/(^|\W)prd(\W|$)/i.test(note.relPath) || /##\s*(requirements|problem)/i.test(note.body)) return "prd";
   return "docs";
@@ -39,18 +41,21 @@ export async function organizeInboxFile(vault: Vault, relPath: string): Promise<
     const note = await vault.readNote(relPath);
     const kind = classifyMarkdown(note);
     const feature = String(note.frontmatter.feature ?? firstHeading(note.body) ?? basename.replace(/\.md$/, ""));
-    const slug = slugify(feature);
+    // An explicit slug wins: retrieved pages carry stable ids and often share a title.
+    const slug = typeof note.frontmatter.slug === "string" && note.frontmatter.slug ? slugify(note.frontmatter.slug) : slugify(feature);
     const to = `${kind}/${slug}.md`;
+    const KINDS = { prd: "prd", docs: "doc", reference: "reference" } as const;
     await vault.writeNote(to, note.body, {
       ...note.frontmatter,
-      kind: kind === "prd" ? "prd" : "doc",
+      kind: KINDS[kind],
       feature,
       filed: new Date().toISOString(),
     });
     await vault.deleteFile(relPath);
     await linkRelated(vault, slug);
     await updateMoc(vault);
-    return { action: kind === "prd" ? "filed-prd" : "filed-doc", from: relPath, to };
+    const action = kind === "prd" ? "filed-prd" : kind === "reference" ? "filed-reference" : "filed-doc";
+    return { action, from: relPath, to };
   }
 
   return { action: "skipped", from: relPath, note: `unsupported file type: ${extension || "none"}` };
@@ -82,7 +87,7 @@ export async function organizePublishedDoc(vault: Vault, relPath: string): Promi
   await updateMoc(vault);
 }
 
-async function sectionFor(vault: Vault, dir: string): Promise<string[]> {
+async function sectionFor(vault: Vault, dir: string, limit?: number): Promise<string[]> {
   const lines: string[] = [];
   for (const relPath of await vault.listNotes(dir)) {
     const note = await vault.readNote(relPath);
@@ -92,21 +97,26 @@ async function sectionFor(vault: Vault, dir: string): Promise<string[]> {
       path.basename(relPath, ".md");
     lines.push(`- [[${relPath.replace(/\.md$/, "")}|${title}]]`);
   }
+  if (limit && lines.length > limit) {
+    // Retrieved reference material is bulk; the index stays a map, not a dump.
+    return [...lines.slice(0, limit), `- _…and ${lines.length - limit} more in \`${dir}/\`_`];
+  }
   return lines.length ? lines : ["- _none yet_"];
 }
 
 /** Regenerate index.md (the MOC) deterministically — idempotent by construction. */
 export async function updateMoc(vault: Vault): Promise<void> {
-  const sections: Array<[string, string]> = [
+  const sections: Array<[string, string, number?]> = [
     ["Product docs", "docs"],
     ["PRDs", "prd"],
     ["Designs", "design"],
+    ["Reference (retrieved sources)", "reference", 10],
     ["Open gaps", "_gaps"],
     ["Lessons", "_lessons"],
   ];
   const lines: string[] = ["# Vault index", "", "_Maintained by Curator._", ""];
-  for (const [heading, dir] of sections) {
-    lines.push(`## ${heading}`, "", ...(await sectionFor(vault, dir)), "");
+  for (const [heading, dir, limit] of sections) {
+    lines.push(`## ${heading}`, "", ...(await sectionFor(vault, dir, limit)), "");
   }
   await vault.writeNote("index.md", lines.join("\n"));
 }

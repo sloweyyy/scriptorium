@@ -4,6 +4,7 @@ import {
   audit,
   commitVault,
   defaultJql,
+  parseMarkdown,
   slugify,
   type AppConfig,
   type ImageInput,
@@ -153,9 +154,19 @@ async function loadSource(ctx: Ctx, issue: JiraIssue): Promise<PrdSource> {
  * Hand the inputs to Agent B: PRD and designs land in `_inbox`, where Curator's watcher
  * files and links them. Agent A's ticket becomes Agent B's knowledge without a second copy.
  */
-async function seedVault(ctx: Ctx, slug: string, source: PrdSource): Promise<void> {
+async function seedVault(ctx: Ctx, slug: string, feature: string, source: PrdSource, issueKey: string): Promise<void> {
   if (source.markdown) {
-    await fs.writeFile(ctx.vault.abs(`_inbox/${slug}.md`), source.markdown.trim() + "\n");
+    // Written through the vault with `kind: prd` set explicitly: the organizer would
+    // otherwise fall back to heuristics and could file a PRD into docs/, colliding with
+    // the very note publishDoc writes on approval.
+    const { frontmatter, body } = parseMarkdown(source.markdown);
+    await ctx.vault.writeNote(`_inbox/${slug}.md`, body, {
+      ...frontmatter,
+      kind: "prd",
+      feature,
+      jira_issue: issueKey,
+      source_ticket: ctx.client.issueUrl(issueKey),
+    });
   }
   for (const [index, image] of source.images.entries()) {
     const name = source.imageNames[index] ?? `${slug}-design-${index + 1}.png`;
@@ -242,7 +253,7 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
 
   const feature = String(contract.frontmatter.feature ?? issue.fields.summary);
   const slug = slugify(feature);
-  await seedVault(ctx, slug, source);
+  await seedVault(ctx, slug, feature, source, key);
 
   let result = await draftDoc(ctx.vault, source.markdown, source.images);
   if (!lintOk(result.lint)) {
@@ -353,20 +364,32 @@ async function proposeLesson(ctx: Ctx, key: string, approvedBy: string): Promise
   );
 }
 
-async function runPublish(ctx: Ctx, issue: JiraIssue, approvedBy: string, options: { quiet?: boolean } = {}): Promise<void> {
+async function runPublish(
+  ctx: Ctx,
+  issue: JiraIssue,
+  approvedBy: string,
+  options: { quietWhenPublished?: boolean } = {},
+): Promise<void> {
   const key = issue.key;
   const known = ctx.state.get(key);
 
+  // Approving twice (comment then transition, or the reverse) is normal — say nothing.
   if (known?.publishedPath) {
-    if (!options.quiet) {
+    if (!options.quietWhenPublished) {
       await say(ctx, key, `Already published to \`${known.publishedPath}\`. Comment \`draft\` to start a new revision.`);
     }
     return;
   }
 
+  // Approving with nothing to publish is never silent: a reviewer whose first move is
+  // dragging the ticket to Approved must be told why nothing happened.
   const draft = await ctx.state.readDraft(key);
   if (!draft) {
-    if (!options.quiet) await say(ctx, key, "Nothing to publish yet — I don't have an approved-ready draft on this ticket. Comment `draft` first.");
+    await say(
+      ctx,
+      key,
+      "I have no draft on this ticket yet, so there is nothing to publish. Attach the PRD as a `.md` file and comment `draft`.",
+    );
     return;
   }
 
@@ -525,7 +548,7 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
   const movedToApproved = status.toLowerCase() === approvedStatus && (known.lastStatus ?? "").toLowerCase() !== approvedStatus;
   if (movedToApproved) {
     const approver = (await ctx.client.lastStatusChangeAuthor(key, ctx.config.jira.approvedStatus)) ?? "a Jira approver";
-    await runPublish(ctx, issue, approver, { quiet: true });
+    await runPublish(ctx, issue, approver, { quietWhenPublished: true });
   }
 
   const refreshed = await ctx.client.getIssue(key).catch(() => issue);

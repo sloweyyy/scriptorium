@@ -19,6 +19,24 @@ afterEach(async () => {
 });
 
 describe("curator organizer", () => {
+  it("trusts an explicit kind over body heuristics, so a PRD never lands in docs/", async () => {
+    // Scribe seeds the ticket's PRD into _inbox with kind: prd. Without that, a PRD with
+    // no "## Requirements" heading would be filed to docs/<slug>.md — the exact path the
+    // approved doc is published to.
+    await vault.writeNote("_inbox/DOC-7-source.md", "# Scheduled maintenance\n\nA short brief with no requirements heading.", {
+      kind: "prd",
+      feature: "Scheduled maintenance",
+      audience: "admins",
+      user_goal: "announce downtime",
+      jira_issue: "DOC-7",
+    });
+
+    const result = await organizeInboxFile(vault, "_inbox/DOC-7-source.md");
+    expect(result.action).toBe("filed-prd");
+    expect(result.to).toBe("prd/scheduled-maintenance.md");
+    expect(await vault.exists("docs/scheduled-maintenance.md")).toBe(false);
+  });
+
   it("files a PRD from _inbox into prd/ with normalized frontmatter", async () => {
     await vault.writeNote("_inbox/dropped-prd.md", "# Widget exports\n\n## Requirements\n1. Export as CSV.", {
       kind: "prd",

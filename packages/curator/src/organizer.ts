@@ -72,6 +72,16 @@ export async function linkRelated(vault: Vault, slug: string): Promise<void> {
   }
 }
 
+/**
+ * The publish -> organize hook. Scribe writes straight into `docs/`, which the `_inbox`
+ * watcher never sees, so the librarian is called explicitly once a doc is approved.
+ */
+export async function organizePublishedDoc(vault: Vault, relPath: string): Promise<void> {
+  const slug = path.basename(relPath, ".md");
+  await linkRelated(vault, slug);
+  await updateMoc(vault);
+}
+
 async function sectionFor(vault: Vault, dir: string): Promise<string[]> {
   const lines: string[] = [];
   for (const relPath of await vault.listNotes(dir)) {

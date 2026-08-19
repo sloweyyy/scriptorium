@@ -1,0 +1,75 @@
+/**
+ * Verify the Jira side of the demo before trusting it to run unattended:
+ *   pnpm jira:doctor            # read-only checks
+ *   pnpm jira:doctor --write    # also posts a test comment + attachment on the newest issue
+ *
+ * Checks auth, which search endpoint this instance answers on, the doc-request JQL,
+ * comments, attachments (including a real authenticated download), and whether the
+ * approval transition exists.
+ */
+import { defaultJql, jiraReady, loadConfig } from "@scriptorium/core";
+import { issueStatus, jiraClient } from "@scriptorium/jira";
+
+const config = loadConfig();
+const wantsWrite = process.argv.includes("--write");
+
+if (!jiraReady(config.jira)) {
+  console.error("🚫 Jira is not configured. Fill JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT_KEY in .env");
+  process.exit(1);
+}
+
+const client = jiraClient(config.jira);
+
+console.log(`site:    ${config.jira.baseUrl}`);
+console.log(`project: ${config.jira.projectKey}`);
+
+const me = await client.myself();
+console.log(`✅ auth: ${me.displayName} (accountId ${me.accountId})`);
+
+const jql = defaultJql(config.jira);
+console.log(`\njql:     ${jql}`);
+const issues = await client.searchIssues(jql);
+console.log(`✅ search endpoint: ${client.searchEndpoint} — ${issues.length} issue(s)`);
+for (const issue of issues.slice(0, 10)) {
+  console.log(`   ${issue.key}  [${issueStatus(issue)}]  ${issue.fields.summary}`);
+}
+
+const probe = issues[0];
+if (!probe) {
+  console.log(
+    `\n⚠️  No issue matched. Create one in ${config.jira.projectKey} with the label "${config.jira.label}" and re-run.`,
+  );
+  process.exit(0);
+}
+
+console.log(`\nprobing ${probe.key}`);
+const comments = await client.listComments(probe.key);
+console.log(`✅ comments: ${comments.length}${comments.length ? ` (latest by ${comments.at(-1)?.author?.displayName})` : ""}`);
+
+const attachments = probe.fields.attachment ?? [];
+console.log(`✅ attachments: ${attachments.length}`);
+for (const attachment of attachments) console.log(`   ${attachment.filename} (${attachment.mimeType})`);
+const firstAttachment = attachments[0];
+if (firstAttachment) {
+  const bytes = await client.downloadAttachment(firstAttachment);
+  console.log(`✅ download: ${firstAttachment.filename} -> ${bytes.byteLength} bytes`);
+}
+
+const transitions = await client.listTransitions(probe.key);
+console.log(`✅ transitions: ${transitions.map((t) => `${t.name} -> ${t.to?.name ?? "?"}`).join(", ") || "none"}`);
+const approved = config.jira.approvedStatus.toLowerCase();
+const hasApproval = transitions.some((t) => t.to?.name?.toLowerCase() === approved || t.name.toLowerCase() === approved);
+console.log(
+  hasApproval
+    ? `✅ approval transition to "${config.jira.approvedStatus}" is available`
+    : `⚠️  no transition to "${config.jira.approvedStatus}" from ${issueStatus(probe)} — add that status to the workflow, or approve with the comment "approve"`,
+);
+
+if (wantsWrite) {
+  const comment = await client.addComment(probe.key, "{color:#707070}scriptorium connectivity check — write access OK.{color}");
+  console.log(`✅ posted comment ${comment.id}`);
+  await client.uploadAttachment(probe.key, "scriptorium-check.md", "# scriptorium\n\nWrite access verified.\n", "text/markdown");
+  console.log("✅ uploaded attachment scriptorium-check.md");
+}
+
+console.log("\nall checks passed.");

@@ -6,10 +6,13 @@ import { extractPrdText, stripMentions } from "./util";
 const HELP = [
   "*Scribe* — drafts user documentation from PRDs. Humans approve everything.",
   "",
-  "• `@Scribe check` + a fenced ```PRD``` block — validate the PRD against the input contract",
-  "• `@Scribe draft` — full drafting flow (landing next)",
+  "*Jira is where I work.* File a `doc-request` issue with the PRD attached and I run the whole loop there:",
+  "contract check → draft → your feedback → approval → publish → proposed house rule.",
   "",
-  "_Until Slack file intake lands, run the full pipeline locally: `pnpm draft samples/prd-001-scheduled-maintenance.md`_",
+  "Here in Slack I only do a quick contract check:",
+  "• `@Scribe check` + a fenced ```PRD``` block — validate a PRD against the input contract",
+  "",
+  "_Local dry run of the full pipeline: `pnpm draft samples/prd-001-scheduled-maintenance.md`_",
 ].join("\n");
 
 export async function startScribeBot(config: AppConfig, _vault: Vault): Promise<void> {

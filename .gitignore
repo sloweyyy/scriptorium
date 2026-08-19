@@ -5,3 +5,4 @@ out/
 .DS_Store
 vault/.obsidian/workspace*
 NOTES.local.md
+.scriptorium-state/

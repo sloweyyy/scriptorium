@@ -1,15 +1,16 @@
 # scriptorium — working notes
 
 Two-agent documentation pipeline: **Scribe** (Agent A) drafts user docs from PRDs +
-designs with a human-gated feedback/lesson loop; **Curator** (Agent B) organizes
-everything into an Obsidian-compatible vault and answers questions from it with
-citations. Both run on one chassis (one process, one vault, one audit log) with
-separate Slack identities and separate permission envelopes.
+designs with a human-gated feedback/lesson loop, working **Jira** tickets end to end;
+**Curator** (Agent B) organizes everything into an Obsidian-compatible vault and answers
+questions from it with citations in **Slack**. Both run on one chassis (one process, one
+vault, one audit log) with separate identities and separate permission envelopes.
 
 ## Commands
 
 ```bash
-pnpm dev                # vault watcher + any Slack bot with tokens in .env; local mode without tokens
+pnpm dev                # vault watcher + Jira poller + any Slack bot with tokens in .env
+pnpm jira:doctor        # verify Jira auth/JQL/comments/attachments/transitions (--write for write access)
 pnpm typecheck          # tsc --noEmit (strict) — must stay clean
 pnpm eval               # contract / lint / organizer evals, no API key needed
 RUN_LLM_EVALS=1 pnpm eval   # + live grounded-Q&A evals (needs ANTHROPIC_API_KEY)
@@ -24,7 +25,8 @@ pnpm render:wireframes  # samples/wireframes/*.svg -> .png
 | `packages/core` | Anthropic client (`claude-opus-5` default, `MODEL` env), Vault (frontmatter/wikilinks, path-escape guard), append-only audit JSONL + `commitVault` git helper, config |
 | `packages/scribe` | input contract → draft (vision) → deterministic lint → revise → publish (fail-closed); lesson store + distiller |
 | `packages/curator` | `_inbox` watcher, organizer + MOC (idempotent regen), BM25 index (minisearch), tool-runner Q&A (`search_vault` + `read_note`), gap notes |
-| `apps/slack` | two Bolt Socket-Mode bots; manifests in `slack-manifests/` |
+| `packages/jira` | REST v2 client (search fallback, attachments, transitions), markdown↔wiki markup, comment commands, poller state (gitignored `.scriptorium-state/`) |
+| `apps/agents` | the surfaces: `scribe-jira.ts` (poller + full flow), Bolt Socket-Mode bots, `gap-ticket.ts` (cross-surface loop); manifests in `slack-manifests/` |
 | `vault/` | the knowledge plane — plain Obsidian folder, git history = audit trail |
 | `evals/` | vitest checks for every guardrail |
 
@@ -50,8 +52,9 @@ pnpm render:wireframes  # samples/wireframes/*.svg -> .png
 - TypeScript strict, ESM, no build step — `tsx` runs source; workspace packages
   export `./src/index.ts`. Keep `pnpm typecheck` and `pnpm eval` green before commit.
 - Use SDK types (`Anthropic.*`, Bolt's) — don't redefine shapes.
-- Sample content is the fictional "Beacon" product only. Never put real product,
-  customer, or employer-internal content in this repo or the vault.
+- Sample content is the fictional "Beacon" product, plus `corpus/` — public
+  Acme web pages, retrieved read-only for the demo, each carrying its `source_url`.
+  Never put employer-internal or customer content in this repo or the vault.
 - Commit trailer block (both lines):
   `Co-Authored-By: Truong Le Vinh Phuc <truonglevinhphuc2006@gmail.com>`
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
@@ -62,28 +65,25 @@ pnpm render:wireframes  # samples/wireframes/*.svg -> .png
 > Curator stays on Slack. The reviewer will be invited to the Jira project and
 > will exercise Scribe himself — the Scribe surface must survive unsupervised use.
 
-1. **`packages/jira` adapter** — REST v2 (plain-text/wiki bodies; avoid v3 ADF),
-   API-token auth. Poll (~15s JQL) for new "Doc Request" issues + new comments;
-   read description + attachments (PRD .md, wireframe images); post comments.
-   Polling is the transport (no public endpoint needed, runs anywhere); a system
-   webhook fast-path can be added later behind the same handler.
-2. **Scribe Jira flow** — issue created → contract check (comment asks for missing
-   fields) → draft posted as comment (+ .md attachment) → feedback comments →
-   revise → **approve = workflow transition to "Approved"** (or `approve` comment)
-   → `publishDoc` → distill lesson → lesson proposal comment → `approve lesson`
-   comment → `approveLesson`. Idempotency: track processed comment ids in
-   `audit/`-adjacent state file; never double-post.
-3. **Publish → organize hook** — call `linkRelated` + `updateMoc` after `publishDoc`
-   (watcher only covers `_inbox`).
-4. **Cross-surface loop** — Curator's `fileGapNote` also opens a Jira "Doc Request"
-   issue: Agent B's unanswered Slack question becomes Agent A's Jira ticket.
-5. Hosting for the reviewer's async testing — single always-on container (Cloud Run
-   min-instances=1) running the Jira poller + Curator socket-mode; vault persistence
-   via push to a `vault-live` branch (or run locally during an announced window).
+1. [x] **`packages/jira` adapter** — REST v2, API-token auth, `/search/jql` with legacy
+   fallback, comments, attachment download (auth-stripped redirect) + upload,
+   transitions, changelog approver lookup, markdown↔wiki markup, comment commands.
+2. [x] **Scribe Jira flow** (`apps/agents/src/scribe-jira.ts`) — poll → first-sight
+   seeding → contract check → draft comment + `.md` attachment → feedback → revise →
+   approve (comment or transition) → `publishDoc` → lesson proposal → `approve lesson`.
+   Idempotency: processed-comment ledger + own-accountId filter in `.scriptorium-state/`.
+3. [x] **Publish → organize hook** — `organizePublishedDoc` (linkRelated + updateMoc)
+   after every publish; PRD/designs from the ticket are dropped into `_inbox` so the
+   watcher files them for Curator.
+4. [x] **Cross-surface loop** — `fileGapNote` takes an injected `openTicket`; the Slack
+   Curator wires it to Jira, so an unanswered question becomes Agent A's ticket.
+5. **Verify against the real instance** — `pnpm jira:doctor` before trusting the poller;
+   then hosting for async review (Dockerfile ships; Cloud Run min-instances=1, or an
+   announced local window). Vault persistence via push to a `vault-live` branch.
 6. `samples/prd-002-*` (second PRD to demo lesson transfer) + full demo run.
-7. README: "Design note: one agent or two?" + Jira-vs-Slack transport note; demo video.
+7. Demo video.
 
-Slack Scribe bot (`apps/slack/src/scribe-bot.ts`) stays as a thin secondary surface —
+Slack Scribe bot (`apps/agents/src/scribe-bot.ts`) stays as a thin secondary surface —
 do not extend it further; Jira is Agent A's primary interface now.
 
 If `NOTES.local.md` exists in the repo root, read it at session start — it carries

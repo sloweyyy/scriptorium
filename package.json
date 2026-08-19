@@ -6,11 +6,12 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "tsx apps/slack/src/main.ts",
+    "dev": "tsx apps/agents/src/main.ts",
     "typecheck": "tsc --noEmit",
     "eval": "vitest run evals",
     "draft": "tsx scripts/draft.ts",
-    "render:wireframes": "tsx scripts/render-wireframes.ts"
+    "render:wireframes": "tsx scripts/render-wireframes.ts",
+    "jira:doctor": "tsx scripts/jira-doctor.ts"
   },
   "devDependencies": {
     "@scriptorium/core": "workspace:*",
@@ -20,6 +21,7 @@
     "sharp": "^0.35.3",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "@scriptorium/jira": "workspace:*"
   }
 }

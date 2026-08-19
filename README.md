@@ -195,5 +195,5 @@ docker run --env-file .env -p 8080:8080 scriptorium
 - [x] Curator: organizer + MOC, watcher, grounded Q&A with citations, gap notes
 - [x] Cross-surface loop: gap note → Jira doc request
 - [x] Publish → organize hook (cross-link + re-index on approval)
-- [ ] Second sample PRD demonstrating lesson transfer
+- [x] Second sample PRD demonstrating lesson transfer (`samples/prd-002-subscriber-management.md`)
 - [ ] Demo video

@@ -9,5 +9,9 @@
     "@scriptorium/scribe": "workspace:*",
     "@slack/bolt": "^5.0.0",
     "@scriptorium/jira": "workspace:*"
+  },
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
   }
 }

@@ -8,6 +8,9 @@ importers:
 
   .:
     devDependencies:
+      '@scriptorium/agents':
+        specifier: workspace:*
+        version: link:apps/agents
       '@scriptorium/core':
         specifier: workspace:*
         version: link:packages/core

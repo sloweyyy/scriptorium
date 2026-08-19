@@ -9,6 +9,8 @@ import { organizeInboxFile, type OrganizeResult } from "./organizer";
  */
 export function watchInbox(vault: Vault, onResult: (result: OrganizeResult) => void): () => Promise<void> {
   const watcher = watch(vault.abs("_inbox"), {
+    // .gitkeep and friends are plumbing, not dropped sources.
+    ignored: (target: string) => path.basename(target).startsWith("."),
     ignoreInitial: false,
     awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
   });

@@ -11,6 +11,13 @@ describe("input contract", () => {
     expect(result.frontmatter.feature).toBe("Scheduled maintenance announcements");
   });
 
+  it("passes the second sample PRD, the one that demonstrates lesson transfer", async () => {
+    const prd = await fs.readFile("samples/prd-002-subscriber-management.md", "utf8");
+    const result = checkContract(prd);
+    expect(result.ok).toBe(true);
+    expect(result.frontmatter.feature).toBe("Status page subscriber management");
+  });
+
   it("rejects an incomplete PRD and asks for exactly the missing fields", async () => {
     const prd = await fs.readFile("samples/prd-003-incomplete.md", "utf8");
     const result = checkContract(prd);

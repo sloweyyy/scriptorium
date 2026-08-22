@@ -65,15 +65,22 @@ interface GeminiResponse {
   error?: { message?: string; status?: string };
 }
 
-/** One Vertex `:generateContent` round trip. Auth, endpoint and error shape live here only. */
-async function callGemini(body: GeminiRequest): Promise<GeminiResponse> {
+/**
+ * One Vertex `:generateContent` round trip. Auth, endpoint and error shape live here only.
+ *
+ * `accessToken` lets a caller supply its own bearer token instead of resolving Application
+ * Default Credentials. Production never passes it — ADC is the point of running on Vertex —
+ * but it makes the dialect testable without credentials, and lets the loop run somewhere
+ * that already holds a short-lived token and has no ADC to find.
+ */
+async function callGemini(body: GeminiRequest, accessToken?: string): Promise<GeminiResponse> {
   const project = process.env.VERTEX_PROJECT_ID?.trim();
   if (!project) throw new Error("VERTEX_PROJECT_ID is required for the Gemini provider.");
   const region = process.env.VERTEX_REGION?.trim() || "global";
   const host = region === "global" ? "aiplatform.googleapis.com" : `${region}-aiplatform.googleapis.com`;
   const url = `https://${host}/v1/projects/${project}/locations/${region}/publishers/google/models/${geminiModel()}:generateContent`;
 
-  const token = await auth.getAccessToken();
+  const token = accessToken ?? (await auth.getAccessToken());
   const response = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "x-goog-user-project": project },
@@ -172,6 +179,8 @@ export interface GeminiToolLoopOptions {
    */
   maxRounds?: number;
   maxTokens?: number;
+  /** Bearer token to use instead of Application Default Credentials. See `callGemini`. */
+  accessToken?: string;
 }
 
 /**
@@ -187,17 +196,21 @@ export async function runGeminiToolLoop({
   tools,
   maxRounds = 12,
   maxTokens = 4_096,
+  accessToken,
 }: GeminiToolLoopOptions): Promise<string> {
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   const contents: GeminiContent[] = [{ role: "user", parts: [{ text: prompt }] }];
 
   for (let round = 0; round < maxRounds; round += 1) {
-    const data = await callGemini({
-      systemInstruction: { parts: [{ text: system }] },
-      contents,
-      tools: [{ functionDeclarations: tools.map(declare) }],
-      generationConfig: { maxOutputTokens: maxTokens, temperature: 0.2 },
-    });
+    const data = await callGemini(
+      {
+        systemInstruction: { parts: [{ text: system }] },
+        contents,
+        tools: [{ functionDeclarations: tools.map(declare) }],
+        generationConfig: { maxOutputTokens: maxTokens, temperature: 0.2 },
+      },
+      accessToken,
+    );
 
     const candidate = data.candidates?.[0];
     assertUsableCandidate(candidate?.finishReason);

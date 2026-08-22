@@ -202,7 +202,15 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       internalBranch: env("DOCS_REPO_INTERNAL_BRANCH") ?? "vault-live",
       sshKey: env("DOCS_REPO_SSH_KEY"),
       token: env("DOCS_REPO_TOKEN"),
-      workDir: path.resolve(repoRoot, env("DOCS_REPO_WORKDIR") ?? path.join(env("STATE_DIR") ?? ".scriptorium-state", "docs-repo")),
+      /**
+       * Scratch clone, deliberately NOT under STATE_DIR.
+       *
+       * STATE_DIR is a persistent volume — in production a GCS FUSE mount — and a git work
+       * tree does not belong there: gcsfuse has no hardlinks and weak rename/lock
+       * semantics, so `git clone` into it fails. The ledger needs persistence; this clone
+       * is re-creatable from the remote on every boot.
+       */
+      workDir: path.resolve(repoRoot, env("DOCS_REPO_WORKDIR") ?? ".scriptorium-state/docs-repo"),
       slug: repoSlugFromUrl(env("DOCS_REPO_URL")),
       commitName: env("DOCS_REPO_COMMIT_NAME") ?? "scriptorium agent",
       commitEmail: env("DOCS_REPO_COMMIT_EMAIL") ?? "agent@scriptorium.local",

@@ -119,6 +119,27 @@ export async function publishApprovedDoc(
     return { comment: "_Docs repo not configured, so the vault stayed local — nothing was published to a site._", published: false };
   }
 
+  // The note this approval is about must actually be in the vault, or "nothing to push"
+  // and "already pushed" become the same answer. That is not hypothetical: a doc published
+  // on one revision, whose push then failed, is gone from the next container's vault — and
+  // the retry reported both trees "already up to date" and pushed nothing, because the repo
+  // trivially matches a vault with no note in it. Reported as a refusal, so the retry flag
+  // stays unset and the ticket says something a human can act on.
+  try {
+    await vault.readNote(input.relPath);
+  } catch {
+    return {
+      comment: [
+        `**Cannot publish \`${input.relPath}\`** — the vault copy is missing on this instance.`,
+        "",
+        "This happens when a doc was written on an earlier deployment whose push to the docs repo",
+        "never landed: the note existed only in that container. Nothing was pushed and nothing was",
+        "overwritten. Comment `draft` to regenerate it from the PRD, then `approve` again.",
+      ].join("\n"),
+      published: false,
+    };
+  }
+
   const repoDir = await ensureDocsRepo(config);
   const branch = docBranchName(input.issueKey, input.slug);
   const lines: string[] = [];

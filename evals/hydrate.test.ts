@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Vault, type AppConfig } from "@scriptorium/core";
-import { hydrateVaultFromDocsRepo } from "@scriptorium/agents";
+import { hydrateVaultFromDocsRepo, publishApprovedDoc } from "@scriptorium/agents";
 
 /**
  * Boot restore, against a real git remote on disk.
@@ -150,5 +150,65 @@ describe("boot restore", () => {
     const settings = config();
     const restored = await hydrateVaultFromDocsRepo({ ...settings, docsRepo: { ...settings.docsRepo, url: undefined } }, vault);
     expect(restored).toEqual([]);
+  });
+});
+
+describe("publishing a note the vault has lost", () => {
+  it("refuses instead of reporting both trees already up to date", async () => {
+    // A doc published on one revision whose push then failed is gone from the next
+    // container's vault. The repo then trivially "matches" a vault with no note in it, so
+    // the retry reported success and pushed nothing — and the doc was quietly unrecoverable.
+    const outcome = await publishApprovedDoc(config(), vault, {
+      issueKey: "DOC-2",
+      issueUrl: "https://example.atlassian.net/browse/DOC-2",
+      slug: "status-page-subscriber-management",
+      relPath: "docs/status-page-subscriber-management.md",
+      approvedBy: "A Reviewer",
+    });
+
+    expect(outcome.published).toBe(false);
+    expect(outcome.comment).toContain("vault copy is missing");
+    // The retry flag stays unset, and the ticket says what to do about it.
+    expect(outcome.comment).toContain("`draft`");
+  });
+
+  it("publishes normally once the note is there", async () => {
+    // A path the seeded remote does not already carry: a note the repo has but the agent
+    // never published reads as a human's file and is correctly refused, which is a
+    // different test (see publish.test.ts) than the guard above.
+    await vault.writeNote("docs/incident-timeline-embed.md", "## Overview\n\nReal content.\n", {
+      title: "Incident timeline embed",
+    });
+
+    const outcome = await publishApprovedDoc(config(), vault, {
+      issueKey: "DOC-3",
+      issueUrl: "https://example.atlassian.net/browse/DOC-3",
+      slug: "incident-timeline-embed",
+      relPath: "docs/incident-timeline-embed.md",
+      approvedBy: "A Reviewer",
+    });
+
+    expect(outcome.comment).not.toContain("vault copy is missing");
+    expect(outcome.published).toBe(true);
+  });
+
+  it("stays retryable when one tree refuses", async () => {
+    // The seeded remote carries this note without the agent's publish trailer, so the
+    // internal target reads it as a human's file and refuses. `published` must be false:
+    // a conflict is exactly the case that has to be approvable again later.
+    await vault.writeNote("docs/status-page-subscriber-management.md", "## Overview\n\nRewritten.\n", {
+      title: "Subscriber management",
+    });
+
+    const outcome = await publishApprovedDoc(config(), vault, {
+      issueKey: "DOC-2",
+      issueUrl: "https://example.atlassian.net/browse/DOC-2",
+      slug: "status-page-subscriber-management",
+      relPath: "docs/status-page-subscriber-management.md",
+      approvedBy: "A Reviewer",
+    });
+
+    expect(outcome.published).toBe(false);
+    expect(outcome.comment).toContain("Publish refused");
   });
 });

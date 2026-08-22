@@ -209,3 +209,48 @@ export async function syncFromDocsRepo(config: AppConfig, vault: Vault, paths: r
   }
   return change;
 }
+
+/**
+ * Boot-time restore: rebuild the vault from the docs repo's internal tree.
+ *
+ * This is what makes "the vault is reconstructible from the docs repo" true rather than
+ * aspirational. It reads `internal/**` — which carries the UNTRANSFORMED docs, PRDs, gap
+ * notes, house rules and index — so a fresh container comes up with the same knowledge
+ * plane it had before, and Curator can cite notes it never saw written.
+ *
+ * Only runs when the vault has no notes of its own: a restore must never overwrite local
+ * work that has not been published yet.
+ */
+export async function hydrateVaultFromDocsRepo(config: AppConfig, vault: Vault): Promise<string[]> {
+  if (!docsRepoReady(config.docsRepo)) return [];
+
+  const existing = await vault.listNotes();
+  const substantive = existing.filter((relPath) => !relPath.startsWith("_inbox/") && relPath !== "index.md");
+  if (substantive.length) return [];
+
+  const repoDir = await ensureDocsRepo(config);
+  const env = ssh(config);
+  const base = config.docsRepo.base;
+  await exec("git", ["fetch", "origin", base], { cwd: repoDir, env });
+
+  const { stdout } = await exec("git", ["ls-tree", "-r", "--name-only", `origin/${base}`, "internal/"], {
+    cwd: repoDir,
+    maxBuffer: 8_000_000,
+  });
+  const paths = stdout.split("\n").map((line) => line.trim()).filter((line) => line.endsWith(".md"));
+
+  const restored: string[] = [];
+  for (const repoPath of paths) {
+    const relPath = repoPath.slice("internal/".length);
+    if (!relPath) continue;
+    try {
+      const blob = await exec("git", ["show", `origin/${base}:${repoPath}`], { cwd: repoDir, maxBuffer: 8_000_000 });
+      const { frontmatter, body } = parseMarkdown(blob.stdout);
+      await vault.writeNote(relPath, body, frontmatter);
+      restored.push(relPath);
+    } catch {
+      // One unreadable blob must not abort the restore.
+    }
+  }
+  return restored;
+}

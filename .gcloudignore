@@ -1,0 +1,16 @@
+# Source upload for `gcloud run deploy --source`. Keep it lean and deterministic:
+# secrets come from Secret Manager, the vault is restored from the docs repo at boot.
+.git
+.gitignore
+.claude
+node_modules
+**/node_modules
+.scriptorium-state
+audit
+out
+vault/reference
+corpus
+samples/wireframes/*.png
+.env
+*.log
+.DS_Store

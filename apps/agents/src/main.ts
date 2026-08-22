@@ -1,7 +1,7 @@
 import { docsRepoReady, jiraReady, loadConfig, Vault } from "@scriptorium/core";
 import { updateMoc, watchInbox } from "@scriptorium/curator";
 import { startIngress } from "./ingress";
-import { syncFromDocsRepo } from "./docs-repo";
+import { hydrateVaultFromDocsRepo, syncFromDocsRepo } from "./docs-repo";
 import { startCuratorBot } from "./curator-bot";
 import { startScribeBot } from "./scribe-bot";
 import { startScribeJira, type ScribeJiraHandle } from "./scribe-jira";
@@ -20,6 +20,20 @@ console.log(
     config.provider === "vertex" ? `Vertex AI (${config.vertexProject}, ${config.vertexRegion})` : config.provider === "anthropic" ? "Anthropic API" : "NO PROVIDER CONFIGURED"
   }`,
 );
+
+// A fresh container has an empty vault. Restore it from the docs repo before anything
+// answers a question, so Curator can cite notes this instance never watched being written.
+if (docsRepoReady(config.docsRepo)) {
+  try {
+    const restored = await hydrateVaultFromDocsRepo(config, vault);
+    if (restored.length) {
+      await updateMoc(vault);
+      console.log(`[scriptorium] restored ${restored.length} note(s) from ${config.docsRepo.slug ?? "the docs repo"}`);
+    }
+  } catch (error) {
+    console.warn(`[scriptorium] vault restore skipped: ${error instanceof Error ? error.message : error}`);
+  }
+}
 
 const stopWatcher = watchInbox(vault, (result) => {
   console.log(`[curator] ${result.action}: ${result.from}${result.to ? ` -> ${result.to}` : ""}${result.note ? ` (${result.note})` : ""}`);

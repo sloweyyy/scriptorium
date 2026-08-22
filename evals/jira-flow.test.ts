@@ -44,6 +44,7 @@ function config(): AppConfig {
     port: 8080,
     scribe: {},
     curator: {},
+    webhook: {},
     docsRepo: { base: "main", workDir: path.join(tmpRoot, "docs-repo") },
     jira: {
       baseUrl: "https://example.atlassian.net",
@@ -115,7 +116,7 @@ afterEach(async () => {
 describe("scribe on jira", () => {
   it("adopts a new ticket and refuses an incomplete PRD instead of guessing", async () => {
     const stop = await startScribeJira(config(), vault);
-    stop();
+    stop.stop();
 
     const bodies = comments.map((comment) => comment.body);
     expect(bodies.some((body) => body.includes("How to work with me"))).toBe(true);
@@ -134,7 +135,7 @@ describe("scribe on jira", () => {
   it("says nothing on the next poll — its own comments are never read as feedback", async () => {
     const settings = config();
     const first = await startScribeJira(settings, vault);
-    first();
+    first.stop();
     const afterFirstPoll = comments.length;
     expect(afterFirstPoll).toBeGreaterThan(0);
 
@@ -142,7 +143,7 @@ describe("scribe on jira", () => {
     // agent's own, and the PRD has not changed.
     issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T10:05:00.000+0000" } };
     const second = await startScribeJira(settings, vault);
-    second();
+    second.stop();
 
     expect(comments).toHaveLength(afterFirstPoll);
   });
@@ -150,7 +151,7 @@ describe("scribe on jira", () => {
   it("retries by itself once the PRD actually changes", async () => {
     const settings = config();
     const first = await startScribeJira(settings, vault);
-    first();
+    first.stop();
     const afterFirstPoll = comments.length;
 
     // The PM fixes the frontmatter: new description, so a fresh attempt is warranted.
@@ -163,7 +164,7 @@ describe("scribe on jira", () => {
       },
     };
     const second = await startScribeJira(settings, vault);
-    second();
+    second.stop();
 
     expect(comments.length).toBeGreaterThan(afterFirstPoll);
     expect(comments.at(-1)?.body).toContain("user_goal");
@@ -187,7 +188,7 @@ describe("mention-only mode", () => {
   it("adopts an unlabelled ticket in silence — no greeting, no unsolicited draft", async () => {
     unlabelled();
     const stop = await startScribeJira(config(), vault);
-    stop();
+    stop.stop();
 
     // The poller can see it (that is the point of the widened JQL) but nobody asked for
     // anything, so it spends neither a comment nor an LLM call.
@@ -200,12 +201,12 @@ describe("mention-only mode", () => {
     unlabelled();
     const settings = config();
     const first = await startScribeJira(settings, vault);
-    first();
+    first.stop();
 
     comments.push(human("h1", "the intro should mention the retention window"));
     bumpUpdated("2026-08-20T10:10:00.000+0000");
     const second = await startScribeJira(settings, vault);
-    second();
+    second.stop();
 
     // Two humans talking to each other. Answering would be barging in.
     expect(comments.filter((comment) => comment.author.accountId === "bot-1")).toHaveLength(0);
@@ -215,13 +216,13 @@ describe("mention-only mode", () => {
     unlabelled();
     const settings = config();
     const first = await startScribeJira(settings, vault);
-    first();
+    first.stop();
     expect(comments).toHaveLength(0);
 
     comments.push(human("h1", "[~accountid:bot-1] can you draft this?"));
     bumpUpdated("2026-08-20T10:15:00.000+0000");
     const second = await startScribeJira(settings, vault);
-    second();
+    second.stop();
 
     // Substantive, not a greeting: the PRD is incomplete, so it names what it needs.
     const reply = comments.filter((comment) => comment.author.accountId === "bot-1");
@@ -261,7 +262,7 @@ describe("restart with no ledger", () => {
     };
 
     const stop = await startScribeJira(config(), vault);
-    stop();
+    stop.stop();
 
     const posted = comments.slice(3);
     // Exactly one reply: the wake after its last word. No second HELP, no redraft, and the
@@ -286,7 +287,7 @@ describe("restart with no ledger", () => {
     ];
 
     const stop = await startScribeJira(config(), vault);
-    stop();
+    stop.stop();
 
     expect(comments).toHaveLength(1);
   });

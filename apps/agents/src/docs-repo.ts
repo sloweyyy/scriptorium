@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { docsRepoReady, type AppConfig, type Vault } from "@scriptorium/core";
+import { docsRepoReady, parseMarkdown, type AppConfig, type Vault } from "@scriptorium/core";
 import { docBranchName, docPullRequestBody, openPullRequest, publishVault, type PublishToRepoResult } from "@scriptorium/publish";
 
 const exec = promisify(execFile);
@@ -143,4 +143,69 @@ export async function publishApprovedDoc(
     published: externalPublished,
     pullRequestUrl,
   };
+}
+
+export interface DocsRepoChange {
+  /** Vault notes updated from the repo — internal tree only, see below. */
+  vaultUpdated: string[];
+  /** Published docs a human edited, per ticket. Reported, never imported. */
+  externalEdited: Array<{ repoPath: string; issueKey?: string }>;
+}
+
+/**
+ * The inbound half of the round trip.
+ *
+ * Asymmetric on purpose. The internal tree is published untransformed, so a human edit
+ * there can be read straight back into the vault. The external tree is NOT: publishing
+ * rewrites `[[wikilinks]]` into relative links and strips internal frontmatter, so
+ * importing it back would overwrite a vault note with its own lossy projection. Those
+ * edits are reported on the originating ticket for a human to fold in — the honest answer,
+ * rather than a silent one-way corruption dressed up as a round trip.
+ *
+ * Reads blobs out of `origin/<base>` with `git show`, so nothing is checked out and the
+ * agent's own publish branch in the work tree is left alone.
+ */
+export async function syncFromDocsRepo(config: AppConfig, vault: Vault, paths: readonly string[]): Promise<DocsRepoChange> {
+  const change: DocsRepoChange = { vaultUpdated: [], externalEdited: [] };
+  if (!docsRepoReady(config.docsRepo)) return change;
+
+  const repoDir = await ensureDocsRepo(config);
+  const env = ssh(config);
+  const base = config.docsRepo.base;
+  await exec("git", ["fetch", "origin", base], { cwd: repoDir, env });
+
+  for (const repoPath of paths) {
+    const isInternal = repoPath.startsWith("internal/");
+    const isExternal = repoPath.startsWith("docs/");
+    if (!isInternal && !isExternal) continue;
+
+    let content: string;
+    try {
+      const { stdout } = await exec("git", ["show", `origin/${base}:${repoPath}`], { cwd: repoDir, maxBuffer: 8_000_000 });
+      content = stdout;
+    } catch {
+      // Deleted upstream. Deleting vault notes on a remote delete is not something an
+      // agent should decide by itself, so record nothing and move on.
+      continue;
+    }
+
+    if (isInternal) {
+      const relPath = repoPath.slice("internal/".length);
+      const { frontmatter, body } = parseMarkdown(content);
+      await vault.writeNote(relPath, body, { ...frontmatter, edited_in_repo: new Date().toISOString() });
+      change.vaultUpdated.push(relPath);
+      continue;
+    }
+
+    const issueKey = (() => {
+      try {
+        const value = parseMarkdown(content).frontmatter.jira_issue;
+        return typeof value === "string" ? value : undefined;
+      } catch {
+        return undefined;
+      }
+    })();
+    change.externalEdited.push({ repoPath, issueKey });
+  }
+  return change;
 }

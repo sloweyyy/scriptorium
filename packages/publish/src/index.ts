@@ -1,4 +1,5 @@
 export * from "./allowlist";
+export * from "./github";
 export * from "./links";
 export * from "./publish-repo";
 export * from "./stage";

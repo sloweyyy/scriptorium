@@ -11,6 +11,7 @@ import {
   type Vault,
 } from "@scriptorium/core";
 import { organizePublishedDoc } from "@scriptorium/curator";
+import { publishApprovedDoc } from "./docs-repo";
 import {
   issueStatus,
   jiraClient,
@@ -503,6 +504,31 @@ async function runPublish(
       "Ask Curator about it in Slack; it will answer from this note and cite it.",
     ].join("\n"),
   );
+
+  // Egress: push the allowlisted trees to the docs repo and open the PR whose merge
+  // publishes. Never fatal — a doc approved in Jira and written to the vault stays
+  // approved and written even if GitHub is unreachable.
+  try {
+    const outcome = await publishApprovedDoc(ctx.config, ctx.vault, {
+      issueKey: key,
+      issueUrl: ctx.client.issueUrl(key),
+      slug: known?.docSlug ?? relPath.replace(/^docs\//, "").replace(/\.md$/, ""),
+      relPath,
+      approvedBy,
+      appliedLessons: known?.appliedLessons,
+    });
+    await say(ctx, key, outcome.comment);
+    await audit(ctx.config.auditFile, {
+      type: outcome.published ? "docs.pushed" : "docs.push.refused",
+      actor: approvedBy,
+      issue: key,
+      relPath,
+      pullRequest: outcome.pullRequestUrl,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await say(ctx, key, `⚠️ Published to the vault, but pushing to the docs repo failed: {{${message}}}`);
+  }
 
   // Keep the board honest when the approval arrived as a comment.
   if (issueStatus(issue).toLowerCase() !== ctx.config.jira.approvedStatus.toLowerCase()) {

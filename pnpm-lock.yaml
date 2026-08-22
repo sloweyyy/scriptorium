@@ -53,6 +53,9 @@ importers:
       '@scriptorium/jira':
         specifier: workspace:*
         version: link:../../packages/jira
+      '@scriptorium/publish':
+        specifier: workspace:*
+        version: link:../../packages/publish
       '@scriptorium/scribe':
         specifier: workspace:*
         version: link:../../packages/scribe

@@ -6,9 +6,10 @@
   "dependencies": {
     "@scriptorium/core": "workspace:*",
     "@scriptorium/curator": "workspace:*",
+    "@scriptorium/jira": "workspace:*",
+    "@scriptorium/publish": "workspace:*",
     "@scriptorium/scribe": "workspace:*",
-    "@slack/bolt": "^5.0.0",
-    "@scriptorium/jira": "workspace:*"
+    "@slack/bolt": "^5.0.0"
   },
   "main": "./src/index.ts",
   "exports": {

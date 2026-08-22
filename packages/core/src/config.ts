@@ -40,6 +40,21 @@ export interface JiraSettings {
   stateDir: string;
 }
 
+export interface DocsRepoSettings {
+  /** SSH remote, e.g. git@github.com:owner/name.git */
+  url?: string;
+  /** Branch the external PR targets, and the branch the internal tree pushes to. */
+  base: string;
+  /** Deploy key — repo-scoped write, which is all pushing needs. */
+  sshKey?: string;
+  /** API token, only needed to OPEN a pull request; a deploy key cannot. */
+  token?: string;
+  /** Local clone the agent works in; lives beside the poller state, never in the vault. */
+  workDir: string;
+  /** "owner/name", derived from the URL, for the REST calls. */
+  slug?: string;
+}
+
 export interface AppConfig {
   model: string;
   /** True when either provider is configured — an API key or a Vertex project. */
@@ -54,6 +69,20 @@ export interface AppConfig {
   scribe: SlackAppTokens;
   curator: SlackAppTokens;
   jira: JiraSettings;
+  docsRepo: DocsRepoSettings;
+}
+
+export function docsRepoReady(docs: DocsRepoSettings): boolean {
+  return Boolean(docs.url && docs.workDir);
+}
+
+/** git@github.com:owner/name.git and https://github.com/owner/name(.git) both yield owner/name. */
+export function repoSlugFromUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  const match = url.match(/[:/]([^/:]+)\/([^/]+?)(?:\.git)?$/);
+  const owner = match?.[1];
+  const name = match?.[2];
+  return owner && name ? `${owner}/${name}` : undefined;
 }
 
 export function jiraReady(jira: JiraSettings): boolean {
@@ -112,6 +141,14 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       approvedStatus: env("JIRA_APPROVED_STATUS") ?? "Approved",
       pollMs: envNumber("JIRA_POLL_MS", 15_000),
       stateDir: path.resolve(repoRoot, env("STATE_DIR") ?? ".scriptorium-state"),
+    },
+    docsRepo: {
+      url: env("DOCS_REPO_URL"),
+      base: env("DOCS_REPO_BRANCH") ?? "main",
+      sshKey: env("DOCS_REPO_SSH_KEY"),
+      token: env("DOCS_REPO_TOKEN"),
+      workDir: path.resolve(repoRoot, env("DOCS_REPO_WORKDIR") ?? path.join(env("STATE_DIR") ?? ".scriptorium-state", "docs-repo")),
+      slug: repoSlugFromUrl(env("DOCS_REPO_URL")),
     },
   };
 }

@@ -44,6 +44,7 @@ function config(): AppConfig {
     port: 8080,
     scribe: {},
     curator: {},
+    docsRepo: { base: "main", workDir: path.join(tmpRoot, "docs-repo") },
     jira: {
       baseUrl: "https://example.atlassian.net",
       email: "agent@example.com",

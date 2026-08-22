@@ -42,6 +42,12 @@ export interface JiraIssue {
   fields: JiraIssueFields;
 }
 
+/** One entry from `/rest/api/2/issue/{key}/remotelink` — only what intake reads. */
+export interface JiraRemoteLink {
+  object?: { url?: string; title?: string };
+  application?: { name?: string };
+}
+
 export interface JiraTransition {
   id: string;
   name: string;

@@ -81,9 +81,17 @@ RUN_LLM_EVALS=1 pnpm eval     # + live grounded-Q&A evals
 
 ### Working a ticket (what a reviewer does)
 
-1. Create an issue, label it **`doc-request`**, attach the PRD as a `.md` file
-   (frontmatter must carry `feature`, `audience`, `user_goal`) and any wireframes as
-   PNG/JPEG/WEBP/GIF. A PRD pasted into the description works too.
+1. Create an issue, label it **`doc-request`**, and give it a PRD in whichever of these
+   is natural (checked in this order):
+   - a `.md` file attached to the ticket,
+   - a **Confluence page** linked to the ticket, or its URL in the description — read
+     with the same API token, so the agent's account needs Confluence access on the
+     site; a later edit to the page is picked up by commenting `draft`,
+   - the PRD written straight into the issue description.
+
+   Wherever it lives, it must state `feature`, `audience` and `user_goal` — as YAML
+   frontmatter, as labeled lines (`Audience: workspace admins`), or as headings with the
+   answer underneath. Nothing else is guessed. Wireframes attach as PNG/JPEG/WEBP/GIF.
 2. Scribe comments within ~15s: the contract questions if the PRD is incomplete,
    otherwise a draft (in the comment and attached as `.md`), its lint result, and which
    house rules it applied.

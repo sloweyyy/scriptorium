@@ -34,3 +34,49 @@ describe("input contract", () => {
     expect(result.missing.map((field) => field.key)).toEqual(["feature"]);
   });
 });
+
+describe("contract fields written the way humans write them", () => {
+  it("accepts labeled lines in the body — PMs do not write YAML", () => {
+    // The shape a PM actually types into a Jira description or a Confluence page.
+    const prd = [
+      "# Incident timeline embed",
+      "",
+      "**Feature:** Incident timeline embed",
+      "Audience: workspace admins",
+      "- user goal — embed a read-only incident timeline in a status page",
+      "",
+      "The widget shows...",
+    ].join("\n");
+
+    const result = checkContract(prd);
+    expect(result.ok).toBe(true);
+    // Found values are folded into the frontmatter, so the slug and the seeded vault
+    // note see one answer regardless of where the author put it.
+    expect(result.frontmatter.feature).toBe("Incident timeline embed");
+    expect(result.frontmatter.audience).toBe("workspace admins");
+    expect(result.frontmatter.user_goal).toContain("read-only incident timeline");
+  });
+
+  it("accepts a heading with the answer under it", () => {
+    const prd = ["# PRD", "", "## Audience", "", "Workspace admins.", "", "feature: Timeline", "goal: embed it"].join("\n");
+    const result = checkContract(prd);
+    expect(result.ok).toBe(true);
+    expect(result.frontmatter.audience).toBe("Workspace admins.");
+  });
+
+  it("does not mine an answer out of prose — explicit or missing, nothing between", () => {
+    // "audience" appearing mid-sentence is not a declaration, and an empty section is
+    // not an answer. Fail-closed did not get softer; only the spelling of "present" did.
+    const prd = ["# PRD", "", "We should think about the audience for this feature.", "", "## User goal", "", "## Next section", "content"].join("\n");
+    const result = checkContract(prd);
+    expect(result.ok).toBe(false);
+    expect(result.missing.map((field) => field.key).sort()).toEqual(["audience", "feature", "user_goal"]);
+  });
+
+  it("frontmatter still wins over a conflicting body label", () => {
+    const prd = ["---", "audience: integrators", "feature: X", "user_goal: y", "---", "", "Audience: admins"].join("\n");
+    const result = checkContract(prd);
+    expect(result.ok).toBe(true);
+    expect(result.frontmatter.audience).toBe("integrators");
+  });
+});

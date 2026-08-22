@@ -28,6 +28,10 @@ let issue: Record<string, unknown>;
 let moves: string[];
 /** Columns the stubbed workflow offers; empty models a board the agent cannot drive. */
 let board: string[];
+/** Storage XHTML served for any Confluence page fetch; undefined -> 403 (restricted). */
+let confluenceStorage: string | undefined;
+/** Remote links on the issue, as Jira returns them. */
+let remoteLinks: Array<{ object: { url: string; title?: string } }>;
 
 /** A PRD as Jira's editor stores it: wiki markup, with `---` frontmatter fences rewritten as `----`. */
 function prdInJira(...frontmatter: string[]): string {
@@ -88,6 +92,11 @@ function stubJira(): void {
       comments.push(posted);
       return json(posted);
     }
+    if (url.includes("/remotelink")) return json(remoteLinks);
+    if (url.includes("/wiki/rest/api/content/")) {
+      if (confluenceStorage === undefined) return new Response('{"message":"restricted"}', { status: 403 });
+      return json({ title: "Beacon PRD", body: { storage: { value: confluenceStorage } } });
+    }
     if (url.includes("/transitions") && method === "GET") {
       return json({ transitions: board.map((name, index) => ({ id: String(index + 1), name, to: { name } })) });
     }
@@ -113,6 +122,8 @@ beforeEach(async () => {
   await vault.ensure();
   comments = [];
   moves = [];
+  confluenceStorage = undefined;
+  remoteLinks = [];
   board = ["In Progress", "In Review", "Approved", "Done"];
   issue = {
     id: "1",
@@ -311,5 +322,77 @@ describe("restart with no ledger", () => {
     stop.stop();
 
     expect(comments).toHaveLength(1);
+  });
+});
+
+describe("prd in confluence", () => {
+  it("reads the PRD off the linked page and names it as the source", async () => {
+    // The ticket carries no attachment and no description PRD — just the remote link
+    // Jira creates when a Confluence page is linked. The page itself is a natural PRD:
+    // bold labels, no YAML. Incomplete on purpose, so the refusal proves which source
+    // was read without needing a model.
+    remoteLinks = [{ object: { url: "https://example.atlassian.net/wiki/spaces/PROD/pages/98311/Beacon+PRD" } }];
+    confluenceStorage = "<h1>Beacon PRD</h1><p><strong>Feature:</strong> Incident timeline embed</p>";
+    issue = { ...issue, fields: { ...(issue.fields as object), description: "" } };
+
+    const stop = await startScribeJira(config(), vault);
+    stop.stop();
+
+    const refusal = comments.map((comment) => comment.body).find((body) => body.includes("can't draft"));
+    expect(refusal).toBeDefined();
+    expect(refusal).toContain("Confluence page");
+    expect(refusal).toContain("Beacon PRD");
+    // It asks only for what the page did not answer — feature was found as a bold label.
+    expect(refusal).toContain("audience");
+    expect(refusal).not.toContain("*feature* —");
+  });
+
+  it("drafts nothing and says why when the linked page is restricted", async () => {
+    // A pointed-at page the account cannot read is a permissions problem, and "attach a
+    // .md file" is the wrong advice for it. The agent has to say what is actually wrong.
+    issue = {
+      ...issue,
+      fields: {
+        ...(issue.fields as object),
+        description: "PRD: https://example.atlassian.net/wiki/spaces/PROD/pages/98311/Beacon+PRD",
+      },
+    };
+    confluenceStorage = undefined;
+
+    const stop = await startScribeJira(config(), vault);
+    stop.stop();
+
+    const bodies = comments.map((comment) => comment.body);
+    expect(bodies.some((body) => body.includes("Confluence page I can't read"))).toBe(true);
+    expect(await vault.listNotes("docs")).toHaveLength(0);
+  });
+
+  it("prefers a .md attachment over the linked page", async () => {
+    // Priority is fidelity: an attached markdown file is the author's exact bytes.
+    remoteLinks = [{ object: { url: "https://example.atlassian.net/wiki/spaces/PROD/pages/98311/Beacon+PRD" } }];
+    confluenceStorage = "<p><strong>Feature:</strong> The wrong source</p>";
+    issue = {
+      ...issue,
+      fields: {
+        ...(issue.fields as object),
+        description: "",
+        attachment: [
+          {
+            id: "att-1",
+            filename: "prd.md",
+            mimeType: "text/markdown",
+            content: "https://example.atlassian.net/rest/api/2/attachment/content/att-1",
+          },
+        ],
+      },
+    };
+
+    const stop = await startScribeJira(config(), vault);
+    stop.stop();
+
+    const refusal = comments.map((comment) => comment.body).find((body) => body.includes("can't draft"));
+    expect(refusal).toBeDefined();
+    expect(refusal).toContain("the attachment");
+    expect(refusal).not.toContain("Confluence");
   });
 });

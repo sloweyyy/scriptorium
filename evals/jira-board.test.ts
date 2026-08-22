@@ -227,6 +227,34 @@ describe("board transitions", () => {
     expect(comments.some((comment) => comment.body.includes("Incident timeline embed"))).toBe(true);
   });
 
+  it("reaches Done on a push-only retry too, not just on the first approval", async () => {
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+
+    comments.push(human("h1", "approve"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T13:00:00.000+0000" } };
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+    expect(status()).toBe("Done");
+
+    // The reviewer asks for one more change, so the ticket walks the board again — and the
+    // vault copy stays published, which puts the next approval on the retry path.
+    comments.push(human("h2", "say which timezone the window is quoted in"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T14:00:00.000+0000" } };
+    const third = await startScribeJira(settings, vault);
+    third.stop();
+    expect(status()).toBe("In Review");
+
+    comments.push(human("h3", "approve"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T15:00:00.000+0000" } };
+    const fourth = await startScribeJira(settings, vault);
+    fourth.stop();
+
+    // Published and pushed, so "In Review" would be a column with nothing left to review.
+    expect(status()).toBe("Done");
+  });
+
   it("never re-announces a move the ticket is already in", async () => {
     issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "In Progress" } } };
     const stop = await startScribeJira(config(), vault);

@@ -200,7 +200,11 @@ export async function publishApprovedDoc(
 
   return {
     comment: [heading, "", ...lines, "", refused ? "Nothing was force-pushed. Reconcile the diverged files and comment `approve` again." : "The vault note is the source; the site builds from the repo."].join("\n"),
-    published: externalPublished,
+    // "The egress is done", which is not the same as "this call pushed something". A
+    // re-approval finds the external tree already up to date and reports `unchanged`;
+    // reading that as failure left the retry flag unset forever, so every later `approve`
+    // re-ran the whole push and the terminal "already published" reply was unreachable.
+    published: landed(external.push.status) && landed(internal.push.status),
     pullRequestUrl,
   };
 }
@@ -288,9 +292,15 @@ export async function syncFromDocsRepo(config: AppConfig, vault: Vault, paths: r
 export async function hydrateVaultFromDocsRepo(config: AppConfig, vault: Vault): Promise<string[]> {
   if (!docsRepoReady(config.docsRepo)) return [];
 
-  const existing = await vault.listNotes();
-  const substantive = existing.filter((relPath) => !relPath.startsWith("_inbox/") && relPath !== "index.md");
-  if (substantive.length) return [];
+  // Restore what is MISSING rather than bailing on a non-empty vault. The all-or-nothing
+  // guard that used to live here never fired in production: the image ships a committed
+  // `vault/docs/*.md`, so the vault was never empty on boot and the restore never ran. The
+  // notes that matter most are exactly the ones no image can carry — `_lessons/` and
+  // `_gaps/`, both written after the image was built — so an approved house rule silently
+  // stopped shaping drafts at the next deploy while still rendering on the internal site.
+  // Existing notes are left alone: the repo is authoritative for what was published, but
+  // it has no claim on a vault someone is working in locally.
+  const existing = new Set(await vault.listNotes());
 
   const repoDir = await ensureDocsRepo(config);
   const env = await ssh(config);
@@ -306,7 +316,7 @@ export async function hydrateVaultFromDocsRepo(config: AppConfig, vault: Vault):
   const restored: string[] = [];
   for (const repoPath of paths) {
     const relPath = repoPath.slice("internal/".length);
-    if (!relPath) continue;
+    if (!relPath || existing.has(relPath)) continue;
     try {
       const blob = await exec("git", ["show", `origin/${base}:${repoPath}`], { cwd: repoDir, maxBuffer: 8_000_000 });
       const { frontmatter, body } = parseMarkdown(blob.stdout);

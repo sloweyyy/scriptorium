@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { JiraComment } from "./types";
 
 /**
  * Per-issue resume state for the poller.
@@ -16,6 +17,14 @@ export interface IssueState {
   lastStatus?: string;
   /** Every comment id already acted on — including the agent's own posts, so it never answers itself. */
   processedComments: string[];
+  /**
+   * True once the agent has taken part here: drafted, published, or answered a mention.
+   *
+   * On a ticket without the auto-draft label this is the line between "someone else's
+   * conversation" and "a thread I am in": plain feedback before engagement is not
+   * addressed to the agent and must not trigger a revise.
+   */
+  engaged?: boolean;
   /** Contract fields already asked about, so the same question is not posted twice. */
   askedForFields?: string[];
   /** Attachments + description at the last drafting attempt — a retry only runs when the inputs change. */
@@ -39,6 +48,29 @@ interface StateFile {
 }
 
 const EMPTY: StateFile = { version: 1, issues: {} };
+
+/**
+ * The downtime rule, for a ticket whose ledger was lost but which the agent has clearly
+ * worked before: **everything up to and including the agent's own last comment is
+ * history; everything after it is unprocessed.**
+ *
+ * Both alternatives are bugs. Marking the whole thread processed swallows a mention
+ * posted while the agent was down — the exact silence this surface exists to avoid.
+ * Marking nothing replays pre-restart feedback and posts a duplicate revision.
+ *
+ * With no comment of its own the agent has never spoken here, so there is no cutoff and
+ * nothing is history: a `@Scribe` typed before the agent ever polled still gets answered.
+ */
+export function splitAtLastOwnComment(
+  comments: JiraComment[],
+  botAccountId?: string,
+): { history: JiraComment[]; unprocessed: JiraComment[] } {
+  let cutoff = -1;
+  for (const [index, comment] of comments.entries()) {
+    if (botAccountId && comment.author?.accountId === botAccountId) cutoff = index;
+  }
+  return { history: comments.slice(0, cutoff + 1), unprocessed: comments.slice(cutoff + 1) };
+}
 
 export class JiraState {
   private queue: Promise<void> = Promise.resolve();

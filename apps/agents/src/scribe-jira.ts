@@ -18,9 +18,12 @@ import {
   jiraToMarkdown,
   markdownToJira,
   parseCommand,
+  splitAtLastOwnComment,
+  type JiraAttachment,
   type JiraClient,
   type JiraComment,
   type JiraIssue,
+  type IssueState,
 } from "@scriptorium/jira";
 import {
   approveLesson,
@@ -44,6 +47,12 @@ import {
  * Transport is polling, so the agent runs anywhere without a public endpoint; nothing
  * else about the pipeline changes — contract → draft → lint → revise → publish is the
  * same code the CLI and Slack call.
+ *
+ * Two modes, decided by the auto-draft label (`JIRA_LABEL`), not by the query:
+ * - **labelled** — the ticket is a doc request: greet it and draft from the PRD unasked;
+ * - **unlabelled** — mention-only: adopt it silently and never spend an LLM call until a
+ *   human says the agent's name or types a command. The poller watches the whole project
+ *   so that a mention is never met with silence, which is the one unforgivable failure.
  */
 
 interface Ctx {
@@ -72,6 +81,7 @@ const HELP = [
   "- `approve lesson L-001` — turn feedback into a house rule that shapes every future draft",
   "- `reject lesson L-001` — discard the proposed rule",
   "- `draft` — start over from the PRD",
+  "- **@ me** — mention me on any ticket in this project and I'll answer, drafted or not",
   "- `help` — this message",
 ].join("\n");
 
@@ -85,6 +95,33 @@ const NO_PRD = [
   "It must carry YAML frontmatter with `feature`, `audience` and `user_goal` — I refuse to guess those.",
   "Wireframes help: attach them as PNG, JPEG, WEBP or GIF and I will read them.",
 ].join("\n");
+
+/** The label is the auto-draft trigger: with it, the agent drafts unasked; without it, only on request. */
+function autoDrafts(ctx: Ctx, issue: JiraIssue): boolean {
+  const label = ctx.config.jira.label.toLowerCase();
+  return (issue.fields.labels ?? []).some((candidate) => candidate.toLowerCase() === label);
+}
+
+/** Is the agent part of this ticket yet? Until it is, plain feedback here is not addressed to it. */
+function engaged(known: IssueState | undefined): boolean {
+  return Boolean(known?.engaged || known?.hasDraft || known?.publishedPath);
+}
+
+const DRAFT_ATTACHMENT = /^draft-(.+)\.md$/i;
+
+/**
+ * The draft the agent last attached, newest first — the only durable record of a draft
+ * that lives outside the gitignored state directory, and therefore what a restart with a
+ * lost ledger reconstructs from.
+ */
+function lastDraftAttachment(issue: JiraIssue): { attachment: JiraAttachment; slug: string } | undefined {
+  return (issue.fields.attachment ?? [])
+    .flatMap((attachment) => {
+      const slug = attachment.filename.match(DRAFT_ATTACHMENT)?.[1];
+      return slug ? [{ attachment, slug }] : [];
+    })
+    .sort((a, b) => (b.attachment.created ?? "").localeCompare(a.attachment.created ?? ""))[0];
+}
 
 /**
  * What the ticket offered as input last time. Re-drafting is driven off this, so the
@@ -300,8 +337,11 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
   const key = issue.key;
   const draft = await ctx.state.readDraft(key);
   if (!draft) {
-    // Feedback before there is anything to revise — read it as "get started".
-    await runDraft(ctx, issue);
+    // Feedback before there is anything to revise — read it as "get started". Forced,
+    // because the state may legitimately claim `hasDraft` (reconstructed from the
+    // ticket's own attachment after a restart) while the local copy is gone: an
+    // unforced runDraft would then return early and answer nothing at all.
+    await runDraft(ctx, issue, { force: true });
     return;
   }
   if (!ctx.config.hasModelAccess) {
@@ -328,6 +368,50 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
     }),
   );
   await audit(ctx.config.auditFile, { type: "jira.draft.revised", actor: "scribe", issue: key, feedback });
+}
+
+/**
+ * Someone said the agent's name. This path must never end in silence — that is the whole
+ * reason the poller looks at unlabelled tickets at all.
+ *
+ * With no draft yet, the answer is an attempt: `runDraft` either posts a draft or names
+ * exactly what it is missing (no PRD, or the contract fields it refuses to guess). With a
+ * draft already on the ticket, the answer is where things stand and what to type next.
+ */
+async function runWake(ctx: Ctx, issue: JiraIssue): Promise<void> {
+  const key = issue.key;
+  const known = ctx.state.get(key);
+  // The mention is the invitation: from here on this ticket is a conversation the agent
+  // is in, so plain feedback that follows applies even without the auto-draft label.
+  await ctx.state.patch(key, { engaged: true });
+
+  if (known?.publishedPath) {
+    await say(
+      ctx,
+      key,
+      `I'm here. This ticket is already published to \`${known.publishedPath}\` — send feedback and comment \`draft\` if you want another revision, or \`help\` for the whole vocabulary.`,
+    );
+    return;
+  }
+
+  if (known?.hasDraft) {
+    await say(
+      ctx,
+      key,
+      [
+        `I'm here. There's a draft on this ticket already (attached as \`draft-${known.docSlug ?? slugify(issue.fields.summary)}.md\`).`,
+        "",
+        "Send feedback in plain English and I'll revise it, or comment `approve` to publish it to the vault. `help` lists everything.",
+      ].join("\n"),
+    );
+    return;
+  }
+
+  // A human asked, so re-answer even if the same contract gap was reported before:
+  // `askedForFields` exists to stop the poller repeating itself, not to stop the agent
+  // replying to a person.
+  await ctx.state.patch(key, { askedForFields: [] });
+  await runDraft(ctx, issue, { force: true });
 }
 
 async function proposeLesson(ctx: Ctx, key: string, approvedBy: string): Promise<void> {
@@ -476,26 +560,95 @@ async function runLessonDecision(
   await say(ctx, key, `**Lesson ${id} rejected** by ${actor} — deleted from the vault. Nothing was learned from it.`);
 }
 
-async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
+/** Rebuild what the ledger lost from the evidence that outlives it: the ticket itself and the vault. */
+async function recoverState(ctx: Ctx, issue: JiraIssue): Promise<IssueState> {
   const key = issue.key;
-  const status = issueStatus(issue);
-  const known = ctx.state.get(key);
+  const attached = lastDraftAttachment(issue);
+  // The inputs it has already judged. Without this the tail retry re-posts NO_PRD or the
+  // same contract questions on a ticket it greeted but could not draft — a duplicate, not
+  // a retry. A wake still answers (it forces the draft), and if the PRD actually changed
+  // during the downtime the fingerprint differs and the retry happens by itself.
+  const patch: Partial<IssueState> = { engaged: true, sourceFingerprint: sourceFingerprint(issue) };
 
-  if (!known) {
-    // First sight: adopt the issue where it stands. Existing comments are history, not
-    // instructions, and an issue already sitting in the approved column is not a new approval.
-    const history = await ctx.client.listComments(key);
-    await ctx.state.seed(key, status);
+  if (attached) {
+    patch.hasDraft = true;
+    patch.docSlug = attached.slug;
+    patch.sourcePrd = `prd/${attached.slug}`;
+    const published = `docs/${attached.slug}.md`;
+    if (await ctx.vault.exists(published)) patch.publishedPath = published;
+    try {
+      // Pull the markdown back down so the next feedback revises the draft the reviewer
+      // can actually see, rather than quietly starting a different one.
+      const bytes = await ctx.client.downloadAttachment(attached.attachment);
+      await ctx.state.saveDraft(key, bytes.toString("utf8"));
+    } catch {
+      // The attachment is still proof that a draft exists; runRevise force-drafts when the
+      // local copy is missing, so a failed download degrades to a redraft, not to silence.
+    }
+  }
+  return ctx.state.patch(key, patch);
+}
+
+/**
+ * First sight of a ticket — three cases, and the difference between them is this step.
+ *
+ * `handled` means the ticket is finished for this poll; otherwise the caller runs the
+ * normal comment loop over whatever was left unprocessed.
+ */
+async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{ known: IssueState; handled: boolean }> {
+  const key = issue.key;
+  const history = await ctx.client.listComments(key);
+  const seeded = await ctx.state.seed(key, status);
+  const { history: settled, unprocessed } = splitAtLastOwnComment(history, ctx.botAccountId);
+
+  // (1) The agent has comments here: this is a restart on a ticket it already worked, not
+  // a new ticket. Reconstruct instead of re-greeting and re-drafting, and apply the
+  // downtime rule — everything up to its own last word is history, everything after it
+  // still needs answering.
+  if (settled.length) {
+    await ctx.state.markProcessed(key, settled.map((comment) => comment.id));
+    const known = await recoverState(ctx, issue);
+    console.log(`[scribe] ${key}: adopted after a restart, ${unprocessed.length} comment(s) to catch up on`);
+    return { known, handled: false };
+  }
+
+  // (2) Labelled: a doc request. Greet it and draft from the PRD. The whole thread counts
+  // as history because the greeting plus a draft already answers anything it asked.
+  if (autoDrafts(ctx, issue)) {
     await ctx.state.markProcessed(key, history.map((comment) => comment.id));
     await say(ctx, key, `${HELP}\n\nReading this ticket now…`);
     await runDraft(ctx, issue);
-    await ctx.state.patch(key, { lastStatus: status, lastUpdated: issue.fields.updated, lastError: undefined });
-    return;
+    const known = await ctx.state.patch(key, { lastStatus: status, lastUpdated: issue.fields.updated, lastError: undefined });
+    return { known, handled: true };
+  }
+
+  // (3) Unlabelled: mention-only. Adopt in silence — no comment, no draft, no LLM call on
+  // a ticket nobody pointed at the agent. The existing comments stay unprocessed on
+  // purpose: with no comment of its own there is no cutoff, so a `@Scribe` typed before
+  // the agent ever polled still gets an answer. Plain feedback among them is dropped by
+  // the not-engaged gate in the loop.
+  console.log(`[scribe] ${key}: adopted quietly — no "${ctx.config.jira.label}" label, so mention-only`);
+  return { known: seeded, handled: false };
+}
+
+async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
+  const key = issue.key;
+  const status = issueStatus(issue);
+  const seen = ctx.state.get(key);
+
+  let known: IssueState;
+  if (seen) {
+    known = seen;
+  } else {
+    const adopted = await firstSight(ctx, issue, status);
+    if (adopted.handled) return;
+    known = adopted.known;
   }
 
   const untouched = known.lastUpdated && known.lastUpdated === issue.fields.updated && known.lastStatus === status;
   if (untouched) return;
 
+  const autoDraft = autoDrafts(ctx, issue);
   const comments = await ctx.client.listComments(key);
   const pendingFeedback: string[] = [];
 
@@ -508,11 +661,28 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
 
   for (const comment of comments) {
     if (ctx.state.isProcessed(key, comment.id)) continue;
-    const command = parseCommand(comment, ctx.botAccountId);
+    // `hasDraft` is read fresh: a draft posted earlier in this same batch changes what a
+    // mention means, and the parser needs the current answer, not the one from the top.
+    const command = parseCommand(comment, ctx.botAccountId, { hasDraft: Boolean(ctx.state.get(key)?.hasDraft) });
     await ctx.state.markProcessed(key, [comment.id]);
+
+    // Someone else's conversation: on a mention-only ticket the agent has never taken part
+    // in, plain prose is people talking to each other and must not trigger a revise.
+    // Commands and mentions still act — being answerable is the reason for watching at all.
+    if (command.kind === "feedback" && !autoDraft && !engaged(ctx.state.get(key))) continue;
+
+    // Anything explicit — a mention or a typed command — makes this a thread the agent is
+    // in, so the plain-English feedback that follows applies even without the label. It has
+    // to be recorded even when the command produced no draft (a PRD-less `draft`, say),
+    // or the follow-up that supplies the PRD would be dropped as someone else's talk.
+    if (command.kind !== "feedback" && command.kind !== "ignore") await ctx.state.patch(key, { engaged: true });
 
     switch (command.kind) {
       case "ignore":
+        break;
+      case "wake":
+        await flushFeedback();
+        await runWake(ctx, issue);
         break;
       case "feedback":
         pendingFeedback.push(command.text);
@@ -541,12 +711,17 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
   }
   await flushFeedback();
 
-  // Inputs may have arrived after the first look — retry only when they actually changed.
-  if (!ctx.state.get(key)?.hasDraft) await runDraft(ctx, issue);
+  // Inputs may have arrived after the first look — retry only when they actually changed,
+  // and only where a draft was asked for: either the label requests one standing, or a
+  // human already engaged the agent here. Never on a quietly adopted ticket.
+  const wanted = autoDraft || engaged(ctx.state.get(key));
+  if (wanted && !ctx.state.get(key)?.hasDraft) await runDraft(ctx, issue);
 
   const approvedStatus = ctx.config.jira.approvedStatus.toLowerCase();
   const movedToApproved = status.toLowerCase() === approvedStatus && (known.lastStatus ?? "").toLowerCase() !== approvedStatus;
-  if (movedToApproved) {
+  // A transition is only an approval of work the agent is part of; on a ticket it was
+  // never asked to touch, someone else's workflow move is not a publish instruction.
+  if (movedToApproved && wanted) {
     const approver = (await ctx.client.lastStatusChangeAuthor(key, ctx.config.jira.approvedStatus)) ?? "a Jira approver";
     await runPublish(ctx, issue, approver, { quietWhenPublished: true });
   }

@@ -884,6 +884,14 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
     known = adopted.known;
   }
 
+  // Captured as a PRIMITIVE before any work: `known` is a live reference into the state
+  // store, and the agent's own board moves during comment handling (revise -> In Progress
+  // -> In Review) patch lastStatus straight through it. The approval detector below must
+  // compare the tick-start snapshot of the ISSUE against the tick-start snapshot of the
+  // LEDGER — mixing a stale issue with a fresh ledger once turned the agent's own move
+  // into a "human approval" and published without one.
+  const lastStatusAtTickStart = known.lastStatus;
+
   const untouched = known.lastUpdated && known.lastUpdated === issue.fields.updated && known.lastStatus === status;
   if (untouched) return;
 
@@ -957,12 +965,19 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
   if (wanted && !ctx.state.get(key)?.hasDraft) await runDraft(ctx, issue);
 
   const approvedStatus = ctx.config.jira.approvedStatus.toLowerCase();
-  const movedToApproved = status.toLowerCase() === approvedStatus && (known.lastStatus ?? "").toLowerCase() !== approvedStatus;
+  const movedToApproved = status.toLowerCase() === approvedStatus && (lastStatusAtTickStart ?? "").toLowerCase() !== approvedStatus;
   // A transition is only an approval of work the agent is part of; on a ticket it was
   // never asked to touch, someone else's workflow move is not a publish instruction.
   if (movedToApproved && wanted) {
-    const approver = (await ctx.client.lastStatusChangeAuthor(key, ctx.config.jira.approvedStatus)) ?? "a Jira approver";
-    await runPublish(ctx, issue, approver, { quietWhenPublished: true });
+    const mover = await ctx.client.lastStatusChangeAuthor(key, ctx.config.jira.approvedStatus);
+    // Belt to the snapshot's braces: whoever moved it must be a HUMAN. The agent drives
+    // the board itself, and its own transition is bookkeeping, never an approval — the
+    // fail-closed rule is "no human approval, no publish", and this is where it is held.
+    if (mover?.accountId && mover.accountId === ctx.botAccountId) {
+      console.warn(`[scribe] ${key}: ignoring my own transition to "${ctx.config.jira.approvedStatus}" — not a human approval`);
+    } else {
+      await runPublish(ctx, issue, mover?.name ?? "a Jira approver", { quietWhenPublished: true });
+    }
   }
 
   const refreshed = await ctx.client.getIssue(key).catch(() => issue);

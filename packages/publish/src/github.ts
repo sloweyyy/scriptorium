@@ -73,7 +73,16 @@ export async function openPullRequest(input: PullRequestInput): Promise<PullRequ
   // as success and return the existing one rather than failing an otherwise-good publish.
   if (created.status === 422) {
     const existing = await findOpenPullRequest({ repo: input.repo, head: input.head, token: input.token, apiBase: api, owner });
-    if (existing) return existing;
+    if (existing) {
+      // A republished revision reuses the branch, so the PR must not keep describing the
+      // previous publish — its title carries the approver, and a stale one misattributes.
+      await fetch(`${api}/repos/${input.repo}/pulls/${existing.number}`, {
+        method: "PATCH",
+        headers: headers(input.token),
+        body: JSON.stringify({ title: input.title, body: input.body }),
+      }).catch(() => undefined);
+      return { ...existing, url: existing.url };
+    }
   }
   throw new GitHubError(created.status, createEndpoint, detail.slice(0, 300));
 }

@@ -55,6 +55,8 @@ let issue: Record<string, unknown>;
 let moves: string[];
 /** The columns this stubbed workflow offers. An empty board is one the agent cannot drive. */
 let board: string[];
+/** Changelog served under expand=changelog — who moved the ticket where. */
+let changelog: Array<{ author: { displayName: string; accountId: string }; items: Array<{ field: string; toString: string }> }>;
 
 const COMPLETE_PRD = [
   "----",
@@ -139,10 +141,12 @@ function stubJira(): void {
       if (target) {
         moves.push(target);
         issue = { ...issue, fields: { ...(issue.fields as object), status: { name: target } } };
+        changelog.push({ author: { displayName: "Scribe", accountId: "bot-1" }, items: [{ field: "status", toString: target }] });
       }
       return new Response(null, { status: 204 });
     }
     if (url.includes("/attachments") || url.includes("/attachment")) return json([]);
+    if (url.includes("expand=changelog")) return json({ ...issue, changelog: { histories: changelog } });
     if (url.includes("/rest/api/2/issue/")) return json(issue);
     return new Response("unexpected call", { status: 500 });
   });
@@ -158,6 +162,7 @@ beforeEach(async () => {
   await vault.ensure();
   comments = [];
   moves = [];
+  changelog = [];
   board = ["In Progress", "In Review", "Done"];
   issue = {
     id: "1",
@@ -332,6 +337,68 @@ describe("board transitions", () => {
     fifth.stop();
     expect(comments.at(-1)?.body).toContain("Already published");
     expect(comments.at(-1)?.body).not.toContain("Comment `draft`");
+  });
+
+  it("does not read its own board move as a human approval", async () => {
+    // The production incident: feedback arrived while the ticket sat in Done (from the
+    // previous approve). The revise moved the board Done -> In Progress -> In Review,
+    // mutating lastStatus through the live state reference mid-tick — and the approval
+    // detector then compared the STALE issue snapshot ("Done") against the FRESH ledger
+    // ("In Review"), read the agent's own move as a human decision, and published a
+    // revision nobody had approved, attributed to the agent itself.
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+    comments.push(human("h1", "approve"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T13:00:00.000+0000" } };
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+    expect(status()).toBe("Done");
+
+    comments.push(human("h2", "always state which timezone the digest send time uses"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T14:00:00.000+0000" } };
+    const third = await startScribeJira(settings, vault);
+    third.stop();
+
+    const bodies = comments.map((comment) => comment.body);
+    // Revised, in review, and — the point — NOT published a second time.
+    expect(bodies.at(-1)).toContain("Revised draft");
+    expect(bodies.filter((body) => body.includes("*Published* —"))).toHaveLength(1);
+    expect(status()).toBe("In Review");
+  });
+
+  it("publishes on a transition only when a human made it", async () => {
+    // Belt to the snapshot's braces: even when the ledger genuinely lags (a crash between
+    // the agent's transition and its bookkeeping), a transition authored by the agent's
+    // own account is never an approval.
+    const settings = config();
+    const stateDir = settings.jira.stateDir;
+    await fs.mkdir(path.join(stateDir, "drafts"), { recursive: true });
+    await fs.writeFile(path.join(stateDir, "drafts", "DOC-1.md"), CLEAN_DRAFT);
+    const seeded = {
+      version: 1,
+      issues: {
+        "DOC-1": { hasDraft: true, docSlug: "incident-timeline-embed", sourceFingerprint: "seeded", processedComments: [], lastStatus: "In Review", lastUpdated: "2026-08-20T10:00:00.000+0000" },
+      },
+    };
+    await fs.writeFile(path.join(stateDir, "jira-state.json"), JSON.stringify(seeded));
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Done" }, updated: "2026-08-20T15:00:00.000+0000" } };
+
+    // The agent's own account moved it: bookkeeping, not approval. Nothing publishes.
+    changelog = [{ author: { displayName: "Scribe", accountId: "bot-1" }, items: [{ field: "status", toString: "Done" }] }];
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+    expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(0);
+
+    // A human moved it: that IS the approval, attributed to them.
+    await fs.writeFile(path.join(stateDir, "jira-state.json"), JSON.stringify(seeded));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T16:00:00.000+0000" } };
+    changelog = [{ author: { displayName: "Reviewer", accountId: "human-1" }, items: [{ field: "status", toString: "Done" }] }];
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+
+    const published = comments.find((comment) => comment.body.includes("*Published* —"));
+    expect(published?.body).toContain("approved by Reviewer");
   });
 
   it("never re-announces a move the ticket is already in", async () => {

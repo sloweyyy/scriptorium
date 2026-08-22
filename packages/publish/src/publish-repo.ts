@@ -214,6 +214,20 @@ export async function publishToRepo(input: PublishToRepoInput): Promise<PublishT
         await gitMaybe(repoDir, ["rebase", "--abort"]);
         throw error;
       }
+      if (input.baseBranch) {
+        // Keep a long-lived ticket branch current with its base. A branch cut weeks ago
+        // misses everything the base has gained since — infrastructure fixes included, and
+        // a CI config the base added is exactly the kind of file whose absence fails every
+        // preview build of this branch. Conflicting hunks resolve toward the branch (`ours`)
+        // because the only file the branch changes is the doc, and the doc is restaged from
+        // the vault right after this — the merge result for it never survives anyway.
+        await git(repoDir, ["fetch", remote, input.baseBranch]);
+        const merged = await gitMaybe(repoDir, ["merge", "--no-edit", "-X", "ours", `${remote}/${input.baseBranch}`]);
+        if (merged === undefined) {
+          // A merge that cannot complete must not wedge the work tree for every later run.
+          await gitMaybe(repoDir, ["merge", "--abort"]);
+        }
+      }
     } else if (input.baseBranch) {
       // New target branch: cut it from the base explicitly, never from the current HEAD.
       await git(repoDir, ["fetch", remote, input.baseBranch]);

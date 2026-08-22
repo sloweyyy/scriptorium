@@ -163,7 +163,13 @@ export interface GeminiToolLoopOptions {
   system: string;
   prompt: string;
   tools: ToolSpec[];
-  /** Retrieval needs a handful of rounds; a runaway loop is a bug, not a slow answer. */
+  /**
+   * Backstop, not the primary limiter. The contract's prompt tells the model to give up
+   * after two or three dry keyword attempts, so a healthy question resolves in a few
+   * rounds; this exists so a model that ignores that instruction fails loudly instead of
+   * searching forever. Headroom matters: if the cap binds first, a legitimately harder
+   * question dies with an error where it should have refused with a gap note.
+   */
   maxRounds?: number;
   maxTokens?: number;
 }
@@ -179,7 +185,7 @@ export async function runGeminiToolLoop({
   system,
   prompt,
   tools,
-  maxRounds = 8,
+  maxRounds = 12,
   maxTokens = 4_096,
 }: GeminiToolLoopOptions): Promise<string> {
   const byName = new Map(tools.map((tool) => [tool.name, tool]));

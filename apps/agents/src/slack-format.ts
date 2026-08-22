@@ -71,11 +71,68 @@ export function toSlackMrkdwn(markdown: string): string {
     .trim();
 }
 
-/** Slack rejects an mrkdwn text object over this, so a long answer is cut, not dropped. */
+/** Slack rejects an mrkdwn text object over this. */
 const MRKDWN_LIMIT = 3_000;
 
+/**
+ * Slack allows 50 blocks per message. Reserve room for the provenance footer and stop well
+ * short of the ceiling: 20 sections is ~60k characters, far past any answer worth reading in
+ * a thread, and a message that would exceed it has a length problem, not a pagination one.
+ */
+const MAX_ANSWER_SECTIONS = 20;
+
+/**
+ * Cut without leaving a mangled link behind.
+ *
+ * A blind slice at 3000 characters cut through a `<url|label>` and Slack rendered the
+ * wreckage as text — a half-URL with a `%7C` where the separator used to be, in the middle
+ * of an answer that was otherwise correct. So back up to before any unclosed `<`.
+ */
 function clamp(text: string, limit = MRKDWN_LIMIT): string {
-  return text.length <= limit ? text : `${text.slice(0, limit - 2)}…`;
+  if (text.length <= limit) return text;
+  let cut = text.slice(0, limit - 1);
+  const open = cut.lastIndexOf("<");
+  if (open > cut.lastIndexOf(">")) cut = cut.slice(0, open);
+  return `${cut.trimEnd()}…`;
+}
+
+/**
+ * Split a long answer across section blocks instead of truncating it.
+ *
+ * "List all 63 notes" is a legitimate question with a legitimate long answer, and one
+ * section cannot hold it — so the answer was silently losing its tail, which for a list is
+ * the same as answering the wrong question. Splits at line boundaries so a numbered list
+ * never breaks mid-item, and only hard-cuts a single line that is itself over the limit.
+ */
+export function splitForSlack(text: string, limit = MRKDWN_LIMIT): string[] {
+  const chunks: string[] = [];
+  let current = "";
+
+  const flush = (): void => {
+    if (current.trim()) chunks.push(current.trimEnd());
+    current = "";
+  };
+
+  for (const line of text.split("\n")) {
+    if (line.length > limit) {
+      // One absurdly long line: emit what we have, then cut the line itself safely.
+      flush();
+      let rest = line;
+      while (rest.length > limit) {
+        const piece = clamp(rest, limit);
+        chunks.push(piece);
+        // `clamp` may have backed up past an unclosed link, so advance by what it consumed.
+        rest = rest.slice(Math.max(1, piece.length - 1));
+      }
+      current = rest;
+      continue;
+    }
+    if (current.length + line.length + 1 > limit) flush();
+    current += current ? `\n${line}` : line;
+  }
+  flush();
+
+  return chunks.length ? chunks : [""];
 }
 
 export interface AnswerBlocksInput {
@@ -158,12 +215,22 @@ function sourceLine(rendered: string, citations: string[], links: Map<string, st
  * both together as one italic line made the citations read like part of the claim.
  */
 export function answerBlocks({ markdown, citations, links = new Map() }: AnswerBlocksInput): unknown[] {
-  const rendered = clamp(toSlackMrkdwn(markdown));
+  const rendered = toSlackMrkdwn(markdown);
   // The footer is decided from the unlinked text so that "is this path visible in the
   // answer?" is asked of the paths, not of the URLs that replace them.
   const footer = sourceLine(rendered, citations, links);
+
+  // Linkify before splitting: substitution changes the length, and splitting first would
+  // put the boundary in the wrong place — or inside a link the substitution just created.
+  const sections = splitForSlack(linkifyCitations(rendered, links)).slice(0, MAX_ANSWER_SECTIONS);
+  const dropped = splitForSlack(linkifyCitations(rendered, links)).length - sections.length;
+
   return [
-    { type: "section", text: { type: "mrkdwn", text: clamp(linkifyCitations(rendered, links)) } },
+    ...sections.map((text) => ({ type: "section", text: { type: "mrkdwn", text } })),
+    // Silent truncation of an answer reads as a complete answer. Say what was cut.
+    ...(dropped > 0
+      ? contextBlocks(`_…answer truncated: ${dropped} more section(s) did not fit in one Slack message._`)
+      : []),
     { type: "context", elements: [{ type: "mrkdwn", text: clamp(footer) }] },
   ];
 }

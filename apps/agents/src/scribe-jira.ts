@@ -170,6 +170,25 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Move the ticket along the board, best-effort.
+ *
+ * The columns carry the state a reader cares about — working, waiting on me, done — so the
+ * agent drives them rather than leaving everything in To Do and narrating only in comments.
+ * Silent when the workflow has no such status: a board the agent cannot drive is a smaller
+ * failure than a publish that refuses because a column is missing. `lastStatus` is patched
+ * so the poller does not read the agent's own move as a human decision.
+ */
+async function moveTo(ctx: Ctx, key: string, statusName: string, currentStatus?: string): Promise<void> {
+  if (!statusName || currentStatus?.toLowerCase() === statusName.toLowerCase()) return;
+  try {
+    const moved = await ctx.client.transitionTo(key, statusName);
+    if (moved) await ctx.state.patch(key, { lastStatus: statusName });
+  } catch (error) {
+    console.warn(`[scribe] ${key}: could not move to "${statusName}": ${errorMessage(error)}`);
+  }
+}
+
 /** Post a markdown comment as Jira wiki markup, and remember it so it never reads as feedback. */
 async function say(ctx: Ctx, key: string, markdown: string): Promise<void> {
   const comment = await ctx.client.addComment(key, markdownToJira(markdown));
@@ -321,6 +340,9 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
   const slug = slugify(feature);
   await seedVault(ctx, slug, feature, source, key);
 
+  // Working: say so on the board before the slow part, not after.
+  await moveTo(ctx, key, ctx.config.jira.inProgressStatus, issueStatus(issue));
+
   let result = await draftDoc(ctx.vault, source.markdown, source.images);
   if (!lintOk(result.lint)) {
     // Deterministic checks get one machine round-trip before a human is asked to read anything.
@@ -352,6 +374,9 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
       revision: false,
     }),
   );
+  // A draft exists and the next move is a human's.
+  await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
+
   await announceDraftForApproval(ctx.config, {
     issueKey: key,
     issueUrl: ctx.client.issueUrl(key),
@@ -386,8 +411,11 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
     return;
   }
 
+  await moveTo(ctx, key, ctx.config.jira.inProgressStatus, issueStatus(issue));
+
   const result = await reviseDoc(ctx.vault, draft, feedback);
   await ctx.state.saveDraft(key, result.markdown);
+  await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
   for (const item of feedback) await ctx.state.appendFeedback(key, item);
 
   const known = ctx.state.get(key);
@@ -597,11 +625,8 @@ async function runPublish(
     appliedLessons: known?.appliedLessons,
   });
 
-  // Keep the board honest when the approval arrived as a comment.
-  if (issueStatus(issue).toLowerCase() !== ctx.config.jira.approvedStatus.toLowerCase()) {
-    const moved = await ctx.client.transitionTo(key, ctx.config.jira.approvedStatus).catch(() => false);
-    if (moved) await ctx.state.patch(key, { lastStatus: ctx.config.jira.approvedStatus });
-  }
+  // Keep the board honest when the approval arrived as a comment rather than a drag.
+  await moveTo(ctx, key, ctx.config.jira.approvedStatus, issueStatus(issue));
 
   await proposeLesson(ctx, key, approvedBy);
 }

@@ -34,6 +34,14 @@ export interface JiraSettings {
    */
   label: string;
   issueType: string;
+  /**
+   * The board is the state machine, so the agent drives it: In Progress while it works,
+   * In Review while a human decides, Done once published. Every move is best-effort — a
+   * workflow without one of these columns simply does not get that move, and the ticket
+   * comments remain the authoritative narration.
+   */
+  inProgressStatus: string;
+  inReviewStatus: string;
   approvedStatus: string;
   pollMs: number;
   /** Resume state (processed comment ids, working drafts) — gitignored, not part of the record. */
@@ -186,6 +194,8 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       jql: env("JIRA_JQL"),
       label: env("JIRA_LABEL") ?? "doc-request",
       issueType: env("JIRA_ISSUE_TYPE") ?? "Task",
+      inProgressStatus: env("JIRA_IN_PROGRESS_STATUS") ?? "In Progress",
+      inReviewStatus: env("JIRA_IN_REVIEW_STATUS") ?? "In Review",
       approvedStatus: env("JIRA_APPROVED_STATUS") ?? "Approved",
       pollMs: envNumber("JIRA_POLL_MS", 15_000),
       stateDir: path.resolve(repoRoot, env("STATE_DIR") ?? ".scriptorium-state"),

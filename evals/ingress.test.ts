@@ -43,6 +43,8 @@ function config(): AppConfig {
     jira: {
       label: "doc-request",
       issueType: "Task",
+      inProgressStatus: "In Progress",
+      inReviewStatus: "In Review",
       approvedStatus: "Done",
       pollMs: 60_000,
       stateDir: path.join(tmpRoot, "state"),

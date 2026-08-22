@@ -24,6 +24,10 @@ let tmpRoot: string;
 let vault: Vault;
 let comments: StubComment[];
 let issue: Record<string, unknown>;
+/** Every status the agent moved the ticket to, in order — the board trail it leaves. */
+let moves: string[];
+/** Columns the stubbed workflow offers; empty models a board the agent cannot drive. */
+let board: string[];
 
 /** A PRD as Jira's editor stores it: wiki markup, with `---` frontmatter fences rewritten as `----`. */
 function prdInJira(...frontmatter: string[]): string {
@@ -54,6 +58,8 @@ function config(): AppConfig {
       projectKey: "DOC",
       label: "doc-request",
       issueType: "Task",
+      inProgressStatus: "In Progress",
+      inReviewStatus: "In Review",
       approvedStatus: "Approved",
       pollMs: 60_000,
       stateDir: path.join(tmpRoot, "state"),
@@ -81,7 +87,18 @@ function stubJira(): void {
       comments.push(posted);
       return json(posted);
     }
-    if (url.includes("/transitions")) return json({ transitions: [] });
+    if (url.includes("/transitions") && method === "GET") {
+      return json({ transitions: board.map((name, index) => ({ id: String(index + 1), name, to: { name } })) });
+    }
+    if (url.includes("/transitions") && method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { transition: { id: string } };
+      const target = board[Number(body.transition.id) - 1];
+      if (target) {
+        moves.push(target);
+        issue = { ...issue, fields: { ...(issue.fields as object), status: { name: target } } };
+      }
+      return new Response(null, { status: 204 });
+    }
     // A draft the agent attached earlier — what a restart with no ledger recovers from.
     if (url.includes("/attachment/content/")) return new Response("# Incident timeline embed\n\nA draft.\n", { status: 200 });
     if (url.includes("/rest/api/2/issue/")) return json(issue);
@@ -94,6 +111,8 @@ beforeEach(async () => {
   vault = new Vault(path.join(tmpRoot, "vault"));
   await vault.ensure();
   comments = [];
+  moves = [];
+  board = ["In Progress", "In Review", "Approved", "Done"];
   issue = {
     id: "1",
     key: "DOC-1",

@@ -87,6 +87,8 @@ describe("poller query", () => {
       projectKey: "DOC",
       label: "doc-request",
       issueType: "Task",
+      inProgressStatus: "In Progress",
+      inReviewStatus: "In Review",
       approvedStatus: "Done",
       pollMs: 15_000,
       stateDir: "/tmp/state",

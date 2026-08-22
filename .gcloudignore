@@ -8,8 +8,10 @@ node_modules
 .scriptorium-state
 audit
 out
+# `vault/reference` is derived and regenerated at boot from `corpus/`, which therefore
+# HAS to ship: without it the deployed Curator holds only the notes the agents wrote and
+# answers NOT_IN_KB to every question about the product the corpus documents.
 vault/reference
-corpus
 samples/wireframes/*.png
 .env
 *.log

@@ -43,8 +43,18 @@ export interface JiraSettings {
 export interface DocsRepoSettings {
   /** SSH remote, e.g. git@github.com:owner/name.git */
   url?: string;
-  /** Branch the external PR targets, and the branch the internal tree pushes to. */
+  /** Branch the external PR targets. The agent never pushes here — a human merges. */
   base: string;
+  /**
+   * Branch the internal tree pushes to, deliberately NOT the base.
+   *
+   * GitHub does not offer branch protection on a private repo on the free plan, so nothing
+   * on the platform stops this credential from writing `main`. Keeping every agent push on
+   * its own branches means the merge gate is a property of what the agent does, not merely
+   * of what its token is forbidden to do — and the residual risk is one line of policy
+   * instead of the whole publication gate.
+   */
+  internalBranch: string;
   /** Deploy key — repo-scoped write, which is all pushing needs. */
   sshKey?: string;
   /** API token, only needed to OPEN a pull request; a deploy key cannot. */
@@ -179,6 +189,7 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
     docsRepo: {
       url: env("DOCS_REPO_URL"),
       base: env("DOCS_REPO_BRANCH") ?? "main",
+      internalBranch: env("DOCS_REPO_INTERNAL_BRANCH") ?? "vault-live",
       sshKey: env("DOCS_REPO_SSH_KEY"),
       token: env("DOCS_REPO_TOKEN"),
       workDir: path.resolve(repoRoot, env("DOCS_REPO_WORKDIR") ?? path.join(env("STATE_DIR") ?? ".scriptorium-state", "docs-repo")),

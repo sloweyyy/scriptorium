@@ -4,6 +4,7 @@ import {
   audit,
   commitVault,
   defaultJql,
+  docsRepoReady,
   parseMarkdown,
   slugify,
   type AppConfig,
@@ -450,6 +451,7 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
   await ctx.state.saveDraft(key, result.markdown);
   await ctx.state.patch(key, {
     hasDraft: true,
+    draftPublished: false,
     docSlug: slug,
     sourcePrd: `prd/${slug}`,
     appliedLessons: result.appliedLessons,
@@ -509,6 +511,8 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
 
   const result = await reviseDoc(ctx.vault, draft, feedback);
   await ctx.state.saveDraft(key, result.markdown);
+  // The vault copy is now stale relative to this draft: the next approve republishes.
+  await ctx.state.patch(key, { draftPublished: false });
   await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
   for (const item of feedback) await ctx.state.appendFeedback(key, item);
 
@@ -578,6 +582,10 @@ async function proposeLesson(ctx: Ctx, key: string, approvedBy: string): Promise
   const feedback = known?.feedback ?? [];
   if (!feedback.length || !ctx.config.hasModelAccess) return;
 
+  // Consumed either way: this feedback has been judged once, and the next publish on
+  // this ticket must not re-distill it into a duplicate proposal.
+  await ctx.state.patch(key, { feedback: [] });
+
   const rule = await distillLesson(feedback.join("\n"));
   if (!rule) {
     await say(ctx, key, "_Nothing here generalizes — the feedback was specific to this document, so I'm not proposing a rule._");
@@ -617,9 +625,13 @@ async function runPublish(
   const known = ctx.state.get(key);
 
   // Approving twice (comment then transition, or the reverse) is normal — say nothing.
-  // But "published to the vault" and "pushed to the docs repo" are different facts, and
-  // when the second failed, approving again has to retry it rather than report success.
-  const alreadyPublished = Boolean(known?.publishedPath);
+  // But three facts are separate here, and conflating any two produced a real failure:
+  // "a doc was published", "the docs repo has it", and "the CURRENT draft is the one
+  // that was published". A revision after a publish makes the third false while the
+  // first two stay true — and keying the guards on the first alone locked every revised
+  // draft out of publishing forever, with advice (`draft`) that would have discarded
+  // the very feedback that caused the revision.
+  const alreadyPublished = Boolean(known?.publishedPath) && known?.draftPublished !== false;
 
   // The column is corrected before either early return below, because how much of the work
   // was already done is not something the board should reflect: an approval on a ticket
@@ -631,7 +643,7 @@ async function runPublish(
 
   if (alreadyPublished && known?.docsPushed) {
     if (!options.quietWhenPublished) {
-      await say(ctx, key, `Already published to \`${known.publishedPath}\`. Comment \`draft\` to start a new revision.`);
+      await say(ctx, key, `Already published to \`${known.publishedPath}\`. Reply with feedback and I'll revise — approving the revision publishes the new version.`);
     }
     return;
   }
@@ -666,7 +678,9 @@ async function runPublish(
     jiraIssue: key,
   });
   await organizePublishedDoc(ctx.vault, relPath);
-  await ctx.state.patch(key, { publishedPath: relPath });
+  // docsPushed resets here: a republished revision has NOT reached the repo yet, and a
+  // stale true would let the next approve report success for a push that never happened.
+  await ctx.state.patch(key, { publishedPath: relPath, draftPublished: true, docsPushed: false });
   // Approved and written, so the column says so before the egress — which may fail.
   await moveTo(ctx, key, ctx.config.jira.approvedStatus, issueStatus(issue));
 
@@ -699,7 +713,10 @@ async function runPublish(
     });
     await say(ctx, key, outcome.comment);
     // Only a real push clears the retry flag; a refusal or a conflict must stay retryable.
-    if (outcome.published) await ctx.state.patch(key, { docsPushed: true });
+    // Except when no docs repo is configured at all: then no push will ever exist, the
+    // egress is vacuously complete, and leaving the flag unset would make every later
+    // approve republish the same draft instead of saying "already published".
+    if (outcome.published || !docsRepoReady(ctx.config.docsRepo)) await ctx.state.patch(key, { docsPushed: true });
     await audit(ctx.config.auditFile, {
       type: outcome.published ? "docs.pushed" : "docs.push.refused",
       actor: approvedBy,

@@ -293,6 +293,47 @@ describe("board transitions", () => {
     expect(comments.at(-1)?.body).toContain("Already published");
   });
 
+  it("publishes a revision approved after the first publish, instead of refusing forever", async () => {
+    // The exact production thread: draft -> approve -> published & pushed -> feedback ->
+    // revised draft -> approve -> "Already published… comment draft" -> draft -> approve ->
+    // the same refusal. The revised draft could never be published, and the suggested way
+    // out would have discarded the very feedback that caused the revision.
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+
+    comments.push(human("h1", "approve"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T13:00:00.000+0000" } };
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+    const publishesAfterFirst = comments.filter((comment) => comment.body.includes("*Published* —")).length;
+    expect(publishesAfterFirst).toBe(1);
+
+    comments.push(human("h2", "always state which timezone the digest send time uses"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T14:00:00.000+0000" } };
+    const third = await startScribeJira(settings, vault);
+    third.stop();
+    expect(comments.at(-1)?.body).toContain("Revised draft");
+
+    comments.push(human("h3", "approve"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T15:00:00.000+0000" } };
+    const fourth = await startScribeJira(settings, vault);
+    fourth.stop();
+
+    const bodies = comments.map((comment) => comment.body);
+    // The revision published — a second **Published**, not the already-published refusal.
+    expect(bodies.filter((body) => body.includes("*Published* —"))).toHaveLength(2);
+    expect(bodies.filter((body) => body.includes("Already published"))).toHaveLength(0);
+
+    // And approving once more after THAT is the no-op it should be.
+    comments.push(human("h4", "approve"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T16:00:00.000+0000" } };
+    const fifth = await startScribeJira(settings, vault);
+    fifth.stop();
+    expect(comments.at(-1)?.body).toContain("Already published");
+    expect(comments.at(-1)?.body).not.toContain("Comment `draft`");
+  });
+
   it("never re-announces a move the ticket is already in", async () => {
     issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "In Progress" } } };
     const stop = await startScribeJira(config(), vault);

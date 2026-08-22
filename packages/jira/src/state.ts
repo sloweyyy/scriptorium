@@ -38,6 +38,13 @@ export interface IssueState {
   lastError?: string;
   appliedLessons?: string[];
   feedback?: string[];
+  /**
+   * False when a revision landed after the last publish — the current draft is newer
+   * than the vault copy, so `approve` must republish rather than report "already
+   * published". Undefined (older ledgers, restart recovery) reads as "published",
+   * which errs toward not republishing without being asked.
+   */
+  draftPublished?: boolean;
   publishedPath?: string;
   /**
    * Whether the docs-repo push for this doc actually succeeded.

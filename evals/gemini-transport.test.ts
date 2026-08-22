@@ -1,29 +1,26 @@
 import { z } from "zod";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { runGeminiToolLoop } from "@scriptorium/core";
 
 /**
  * Vertex's dialect, with nothing real behind it.
  *
  * These exercise how a request, a function call and a tool result are spelled — not the
- * project, and not the credentials. The transport asks google-auth-library for a token
- * before it ever reaches the stubbed fetch, so without the mock below a clean clone runs
- * `pnpm eval` — documented as needing no credentials — straight into `invalid_grant`.
- * That is the first thing a reviewer sees, and it says the repo is broken when it is not.
+ * project, and not the credentials. The transport resolves Application Default Credentials
+ * before it ever reaches the stubbed fetch, so a clean clone ran `pnpm eval` — documented
+ * as needing no credentials — straight into "Could not load the default credentials". That
+ * is the first thing a reviewer sees, and it says the repo is broken when it is not.
  *
- * The live grounded-Q&A evals stay in qa.test.ts, unmocked: those DO need real auth, and
- * mocking it here rather than there is the whole reason the two are separate files.
+ * Passing `accessToken` skips that lookup. Mocking google-auth-library was the obvious
+ * move and does not work here: under pnpm the specifier this file resolves is not the
+ * module `@scriptorium/core` loads, so the mock registers against an id nothing imports and
+ * silently does nothing.
+ *
+ * The live grounded-Q&A evals stay in qa.test.ts and still use real ADC, because those
+ * genuinely need it.
  */
 
-vi.mock("google-auth-library", () => ({
-  GoogleAuth: class {
-    async getAccessToken(): Promise<string> {
-      return "eval-token";
-    }
-  },
-}));
-
-// Imported after the mock so the transport closes over the fake auth.
-const { runGeminiToolLoop } = await import("@scriptorium/core");
+const accessToken = "eval-token";
 
 describe("gemini tool loop transport", () => {
   // The transport reads its project before it reaches the stubbed fetch, so without this
@@ -74,7 +71,7 @@ describe("gemini tool loop transport", () => {
       },
     });
 
-    const answer = await runGeminiToolLoop({ system: "s", prompt: "p", tools: [tool("alpha"), tool("beta")] });
+    const answer = await runGeminiToolLoop({ system: "s", prompt: "p", tools: [tool("alpha"), tool("beta")], accessToken });
 
     expect(answer).toBe("done");
     expect(ran).toEqual(["alpha", "beta"]);
@@ -91,6 +88,6 @@ describe("gemini tool loop transport", () => {
       ),
     );
     const alpha = { name: "alpha", description: "a", inputSchema: z.object({}), run: async () => "nothing" };
-    await expect(runGeminiToolLoop({ system: "s", prompt: "p", tools: [alpha], maxRounds: 3 })).rejects.toThrow(/3-round cap/);
+    await expect(runGeminiToolLoop({ system: "s", prompt: "p", tools: [alpha], maxRounds: 3, accessToken })).rejects.toThrow(/3-round cap/);
   });
 });

@@ -85,6 +85,37 @@ export interface AnswerBlocksInput {
   citations: string[];
 }
 
+/** Beyond this many chips the footer stops being a glance and becomes a second list. */
+const MAX_SOURCE_CHIPS = 4;
+
+/**
+ * The provenance footer.
+ *
+ * Its job is to make provenance impossible to miss, which is not the same as printing every
+ * path twice. The contract asks the model to cite inline *or* at the end, so when it cites
+ * inline — a list of notes, each with its path — a footer repeating all of them is the thing
+ * that pushed a correct answer past Slack's "Show less" fold. So: when every citation is
+ * already visible in the answer, the footer asserts that they are there and counts them;
+ * otherwise it names them, capped, because past four chips it is a second list rather than
+ * a glance.
+ *
+ * The one case that always speaks in full is zero citations. That is not a formatting
+ * edge — it is the fail-closed rule having been broken, and a silently absent footer is
+ * exactly how that would go unnoticed.
+ */
+function sourceLine(rendered: string, citations: string[]): string {
+  if (citations.length === 0) return "⚠️ No source cited — treat this answer as unverified.";
+
+  const count = `${citations.length} note${citations.length === 1 ? "" : "s"}`;
+  if (citations.every((citation) => rendered.includes(citation))) {
+    return `📚 Answered from ${count} in the vault, cited above.`;
+  }
+
+  const shown = citations.slice(0, MAX_SOURCE_CHIPS).map((citation) => `\`${citation}\``).join("  ");
+  const rest = citations.length - MAX_SOURCE_CHIPS;
+  return rest > 0 ? `📚 ${shown}  _+${rest} more_` : `📚 ${shown}`;
+}
+
 /**
  * Answer as a section, sources as a context block.
  *
@@ -93,18 +124,11 @@ export interface AnswerBlocksInput {
  * both together as one italic line made the citations read like part of the claim.
  */
 export function answerBlocks({ markdown, citations }: AnswerBlocksInput): unknown[] {
-  const blocks: unknown[] = [
-    { type: "section", text: { type: "mrkdwn", text: clamp(toSlackMrkdwn(markdown)) } },
+  const rendered = clamp(toSlackMrkdwn(markdown));
+  return [
+    { type: "section", text: { type: "mrkdwn", text: rendered } },
+    { type: "context", elements: [{ type: "mrkdwn", text: clamp(sourceLine(rendered, citations)) }] },
   ];
-
-  // No citation is not a formatting case — it is the fail-closed rule having been broken,
-  // so it is stated rather than left as a silently absent footer.
-  const sources = citations.length
-    ? `📚 ${citations.map((citation) => `\`${citation}\``).join("  ")}`
-    : "⚠️ No source cited — treat this answer as unverified.";
-
-  blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: clamp(sources) }] });
-  return blocks;
 }
 
 /** One line of muted status text — what a progress bubble is made of. */

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { docsRepoReady, parseMarkdown, type AppConfig, type Vault } from "@scriptorium/core";
@@ -34,10 +35,36 @@ export interface PublishOutcome {
  * environment is what actually reaches every child git process. Harmless elsewhere: the
  * only other git use is a local commit, which never touches the network.
  */
-function ssh(config: AppConfig): NodeJS.ProcessEnv {
+let usableKey: string | undefined;
+
+/**
+ * A key path ssh will actually accept.
+ *
+ * ssh refuses a private key that group or others can read, and Cloud Run mounts secrets
+ * read-only at 0444 — so the correctly-mounted key was declined with "UNPROTECTED PRIVATE
+ * KEY FILE" and the push failed as `Permission denied (publickey)`. The mount cannot be
+ * chmod-ed, so copy it once to a private file and use that. Memoised: the copy is per
+ * process, and re-copying on every git call would be pointless churn.
+ */
+async function privateKeyPath(keyPath: string): Promise<string> {
+  if (usableKey) return usableKey;
+  const stat = await fs.stat(keyPath);
+  if ((stat.mode & 0o077) === 0) {
+    usableKey = keyPath;
+    return keyPath;
+  }
+  const copy = path.join(os.tmpdir(), "scriptorium-docs-key");
+  await fs.copyFile(keyPath, copy);
+  await fs.chmod(copy, 0o600);
+  console.log(`[docs] copied the deploy key to ${copy} with 0600 — ssh rejects the 0444 secret mount`);
+  usableKey = copy;
+  return copy;
+}
+
+async function ssh(config: AppConfig): Promise<NodeJS.ProcessEnv> {
   const key = config.docsRepo.sshKey;
   if (!key) return process.env;
-  const command = `ssh -i ${key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`;
+  const command = `ssh -i ${await privateKeyPath(key)} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`;
   if (process.env.GIT_SSH_COMMAND !== command) process.env.GIT_SSH_COMMAND = command;
   return process.env;
 }
@@ -47,7 +74,7 @@ export async function ensureDocsRepo(config: AppConfig): Promise<string> {
   const { url, workDir, base } = config.docsRepo;
   if (!url) throw new Error("DOCS_REPO_URL is not set");
 
-  const env = ssh(config);
+  const env = await ssh(config);
   const gitDir = path.join(workDir, ".git");
   try {
     await fs.access(gitDir);
@@ -203,7 +230,7 @@ export async function syncFromDocsRepo(config: AppConfig, vault: Vault, paths: r
   if (!docsRepoReady(config.docsRepo)) return change;
 
   const repoDir = await ensureDocsRepo(config);
-  const env = ssh(config);
+  const env = await ssh(config);
   const base = config.docsRepo.base;
   const internal = config.docsRepo.internalBranch;
   await exec("git", ["fetch", "origin", base], { cwd: repoDir, env });
@@ -266,7 +293,7 @@ export async function hydrateVaultFromDocsRepo(config: AppConfig, vault: Vault):
   if (substantive.length) return [];
 
   const repoDir = await ensureDocsRepo(config);
-  const env = ssh(config);
+  const env = await ssh(config);
   const base = config.docsRepo.internalBranch;
   await exec("git", ["fetch", "origin", base], { cwd: repoDir, env });
 

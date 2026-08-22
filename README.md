@@ -245,7 +245,15 @@ increase is requested per base model — `gcloud alpha quotas preferences create
       reported on its ticket rather than imported over the source
 - [x] Slack: publish announcements (Curator) and draft-approval buttons (Scribe)
 - [x] Second sample PRD demonstrating lesson transfer (`samples/prd-002-subscriber-management.md`)
-- [ ] Docs sites deployed (Astro Starlight external, Quartz internal)
+- [x] Docs repo + both site builds: Astro Starlight (external, `docs/`) and Quartz
+      (internal, `internal/` — wikilinks, backlinks, graph). Both builds verified locally;
+      settings and the human steps are in `sloweyyy/scriptorium-vault`'s README
+- [x] Deployed: Cloud Run, one instance, CPU always allocated, GCS-mounted state, secrets
+      from Secret Manager, no credential file in the image
+- [x] Webhooks live in production: GitHub's signed `ping` delivered `202`, and the Jira
+      route answers a probe from the public internet while doing no work
+- [ ] Vercel import for the two site projects (one browser step)
+- [ ] Jira webhook registered in the UI (its REST API is Connect/OAuth-only)
 - [ ] Demo video
 
 **Not done, and worth saying plainly:** no LLM path has run yet. Claude on Vertex is wired

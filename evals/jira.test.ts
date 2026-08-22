@@ -2,7 +2,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { JiraClient, jiraToMarkdown, JiraState, markdownToJira, parseCommand, type JiraComment } from "@scriptorium/jira";
+import {
+  JiraClient,
+  jiraToMarkdown,
+  JiraState,
+  markdownToJira,
+  parseCommand,
+  splitAtLastOwnComment,
+  type JiraComment,
+} from "@scriptorium/jira";
 
 function comment(body: string, accountId = "human-1", id = "1"): JiraComment {
   return { id, body, created: new Date().toISOString(), author: { accountId, displayName: "Reviewer" } };
@@ -33,6 +41,39 @@ describe("jira comment commands", () => {
   it("reads plain feedback through Jira mention and colour markup", () => {
     const parsed = parseCommand(comment("[~accountid:abc] {color:#de350b}Add a rollback step{color}"), "bot-1");
     expect(parsed).toEqual({ kind: "feedback", text: "Add a rollback step" });
+  });
+
+  it("wakes on a mention only when the mention is all there is, or there is no draft yet", () => {
+    const at = "[~accountid:bot-1]";
+    const drafted = { hasDraft: true };
+    const blank = { hasDraft: false };
+
+    // The regression this rule exists to prevent: a request aimed at an existing draft is
+    // feedback, not a greeting.
+    expect(parseCommand(comment(`${at} make the intro shorter`), "bot-1", drafted)).toEqual({
+      kind: "feedback",
+      text: "make the intro shorter",
+    });
+    // A bare mention (or one wrapped in nothing but a vocative) can only mean "answer me".
+    expect(parseCommand(comment(at), "bot-1", drafted).kind).toBe("wake");
+    expect(parseCommand(comment(`${at} hi!`), "bot-1", drafted).kind).toBe("wake");
+    // Nothing drafted yet: there is no draft for the words to be feedback about.
+    expect(parseCommand(comment(`${at} can you draft this?`), "bot-1", blank).kind).toBe("wake");
+
+    // Mention detection reads the raw body — a mention of somebody else is not a wake.
+    expect(parseCommand(comment(`[~accountid:someone-else] shorten the intro`), "bot-1", blank).kind).toBe("feedback");
+  });
+
+  it("keeps command precedence: own comment, then explicit command, then wake", () => {
+    const at = "[~accountid:bot-1]";
+    // The agent quoting a mention back at itself must not wake itself.
+    expect(parseCommand(comment(`${at} I'm here.`, "bot-1", "9"), "bot-1", { hasDraft: false })).toEqual({
+      kind: "ignore",
+      reason: "own-comment",
+    });
+    // A typed command outranks the mention that carries it, drafted or not.
+    expect(parseCommand(comment(`${at} approve`), "bot-1", { hasDraft: true }).kind).toBe("approve-doc");
+    expect(parseCommand(comment(`${at} draft`), "bot-1", { hasDraft: false }).kind).toBe("draft");
   });
 });
 
@@ -99,6 +140,19 @@ describe("poller state", () => {
     expect(reopened.isProcessed("DOC-2", "100")).toBe(true);
     expect(reopened.isProcessed("DOC-2", "102")).toBe(false);
     expect(await reopened.readDraft("DOC-2")).toContain("# Draft");
+  });
+
+  it("splits a thread at the agent's own last comment — the downtime rule", () => {
+    const thread = [comment("shorten the intro", "human-1", "1"), comment("**Draft ready**", "bot-1", "2"), comment("approve", "human-1", "3")];
+    const { history, unprocessed } = splitAtLastOwnComment(thread, "bot-1");
+    // Older than its own last word: history. Newer: still owed an answer.
+    expect(history.map((item) => item.id)).toEqual(["1", "2"]);
+    expect(unprocessed.map((item) => item.id)).toEqual(["3"]);
+
+    // Never spoke here, so nothing is history — a mention typed before it ever polled counts.
+    const untouched = splitAtLastOwnComment(thread, "other-bot");
+    expect(untouched.history).toHaveLength(0);
+    expect(untouched.unprocessed).toHaveLength(3);
   });
 
   it("keeps unapproved drafts out of the vault and out of git", async () => {

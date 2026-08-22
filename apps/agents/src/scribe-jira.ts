@@ -12,7 +12,7 @@ import {
   type Vault,
 } from "@scriptorium/core";
 import { organizePublishedDoc } from "@scriptorium/curator";
-import { publishApprovedDoc } from "./docs-repo";
+import { publishApprovedDoc, pushInternalPlane } from "./docs-repo";
 import { announceDraftForApproval, announcePublished } from "./slack-notify";
 import {
   confluencePageIdFromUrl,
@@ -600,6 +600,9 @@ async function proposeLesson(ctx: Ctx, key: string, approvedBy: string): Promise
   });
   await ctx.state.patch(key, { pendingLessonId: lesson.id });
   await audit(ctx.config.auditFile, { type: "lesson.proposed", actor: "scribe", issue: key, id: lesson.id, text: rule });
+  // Durable the moment it exists: a proposal that lives only in this container is one
+  // redeploy away from vanishing — and its id being reissued to a different rule.
+  await pushInternalPlane(ctx.config, ctx.vault, `lessons: propose ${lesson.id} (${key})`);
 
   await say(
     ctx,
@@ -774,6 +777,7 @@ async function runLessonDecision(
     }
     await audit(ctx.config.auditFile, { type: "lesson.approved", actor, issue: key, id, relPath: lesson.relPath });
     await commitVault(ctx.config.repoRoot, `lessons: approve ${id} (approved by ${actor})`);
+    await pushInternalPlane(ctx.config, ctx.vault, `lessons: approve ${id} (approved by ${actor})`);
     await ctx.state.patch(key, { pendingLessonId: undefined });
     await say(
       ctx,
@@ -795,6 +799,7 @@ async function runLessonDecision(
   await ctx.vault.deleteFile(lesson.relPath);
   await audit(ctx.config.auditFile, { type: "lesson.rejected", actor, issue: key, id, relPath: lesson.relPath });
   await commitVault(ctx.config.repoRoot, `lessons: reject ${id} (rejected by ${actor})`);
+  await pushInternalPlane(ctx.config, ctx.vault, `lessons: reject ${id} (rejected by ${actor})`);
   await ctx.state.patch(key, { pendingLessonId: undefined });
   await say(ctx, key, `**Lesson ${id} rejected** by ${actor} — deleted from the vault. Nothing was learned from it.`);
 }

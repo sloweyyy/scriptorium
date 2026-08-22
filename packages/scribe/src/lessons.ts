@@ -1,3 +1,4 @@
+import path from "node:path";
 import { slugify, type Vault } from "@scriptorium/core";
 
 const LESSONS_DIR = "_lessons";
@@ -47,8 +48,18 @@ export function renderLessonsForPrompt(lessons: Lesson[]): string {
 }
 
 export async function nextLessonId(vault: Vault): Promise<string> {
-  const lessons = await listLessons(vault);
-  const max = lessons.reduce((acc, lesson) => Math.max(acc, Number(lesson.id.replace(/\D/g, "")) || 0), 0);
+  // Numbering scans FILENAMES, not just parseable lessons: a hand-seeded file without an
+  // `id` field is invisible to listLessons but still occupies its number on disk, and
+  // handing that number out again produced two different rules both called L-001 — at
+  // which point "approve lesson L-001" approves whichever file wins the lookup.
+  let max = 0;
+  for (const relPath of await vault.listNotes(LESSONS_DIR)) {
+    const fromName = path.basename(relPath).match(/^L-(\d+)/i);
+    if (fromName?.[1]) max = Math.max(max, Number(fromName[1]));
+  }
+  for (const lesson of await listLessons(vault)) {
+    max = Math.max(max, Number(lesson.id.replace(/\D/g, "")) || 0);
+  }
   return `L-${String(max + 1).padStart(3, "0")}`;
 }
 

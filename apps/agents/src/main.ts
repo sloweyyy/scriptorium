@@ -106,6 +106,23 @@ const ingress = startIngress({
           // with its own published projection.
           for (const edited of change.externalEdited) {
             if (!edited.issueKey || !scribe) continue;
+            if (edited.landed) {
+              // The agent's own publish arriving via its PR merge — the loop closing,
+              // not a human edit. The ticket gets the good news and the live URL.
+              const slug = edited.repoPath.replace(/^docs\//, "").replace(/\.md$/, "");
+              await scribe.comment(
+                edited.issueKey,
+                [
+                  "🎉 **The pull request was merged — this doc is now live on the public site.**",
+                  "",
+                  config.sites.external ? `- ${config.sites.external}/${slug}` : undefined,
+                  commitUrl ? `- Merge commit: ${commitUrl}` : undefined,
+                ]
+                  .filter(Boolean)
+                  .join("\n"),
+              );
+              continue;
+            }
             await scribe.comment(
               edited.issueKey,
               [

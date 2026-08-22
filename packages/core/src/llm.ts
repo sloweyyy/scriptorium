@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { AnthropicVertex } from "@anthropic-ai/vertex-sdk";
+import type { z } from "zod";
 import { generateWithGemini } from "./gemini";
 
 /**
@@ -23,10 +24,12 @@ export function anthropic(): LlmClient {
   if (client) return client;
 
   if (llmProvider() === "gemini") {
-    // Curator's grounded Q&A needs the Anthropic tool runner; there is no honest way to
-    // serve it from here, so say so rather than degrade retrieval silently.
+    // Every model call in the pipeline now has a Gemini transport — single-shot generation
+    // via `generateText`, agentic retrieval via `runGeminiToolLoop`. Reaching for the
+    // Anthropic client under LLM_PROVIDER=gemini therefore means a caller skipped the
+    // dispatch, which would silently send a "Gemini run" to Claude. Fail loudly instead.
     throw new Error(
-      "LLM_PROVIDER=gemini covers drafting only. Grounded Q&A requires Claude — unset LLM_PROVIDER once Anthropic quota or an API key is available.",
+      "LLM_PROVIDER=gemini: no Anthropic client is available. Route this call through generateText() or a provider-dispatching entry point.",
     );
   }
 
@@ -53,6 +56,24 @@ export function modelId(): string {
 }
 
 export type ImageMediaType = "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+
+/**
+ * A tool, described once, in neither provider's dialect.
+ *
+ * Anthropic's tool runner and Vertex's `functionDeclarations` disagree about everything
+ * except this much: a name, a description, an argument shape, and something to run. Both
+ * transports project *from* this shape, which is what keeps the behaviour a tool encodes
+ * (see `@scriptorium/curator`'s qa-contract) from existing twice.
+ *
+ * `run` takes `unknown` on purpose: it validates with `inputSchema` itself, so arguments
+ * arriving from either dialect are checked in exactly one place.
+ */
+export interface ToolSpec {
+  name: string;
+  description: string;
+  inputSchema: z.ZodObject;
+  run(input: unknown): Promise<string>;
+}
 
 export interface ImageInput {
   mediaType: ImageMediaType;

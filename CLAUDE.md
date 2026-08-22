@@ -13,7 +13,8 @@ pnpm dev                # vault watcher + Jira poller + any Slack bot with token
 pnpm jira:doctor        # verify Jira auth/JQL/comments/attachments/transitions (--write for write access)
 pnpm typecheck          # tsc --noEmit (strict) — must stay clean
 pnpm eval               # contract / lint / organizer evals, no API key needed
-RUN_LLM_EVALS=1 pnpm eval   # + live grounded-Q&A evals (needs ANTHROPIC_API_KEY)
+RUN_LLM_EVALS=1 pnpm eval   # + live grounded-Q&A evals, on whichever provider is configured
+RUN_LLM_EVALS=1 LLM_PROVIDER=gemini pnpm eval   # same contract, Gemini transport
 pnpm draft <prd.md> [images...]   # full Scribe pipeline from the CLI
 pnpm render:wireframes  # samples/wireframes/*.svg -> .png
 pnpm seed:corpus        # corpus/*.md -> vault/reference/ (--inbox to let the watcher file them)

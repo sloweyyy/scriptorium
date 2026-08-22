@@ -39,6 +39,12 @@ export interface PublishToRepoInput {
   subdir?: string;
   /** Branch to publish onto. Default: the branch the work tree is on. */
   branch?: string;
+  /**
+   * Branch a NEW target branch is cut from (e.g. "main"). Without it, a branch absent from
+   * the remote is cut from whatever HEAD happens to be — which is how one target's commit
+   * lands on another target's branch.
+   */
+  baseBranch?: string;
   remote?: string;
   approvedBy: string;
   message?: string;
@@ -179,7 +185,12 @@ export async function publishToRepo(input: PublishToRepoInput): Promise<PublishT
       // the baseline blob then equals the HEAD blob and the gate below passes on exactly
       // the content it exists to protect. Reachable via `push: false` and after a
       // `push-failed`, so refuse rather than rebase.
-      const ahead = Number(await git(repoDir, ["rev-list", "--count", `${remote}/${branch}..HEAD`]));
+      // The ahead-count only means anything while HEAD is actually on this branch. A
+      // publish to a DIFFERENT branch than the one checked out must not read the other
+      // branch's commits as its own unpushed work — that is how a two-target publish
+      // (external to a per-ticket branch, internal to the base) refused itself.
+      const current = await git(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]);
+      const ahead = current === branch ? Number(await git(repoDir, ["rev-list", "--count", `${remote}/${branch}..HEAD`])) : 0;
       if (ahead > 0) {
         return {
           status: "conflict",
@@ -194,13 +205,19 @@ export async function publishToRepo(input: PublishToRepoInput): Promise<PublishT
         };
       }
       try {
-        await git(repoDir, ["rebase", `${remote}/${branch}`]);
+        // Start from the remote's state of THIS branch, so the baseline below is computed
+        // against what the remote actually holds rather than against a sibling branch.
+        await git(repoDir, ["checkout", "-B", branch, `${remote}/${branch}`]);
       } catch (error) {
         // A failed rebase leaves the work tree mid-rebase, which would trip the dirty check
         // above on every later run and wedge the repo. Unwind before surfacing.
         await gitMaybe(repoDir, ["rebase", "--abort"]);
         throw error;
       }
+    } else if (input.baseBranch) {
+      // New target branch: cut it from the base explicitly, never from the current HEAD.
+      await git(repoDir, ["fetch", remote, input.baseBranch]);
+      await git(repoDir, ["checkout", "-B", branch, `${remote}/${input.baseBranch}`]);
     }
   }
 

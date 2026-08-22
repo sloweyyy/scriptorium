@@ -61,8 +61,15 @@ export interface SlackSettings {
 }
 
 export interface WebhookSettings {
-  /** High-entropy path segment: Jira Cloud cannot sign webhook payloads, so the URL is the credential. */
+  /** High-entropy path segment. Always required; the URL is the first credential. */
   jiraSecret?: string;
+  /**
+   * Jira's own webhook secret, set in the WebHooks UI. When present Jira signs the payload
+   * (`X-Hub-Signature: sha256=…`) and the ingress verifies it — strictly better than the
+   * path segment alone, which is why it is used when configured. The REST webhook API is
+   * still Connect/OAuth-only, so registration remains a UI step.
+   */
+  jiraHmacSecret?: string;
   /** GitHub signs with HMAC-SHA256, so this is a real shared secret. */
   githubSecret?: string;
 }
@@ -71,7 +78,7 @@ export interface AppConfig {
   model: string;
   /** True when either provider is configured — an API key or a Vertex project. */
   hasModelAccess: boolean;
-  provider: "vertex" | "anthropic" | "none";
+  provider: "gemini" | "vertex" | "anthropic" | "none";
   vertexProject?: string;
   vertexRegion: string;
   repoRoot: string;
@@ -125,7 +132,14 @@ export function defaultJql(jira: JiraSettings): string {
 
 export function loadConfig(repoRoot = process.cwd()): AppConfig {
   const vertexProject = env("VERTEX_PROJECT_ID");
-  const provider = vertexProject ? "vertex" : env("ANTHROPIC_API_KEY") ? "anthropic" : "none";
+  const provider =
+    env("LLM_PROVIDER") === "gemini" && vertexProject
+      ? "gemini"
+      : vertexProject
+        ? "vertex"
+        : env("ANTHROPIC_API_KEY")
+          ? "anthropic"
+          : "none";
   return {
     model: env("MODEL") ?? "claude-opus-5",
     hasModelAccess: provider !== "none",
@@ -159,6 +173,7 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
     slack: { notifyChannel: env("SLACK_NOTIFY_CHANNEL") },
     webhook: {
       jiraSecret: env("JIRA_WEBHOOK_SECRET"),
+      jiraHmacSecret: env("JIRA_WEBHOOK_HMAC_SECRET"),
       githubSecret: env("GITHUB_WEBHOOK_SECRET"),
     },
     docsRepo: {

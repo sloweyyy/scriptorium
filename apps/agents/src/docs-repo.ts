@@ -25,11 +25,21 @@ export interface PublishOutcome {
   pullRequestUrl?: string;
 }
 
+/**
+ * Publish the deploy key to the whole process, once.
+ *
+ * Passing it per-exec only covers the git calls in THIS file — `@scriptorium/publish` shells
+ * out to git itself and inherits `process.env`, so a per-call env produced exactly one
+ * symptom: clone worked, push died with `Permission denied (publickey)`. Setting it on the
+ * environment is what actually reaches every child git process. Harmless elsewhere: the
+ * only other git use is a local commit, which never touches the network.
+ */
 function ssh(config: AppConfig): NodeJS.ProcessEnv {
   const key = config.docsRepo.sshKey;
   if (!key) return process.env;
-  // Repo-scoped deploy key, pinned with IdentitiesOnly so a loaded agent key can't shadow it.
-  return { ...process.env, GIT_SSH_COMMAND: `ssh -i ${key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new` };
+  const command = `ssh -i ${key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`;
+  if (process.env.GIT_SSH_COMMAND !== command) process.env.GIT_SSH_COMMAND = command;
+  return process.env;
 }
 
 /** Clone on first use, fetch afterwards. The clone is scratch — safe to delete. */
@@ -92,6 +102,7 @@ export async function publishApprovedDoc(
     target: "external",
     subdir: "docs",
     branch,
+    baseBranch: config.docsRepo.base,
     remote: "origin",
     approvedBy: input.approvedBy,
     message: `docs: ${input.slug} (${input.issueKey}, approved by ${input.approvedBy})`,

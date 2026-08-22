@@ -5,7 +5,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { loadConfig, slugify, Vault, type ImageInput } from "@scriptorium/core";
+import { geminiModel, loadConfig, slugify, Vault, type ImageInput } from "@scriptorium/core";
 import { checkContract, draftDoc, formatContractQuestions, formatLintFindings } from "@scriptorium/scribe";
 
 const [prdPath, ...imagePaths] = process.argv.slice(2);
@@ -44,7 +44,7 @@ for (const imagePath of imagePaths) {
   }
   images.push({ mediaType, base64: (await fs.readFile(imagePath)).toString("base64") });
 }
-console.log(`drafting with model ${config.model}, ${images.length} design image(s) attached…`);
+console.log(`drafting via ${config.provider} with ${config.provider === "gemini" ? geminiModel() : config.model}, ${images.length} design image(s) attached…`);
 
 const result = await draftDoc(vault, prdRaw, images);
 

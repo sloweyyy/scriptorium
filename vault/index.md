@@ -4,7 +4,7 @@ _Maintained by Curator._
 
 ## Product docs
 
-- _none yet_
+- [[docs/scheduled-maintenance-announcements|Scheduled Maintenance Announcements]]
 
 ## PRDs
 

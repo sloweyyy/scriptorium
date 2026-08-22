@@ -536,7 +536,7 @@ async function runPublish(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await say(ctx, key, `⚠️ Published to the vault, but pushing to the docs repo failed: {{${message}}}`);
+    await say(ctx, key, `⚠️ Published to the vault, but pushing to the docs repo failed:\n\n\`${message.split("\n")[0]}\``);
   }
 
   await announcePublished(ctx.config, {

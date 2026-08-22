@@ -23,8 +23,21 @@ export interface AnswerOptions {
 
 export async function answerQuestion(vault: Vault, question: string, options: AnswerOptions = {}): Promise<QaAnswer> {
   const tools = observe(qaTools(vault, await buildIndex(vault)), options.onTool);
-  const text = llmProvider() === "gemini" ? await askGemini(tools, question) : await askClaude(tools, question);
-  return parseQaAnswer(text, question);
+  try {
+    const text = llmProvider() === "gemini" ? await askGemini(tools, question) : await askClaude(tools, question);
+    return parseQaAnswer(text, question);
+  } catch (error) {
+    // A retrieval loop that exhausts its round cap has searched hard and concluded
+    // nothing — which is NOT_IN_KB with extra steps, not a crash. A question whose terms
+    // brush against many notes ("pricing" against a marketing corpus) can keep the model
+    // sweeping synonyms past the prompt's give-up-early rule; the productive failure is
+    // a gap note that becomes a documentation ticket, not an error a user cannot act on.
+    // Everything else (truncation, transport failures) still fails loudly.
+    if (error instanceof Error && /round cap/.test(error.message)) {
+      return parseQaAnswer(`NOT_IN_KB: ${question}`, question);
+    }
+    throw error;
+  }
 }
 
 function observe(tools: ToolSpec[], onTool: ((name: string) => void) | undefined): ToolSpec[] {

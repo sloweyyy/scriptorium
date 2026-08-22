@@ -30,7 +30,7 @@ _Maintained by Curator._
 
 ## Open gaps
 
-- _none yet_
+- [[_gaps/G-001-what-does-Acme-charge-per-seat-per-month|G-001-what-does-Acme-charge-per-seat-per-month]]
 
 ## Lessons
 

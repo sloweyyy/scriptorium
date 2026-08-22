@@ -72,8 +72,13 @@ export async function stageVault(input: StageInput): Promise<StageResult> {
   for (const relPath of files) {
     const note = await vault.readNote(relPath);
     if (target === "internal") {
-      // Quartz reads the vault's own shape: wikilinks, backlinks and provenance intact.
-      await staging.writeNote(relPath, note.body, note.frontmatter);
+      // Quartz resolves wikilinks natively, so they stay as wikilinks — but links to notes
+      // that are NOT published still get pruned. Their labels are the leak: the vault's
+      // index lists every retrieved reference note by title, and those titles must not ride
+      // along onto a published page just because the files themselves were excluded.
+      const { body, dropped } = transformBodyLinks(relPath, note.body, included, "prune");
+      droppedLinks.push(...dropped);
+      await staging.writeNote(relPath, body, transformFrontmatter(note.frontmatter, [], included));
       continue;
     }
     const { body, dropped } = transformBodyLinks(relPath, note.body, included);

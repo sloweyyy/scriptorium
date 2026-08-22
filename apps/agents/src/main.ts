@@ -1,5 +1,5 @@
 import { docsRepoReady, geminiModel, jiraReady, loadConfig, Vault } from "@scriptorium/core";
-import { updateMoc, watchInbox } from "@scriptorium/curator";
+import { seedCorpusIfEmpty, updateMoc, watchInbox } from "@scriptorium/curator";
 import { startIngress } from "./ingress";
 import { hydrateVaultFromDocsRepo, syncFromDocsRepo } from "./docs-repo";
 import { startCuratorBot } from "./curator-bot";
@@ -42,6 +42,21 @@ if (docsRepoReady(config.docsRepo)) {
   } catch (error) {
     console.warn(`[scriptorium] vault restore skipped: ${error instanceof Error ? error.message : error}`);
   }
+}
+
+// The reference corpus is derived, not committed, so a fresh container has none of it —
+// and a Curator with no reference material answers NOT_IN_KB to every question about the
+// product that corpus documents. Seeded here rather than baked into the image so the vault
+// stays regenerable from `corpus/`, where each page carries the source_url it came from.
+try {
+  const seeded = await seedCorpusIfEmpty(vault, "corpus");
+  if (seeded) {
+    console.log(`[curator] seeded ${seeded.filed}/${seeded.found} reference note(s) from corpus`);
+    for (const name of seeded.skipped) console.warn(`[curator] corpus page skipped (bad frontmatter): ${name}`);
+  }
+} catch (error) {
+  // No corpus is a smaller problem than a process that will not start.
+  console.warn(`[scriptorium] corpus seeding skipped: ${error instanceof Error ? error.message : error}`);
 }
 
 const stopWatcher = watchInbox(vault, (result) => {

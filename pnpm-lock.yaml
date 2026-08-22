@@ -20,6 +20,9 @@ importers:
       '@scriptorium/jira':
         specifier: workspace:*
         version: link:packages/jira
+      '@scriptorium/publish':
+        specifier: workspace:*
+        version: link:packages/publish
       '@scriptorium/scribe':
         specifier: workspace:*
         version: link:packages/scribe
@@ -94,6 +97,12 @@ importers:
         version: 4.4.3
 
   packages/jira:
+    dependencies:
+      '@scriptorium/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/publish:
     dependencies:
       '@scriptorium/core':
         specifier: workspace:*

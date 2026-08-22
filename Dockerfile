@@ -23,4 +23,8 @@ RUN git config --global user.email "agent@scriptorium.local" \
 
 ENV NODE_ENV=production PORT=8080
 EXPOSE 8080
-CMD ["pnpm", "dev"]
+# node is PID 1 on purpose: under `pnpm dev` the signal reaches pnpm, the child is torn
+# down before the shutdown handler can close the poller and the socket, and the platform
+# logs a bare `ELIFECYCLE` with no trace of a clean stop. Cloud Run replaces revisions by
+# sending SIGTERM, so that path runs on every deploy.
+CMD ["node", "--import", "tsx", "apps/agents/src/main.ts"]

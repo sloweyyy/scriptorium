@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defaultJql } from "@scriptorium/core";
 import {
   JiraClient,
   jiraToMarkdown,
@@ -74,6 +75,24 @@ describe("jira comment commands", () => {
     // A typed command outranks the mention that carries it, drafted or not.
     expect(parseCommand(comment(`${at} approve`), "bot-1", { hasDraft: true }).kind).toBe("approve-doc");
     expect(parseCommand(comment(`${at} draft`), "bot-1", { hasDraft: false }).kind).toBe("draft");
+  });
+});
+
+describe("poller query", () => {
+  it("keeps the approval status in view even when it lives in the Done category", () => {
+    // Approval by transition is only observable if the issue is still in the result set
+    // after it moves. With approvedStatus=Done, a bare `statusCategory != Done` filter
+    // drops the issue at the exact moment a human approves it.
+    const jql = defaultJql({
+      projectKey: "DOC",
+      label: "doc-request",
+      issueType: "Task",
+      approvedStatus: "Done",
+      pollMs: 15_000,
+      stateDir: "/tmp/state",
+    });
+    expect(jql).toContain('status = "Done"');
+    expect(jql).not.toMatch(/labels\s*=/);
   });
 });
 

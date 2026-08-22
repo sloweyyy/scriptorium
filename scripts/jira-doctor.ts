@@ -37,7 +37,7 @@ for (const issue of issues.slice(0, 10)) {
 const probe = issues[0];
 if (!probe) {
   console.log(
-    `\n⚠️  No issue matched. Create one in ${config.jira.projectKey} with the label "${config.jira.label}" and re-run.`,
+    `\n⚠️  No issue matched. Create any issue in ${config.jira.projectKey} and re-run — the poller watches the whole project now; the "${config.jira.label}" label only decides whether Scribe drafts unprompted.`,
   );
   process.exit(0);
 }

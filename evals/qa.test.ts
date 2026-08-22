@@ -3,7 +3,7 @@ import { z } from "zod";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Vault, llmProvider } from "@scriptorium/core";
 import { answerQuestion } from "@scriptorium/curator";
 
@@ -77,8 +77,19 @@ describe(`curator grounded Q&A (live LLM, provider: ${provider})`, () => {
 });
 
 describe("gemini tool loop transport", () => {
+  // The transport reads its project before it reaches the stubbed fetch, so without this
+  // the whole block passes only on a machine whose `.env` happens to carry one — and a
+  // clean clone runs `pnpm eval`, documented as needing no credentials, straight into two
+  // red tests. Stubbed rather than required: these exercise the dialect, not the project.
+  const savedProject = process.env.VERTEX_PROJECT_ID;
+  beforeEach(() => {
+    process.env.VERTEX_PROJECT_ID = "eval-project";
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
+    if (savedProject === undefined) delete process.env.VERTEX_PROJECT_ID;
+    else process.env.VERTEX_PROJECT_ID = savedProject;
   });
 
   it("answers every function call in one turn, in order", async () => {

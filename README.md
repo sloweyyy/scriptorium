@@ -179,13 +179,50 @@ handful of lines, and buys segregation of duties that an auditor can see.
 
 ## Running it always-on
 
-The container runs both surfaces in one process; neither needs inbound traffic, and the
-health port exists only to satisfy platforms that insist on one.
+The container runs both surfaces in one process; neither needs inbound traffic for Slack
+(Socket Mode dials out), and the health port plus the Jira/GitHub webhooks are the only
+things served.
 
 ```bash
 docker build -t scriptorium .
 docker run --env-file .env -p 8080:8080 scriptorium
 ```
+
+### Cloud Run
+
+Three properties matter and are easy to get wrong:
+
+- **`--max-instances=1`.** The processed-comment ledger is per-instance state. Two
+  instances means two ledgers, duplicate drafts and duplicate publishes.
+- **`--no-cpu-throttling`.** Cloud Run throttles CPU between requests, so a warm instance
+  is not a running one and the `setInterval` poller would only fire when a request
+  happened to wake it. This bills continuously — that is the cost of having a reconciler.
+- **Workload identity, not a key file.** The service runs as a service account holding
+  `roles/aiplatform.user`, so Claude on Vertex authenticates with no credentials file in
+  the image. `GOOGLE_APPLICATION_CREDENTIALS` is a local-development convenience only.
+
+```bash
+PROJECT=your-project
+SA=scriptorium-agent@$PROJECT.iam.gserviceaccount.com
+
+gcloud run deploy scriptorium \
+  --source . --project "$PROJECT" --region us-central1 \
+  --service-account "$SA" \
+  --min-instances=1 --max-instances=1 --no-cpu-throttling \
+  --set-env-vars "VERTEX_PROJECT_ID=$PROJECT,VERTEX_REGION=global,MODEL=claude-opus-5,JIRA_BASE_URL=https://your-site.atlassian.net,JIRA_EMAIL=you@example.com,JIRA_PROJECT_KEY=DOC,JIRA_APPROVED_STATUS=Done,STATE_DIR=/state" \
+  --set-secrets "JIRA_API_TOKEN=jira-api-token:latest,CURATOR_SLACK_BOT_TOKEN=curator-slack-bot-token:latest,CURATOR_SLACK_APP_TOKEN=curator-slack-app-token:latest" \
+  --add-volume=name=state,type=cloud-storage,bucket=$PROJECT-state \
+  --add-volume-mount=volume=state,mount-path=/state
+```
+
+The GCS volume is what makes the ledger survive a restart: without it, every ticket looks
+like first sight again and the agent re-greets and re-drafts work it already did.
+
+**Claude on Vertex** additionally requires the Anthropic models to be enabled in Model
+Garden for the project, and online-prediction quota for the base model
+(`aiplatform.googleapis.com/global_online_prediction_requests_per_base_model`,
+dimension `base_model=anthropic-claude-opus`). A fresh project starts at zero and the
+increase is requested per base model — `gcloud alpha quotas preferences create`.
 
 ## Status
 

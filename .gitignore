@@ -9,3 +9,6 @@ NOTES.local.md
 
 # Reference corpus is seeded on demand (pnpm seed:corpus), not committed
 vault/reference/
+
+# agent worktrees are local scratch, never part of the repo
+.claude/worktrees/

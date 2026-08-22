@@ -255,6 +255,43 @@ describe("board transitions", () => {
     expect(status()).toBe("Done");
   });
 
+  it("corrects the column on a re-approval with nothing left to publish", async () => {
+    // DOC-1's exact production state: published AND pushed, then walked back through the
+    // board by a revision. Every unit of work is done, so `approve` has nothing to do
+    // except the one thing still wrong — the column. Seeded directly, because a stubbed
+    // Jira has no docs repo to push to and so can never reach `docsPushed` on its own.
+    const settings = config();
+    const stateDir = settings.jira.stateDir;
+    await fs.mkdir(path.join(stateDir, "drafts"), { recursive: true });
+    await fs.writeFile(path.join(stateDir, "drafts", "DOC-1.md"), CLEAN_DRAFT);
+    await fs.writeFile(
+      path.join(stateDir, "jira-state.json"),
+      JSON.stringify({
+        version: 1,
+        issues: {
+          "DOC-1": {
+            hasDraft: true,
+            docSlug: "incident-timeline-embed",
+            publishedPath: "docs/incident-timeline-embed.md",
+            docsPushed: true,
+            lastStatus: "In Review",
+            sourceFingerprint: "seeded",
+            processedComments: [],
+          },
+        },
+      }),
+    );
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "In Review" } } };
+
+    comments.push(human("h1", "approve"));
+    const stop = await startScribeJira(settings, vault);
+    stop.stop();
+
+    expect(status()).toBe("Done");
+    // And it still says why it did nothing else, rather than implying it re-published.
+    expect(comments.at(-1)?.body).toContain("Already published");
+  });
+
   it("never re-announces a move the ticket is already in", async () => {
     issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "In Progress" } } };
     const stop = await startScribeJira(config(), vault);

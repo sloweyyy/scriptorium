@@ -618,6 +618,15 @@ async function runPublish(
     );
   }
 
+  // Above the early return, and deliberately: the column has to be true on *every* path
+  // that ends with the doc published and pushed. A push-only retry is the case where the
+  // board is most likely to be stale — the ticket went back through In Progress and In
+  // Review for the revision that preceded it — so skipping the move here left a published,
+  // pushed doc sitting in In Review with nothing left to review.
+  await moveTo(ctx, key, ctx.config.jira.approvedStatus, issueStatus(issue));
+
+  // The announcement and the lesson proposal are a different matter: those already
+  // happened on the first approval, and doing them twice is noise, not honesty.
   if (alreadyPublished) return;
 
   await announcePublished(ctx.config, {
@@ -628,9 +637,6 @@ async function runPublish(
     approvedBy,
     appliedLessons: known?.appliedLessons,
   });
-
-  // Keep the board honest when the approval arrived as a comment rather than a drag.
-  await moveTo(ctx, key, ctx.config.jira.approvedStatus, issueStatus(issue));
 
   await proposeLesson(ctx, key, approvedBy);
 }

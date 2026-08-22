@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answerBlocks, progressLine, toSlackMrkdwn } from "@scriptorium/agents";
+import { answerBlocks, progressLine, splitForSlack, toSlackMrkdwn } from "@scriptorium/agents";
 
 /**
  * Slack's dialect, pinned.
@@ -121,12 +121,49 @@ describe("answer blocks", () => {
     expect(blocks[1]?.elements?.[0]?.text).toContain("No source cited");
   });
 
-  it("clamps an over-long answer instead of losing the whole message", () => {
-    const blocks = answerBlocks({ markdown: "x".repeat(5_000), citations: ["a"] }) as SectionBlock[];
-    const text = blocks[0]?.text?.text ?? "";
-    // Slack rejects an mrkdwn object over 3000 chars, which would drop the answer entirely.
-    expect(text.length).toBeLessThanOrEqual(3_000);
-    expect(text.endsWith("…")).toBe(true);
+  it("paginates a long answer instead of losing its tail", () => {
+    // "List all 63 notes" is a legitimate question with a legitimate long answer. One
+    // section cannot hold it, and truncating a list answers a different question.
+    // Mirrors the real answer: every item is a citation, and once each becomes a link the
+    // list is well past one section. Plain paths alone came in just under the limit, which
+    // is why this only broke on the version a reader can actually click.
+    const paths = Array.from({ length: 63 }, (_, index) => `reference/some-fairly-long-page-name-${index}`);
+    const listed = paths.map((notePath, index) => `${index + 1}. [[${notePath}]]`).join("\n");
+    const links = new Map(paths.map((notePath) => [notePath, `https://developer.example.com/${notePath}/full-endpoint-reference`]));
+    const blocks = answerBlocks({ markdown: listed, citations: paths, links }) as SectionBlock[];
+
+    const sections = blocks.filter((block) => block.type === "section");
+    expect(sections.length).toBeGreaterThan(1);
+    for (const section of sections) expect((section.text?.text ?? "").length).toBeLessThanOrEqual(3_000);
+    // Every item survives, and none is split down the middle.
+    const whole = sections.map((section) => section.text?.text ?? "").join("\n");
+    expect(whole).toContain("|reference/some-fairly-long-page-name-62>");
+    expect(whole).toContain("1. <https://developer.example.com/reference/some-fairly-long-page-name-0");
+  });
+
+  it("never cuts through a link", () => {
+    // The real failure: a blind slice at 3000 chars landed inside `<url|label>` and Slack
+    // rendered the wreckage — half a URL with %7C where the separator had been.
+    const url = "https://developer.example.com/reference/a-very-long-endpoint-name-that-goes-on";
+    const line = `${"filler ".repeat(420)}<${url}|reference/api-whatsapp-native>`;
+    const blocks = answerBlocks({ markdown: line, citations: [] }) as SectionBlock[];
+
+    for (const section of blocks.filter((block) => block.type === "section")) {
+      const text = section.text?.text ?? "";
+      // Either the link is whole or it is absent — never half of it.
+      const opens = (text.match(/</g) ?? []).length;
+      const closes = (text.match(/>/g) ?? []).length;
+      expect(opens).toBe(closes);
+      expect(text).not.toContain("%7C");
+    }
+  });
+
+  it("says when an answer was truncated, rather than looking complete", () => {
+    // 20 sections is the cap; a message past it has a length problem, not a paging one.
+    const huge = Array.from({ length: 4_000 }, (_, index) => `line ${index} with some text on it`).join("\n");
+    const blocks = answerBlocks({ markdown: huge, citations: [] }) as SectionBlock[];
+    const notice = blocks.map((block) => block.elements?.[0]?.text ?? "").join(" ");
+    expect(notice).toContain("truncated");
   });
 });
 
@@ -144,5 +181,25 @@ describe("progress line", () => {
 
   it("still reports elapsed time before any tool has run", () => {
     expect(progressLine({ searches: 0, reads: 0, elapsedMs: 2_600 })).toBe("⏳ Searching the vault… 3s");
+  });
+});
+
+describe("splitting for Slack", () => {
+  it("keeps short text as a single chunk", () => {
+    expect(splitForSlack("one line")).toEqual(["one line"]);
+  });
+
+  it("breaks at line boundaries, never mid-line", () => {
+    const lines = Array.from({ length: 200 }, (_, index) => `line-${index}-${"x".repeat(40)}`);
+    const chunks = splitForSlack(lines.join("\n"));
+    expect(chunks.length).toBeGreaterThan(1);
+    // Reassembling must give back every line intact, in order.
+    expect(chunks.join("\n").split("\n")).toEqual(lines);
+  });
+
+  it("hard-cuts a single line that is itself over the limit", () => {
+    const chunks = splitForSlack("y".repeat(7_500));
+    expect(chunks.length).toBeGreaterThan(2);
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(3_000);
   });
 });

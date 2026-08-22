@@ -303,12 +303,44 @@ permission rather than a branch convention.
       from Secret Manager, no credential file in the image
 - [x] Webhooks live in production: GitHub's signed `ping` delivered `202`, and the Jira
       route answers a probe from the public internet while doing no work
-- [ ] Vercel import for the two site projects (one browser step)
-- [ ] Jira webhook registered in the UI (its REST API is Connect/OAuth-only)
+- [x] Both sites live: public docs at the base branch, internal graph behind HTTP Basic
+      (Vercel's own Deployment Protection is a paid feature, so the gate is in the project)
+- [x] Jira webhook registered in the UI, HMAC-signed and verified in production
+- [x] The board is the state machine: To Do → In Progress → In Review → Done, driven by
+      the agent, best-effort so a workflow missing a column still gets its draft
+- [x] Slack, live: an `:eyes:` acknowledgement, a progress line that updates in place and
+      is deleted when the answer lands, Slack's own mrkdwn dialect, and citations that
+      resolve — a retrieved page to its `source_url`, an approved doc to the public site,
+      a PRD or house rule to the internal one
+- [x] `vault_overview`: questions about the knowledge base itself are answered from an
+      inventory, not refused. A librarian is the authority on its own shelves, and "how
+      many docs do you have?" is not a documentation gap
 - [ ] Demo video
 
-**Not done, and worth saying plainly:** no LLM path has run yet. Claude on Vertex is wired
-and the credentials work, but the project's per-base-model online-prediction quota is zero
-and the increase is queued with Google, so `draftDoc` / `reviseDoc` / `distillLesson` have
-never executed. Everything above them — contract refusal, intake, the ledger, the
-allowlist, the ingress, the git egress — is covered by 63 evals that need no model.
+### On the model provider
+
+The system runs on Gemini through Vertex AI. It was designed around Claude and still
+supports it — Anthropic's API and Claude on Vertex are both wired — but this project's
+per-base-model quota for the Anthropic models was requested and **denied**, so Claude on
+Vertex cannot serve a request here regardless of waiting.
+
+That is worth stating as a design outcome rather than an apology. Every guarantee in this
+repo — the input contract, the deterministic lint, the approval gate, the allowlisted
+publish, the human-approved lesson store, cite-or-refuse retrieval — is a property of the
+pipeline, not of the model, and all of them hold with a different model underneath.
+Curator's grounded Q&A was written against Claude's tool runner; adding Gemini meant a
+second transport of about eighty lines, because the prompt, both retrieval tools, the read
+cap, the citation rule and the refusal rule live in one shared module. Switching back is
+one line of configuration.
+
+### What is verified, and how
+
+119 evals, none of which need a model or a credential: `git clone`, `pnpm install`,
+`pnpm eval`, green. They cover the guardrails — contract refusal, the lint, the ledger and
+its restart behaviour, the board transitions, the publish allowlist and its divergence
+refusal, the ingress signatures, the Slack dialect, citation resolution, the boot restore.
+
+Live in production, not just in tests: a ticket worked end to end from PRD to a published
+doc and a pull request; an approval recorded against a named human; a question answered in
+Slack with citations; and an unanswerable question that filed a gap note, opened a Jira
+ticket, and was picked up by Scribe on the other surface without anyone prompting it.

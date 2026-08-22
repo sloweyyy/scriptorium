@@ -237,7 +237,22 @@ export async function publishToRepo(input: PublishToRepoInput): Promise<PublishT
 
   const baseline = await lastPublishCommit(repoDir, target);
   const targetPaths = files.map((relPath) => repoPath(subdir, relPath));
-  const diverged = await detectDivergence(repoDir, targetPaths, baseline);
+  const detected = await detectDivergence(repoDir, targetPaths, baseline);
+
+  // A "divergence" where the content the agent is about to write is byte-identical to
+  // what the repo already holds is a refusal with no overwrite in it — nothing of the
+  // human's would be lost, because there is nothing to change. This is not hypothetical:
+  // a repair commit made by a human that leaves the file exactly as the agent would
+  // publish it blocked every later publish of that tree until someone "reconciled"
+  // files that already agreed. Content decides; provenance alone does not.
+  const diverged: typeof detected = [];
+  for (const conflict of detected) {
+    const relPath = subdir ? conflict.path.replace(new RegExp(`^${subdir}/`), "") : conflict.path;
+    const staged = await fs.readFile(path.join(stagedDir, relPath), "utf8").catch(() => undefined);
+    const inRepo = await fs.readFile(path.join(repoDir, conflict.path), "utf8").catch(() => undefined);
+    if (staged !== undefined && staged === inRepo) continue;
+    diverged.push(conflict);
+  }
   if (diverged.length) {
     return { status: "conflict", reason: "human-edit", target, branch, baseline, diverged, committed: false, pushed: false };
   }

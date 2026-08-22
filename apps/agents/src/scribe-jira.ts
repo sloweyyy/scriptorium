@@ -530,6 +530,15 @@ async function runPublish(
   // But "published to the vault" and "pushed to the docs repo" are different facts, and
   // when the second failed, approving again has to retry it rather than report success.
   const alreadyPublished = Boolean(known?.publishedPath);
+
+  // The column is corrected before either early return below, because how much of the work
+  // was already done is not something the board should reflect: an approval on a ticket
+  // whose doc is published belongs in the approved column, whether this call publishes it,
+  // retries a failed push, or finds nothing left to do. Both guards used to sit above the
+  // move, so a ticket that went back through In Progress and In Review for a revision and
+  // was then re-approved stayed in In Review with nothing left to review.
+  if (alreadyPublished) await moveTo(ctx, key, ctx.config.jira.approvedStatus, issueStatus(issue));
+
   if (alreadyPublished && known?.docsPushed) {
     if (!options.quietWhenPublished) {
       await say(ctx, key, `Already published to \`${known.publishedPath}\`. Comment \`draft\` to start a new revision.`);
@@ -568,6 +577,8 @@ async function runPublish(
   });
   await organizePublishedDoc(ctx.vault, relPath);
   await ctx.state.patch(key, { publishedPath: relPath });
+  // Approved and written, so the column says so before the egress — which may fail.
+  await moveTo(ctx, key, ctx.config.jira.approvedStatus, issueStatus(issue));
 
   await say(
     ctx,
@@ -618,15 +629,8 @@ async function runPublish(
     );
   }
 
-  // Above the early return, and deliberately: the column has to be true on *every* path
-  // that ends with the doc published and pushed. A push-only retry is the case where the
-  // board is most likely to be stale — the ticket went back through In Progress and In
-  // Review for the revision that preceded it — so skipping the move here left a published,
-  // pushed doc sitting in In Review with nothing left to review.
-  await moveTo(ctx, key, ctx.config.jira.approvedStatus, issueStatus(issue));
-
-  // The announcement and the lesson proposal are a different matter: those already
-  // happened on the first approval, and doing them twice is noise, not honesty.
+  // The announcement and the lesson proposal are a different matter from the column:
+  // those already happened on the first approval, and repeating them is noise.
   if (alreadyPublished) return;
 
   await announcePublished(ctx.config, {

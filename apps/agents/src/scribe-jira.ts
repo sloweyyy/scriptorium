@@ -773,7 +773,19 @@ async function reportFailure(ctx: Ctx, issue: JiraIssue, error: unknown): Promis
   }
 }
 
-export async function startScribeJira(config: AppConfig, vault: Vault): Promise<() => void> {
+/**
+ * What the poller hands back. `nudge` is the seam the webhook uses: same handler, same
+ * ledger, same state — the webhook is a latency optimisation, not a second code path.
+ */
+export interface ScribeJiraHandle {
+  stop(): void;
+  /** Work one issue now, by key. Re-fetches from the API; never trusts a webhook body. */
+  nudge(issueKey: string): Promise<void>;
+  /** Post a comment on a ticket from outside the poller (e.g. a GitHub event). */
+  comment(issueKey: string, markdown: string): Promise<void>;
+}
+
+export async function startScribeJira(config: AppConfig, vault: Vault): Promise<ScribeJiraHandle> {
   const client = jiraClient(config.jira);
   const me = await client.myself();
   const state = await JiraState.open(config.jira.stateDir);
@@ -805,5 +817,22 @@ export async function startScribeJira(config: AppConfig, vault: Vault): Promise<
 
   await tick();
   const timer = setInterval(() => void tick(), config.jira.pollMs);
-  return () => clearInterval(timer);
+
+  return {
+    stop: () => clearInterval(timer),
+    async nudge(issueKey: string): Promise<void> {
+      // Re-fetch rather than believe the event: the payload is untrusted input, and by the
+      // time we look the ticket may have moved on anyway.
+      const issue = await client.getIssue(issueKey);
+      try {
+        await handleIssue(ctx, issue);
+      } catch (error) {
+        console.warn(`[scribe] ${issueKey} (webhook): ${errorMessage(error)}`);
+        await reportFailure(ctx, issue, error);
+      }
+    },
+    async comment(issueKey: string, markdown: string): Promise<void> {
+      await say(ctx, issueKey, markdown);
+    },
+  };
 }

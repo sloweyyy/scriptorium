@@ -55,6 +55,13 @@ export interface DocsRepoSettings {
   slug?: string;
 }
 
+export interface WebhookSettings {
+  /** High-entropy path segment: Jira Cloud cannot sign webhook payloads, so the URL is the credential. */
+  jiraSecret?: string;
+  /** GitHub signs with HMAC-SHA256, so this is a real shared secret. */
+  githubSecret?: string;
+}
+
 export interface AppConfig {
   model: string;
   /** True when either provider is configured — an API key or a Vertex project. */
@@ -70,6 +77,7 @@ export interface AppConfig {
   curator: SlackAppTokens;
   jira: JiraSettings;
   docsRepo: DocsRepoSettings;
+  webhook: WebhookSettings;
 }
 
 export function docsRepoReady(docs: DocsRepoSettings): boolean {
@@ -141,6 +149,10 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       approvedStatus: env("JIRA_APPROVED_STATUS") ?? "Approved",
       pollMs: envNumber("JIRA_POLL_MS", 15_000),
       stateDir: path.resolve(repoRoot, env("STATE_DIR") ?? ".scriptorium-state"),
+    },
+    webhook: {
+      jiraSecret: env("JIRA_WEBHOOK_SECRET"),
+      githubSecret: env("GITHUB_WEBHOOK_SECRET"),
     },
     docsRepo: {
       url: env("DOCS_REPO_URL"),

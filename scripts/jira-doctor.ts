@@ -72,4 +72,30 @@ if (wantsWrite) {
   console.log("✅ uploaded attachment scriptorium-check.md");
 }
 
+// Webhook reachability. The registration API is Connect/OAuth-only, so all the doctor can
+// prove is that the route answers — with a probe event the ingress drops before doing work.
+const publicUrl = process.env.PUBLIC_URL?.trim();
+const webhookSecret = process.env.JIRA_WEBHOOK_SECRET?.trim();
+if (publicUrl && webhookSecret) {
+  const url = `${publicUrl.replace(/\/+$/, "")}/jira/webhook/${webhookSecret}`;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ webhookEvent: "scriptorium:probe" }),
+    });
+    console.log(
+      response.ok
+        ? `✅ webhook reachable: POST ${publicUrl}/jira/webhook/<secret> -> ${response.status}`
+        : `🚫 webhook route answered ${response.status} — check the secret and the deployment`,
+    );
+  } catch (error) {
+    console.log(`🚫 webhook unreachable: ${error instanceof Error ? error.message : error}`);
+  }
+} else {
+  console.log(
+    "⚠️  webhook not probed — set PUBLIC_URL and JIRA_WEBHOOK_SECRET once deployed. The poller works without it; the webhook only removes the poll delay.",
+  );
+}
+
 console.log("\nall checks passed.");

@@ -1,9 +1,10 @@
-import { createServer } from "node:http";
-import { jiraReady, loadConfig, Vault } from "@scriptorium/core";
-import { watchInbox } from "@scriptorium/curator";
+import { docsRepoReady, jiraReady, loadConfig, Vault } from "@scriptorium/core";
+import { updateMoc, watchInbox } from "@scriptorium/curator";
+import { startIngress } from "./ingress";
+import { syncFromDocsRepo } from "./docs-repo";
 import { startCuratorBot } from "./curator-bot";
 import { startScribeBot } from "./scribe-bot";
-import { startScribeJira } from "./scribe-jira";
+import { startScribeJira, type ScribeJiraHandle } from "./scribe-jira";
 
 /**
  * One process, one vault, one audit log — two agents with separate identities and
@@ -25,10 +26,12 @@ const stopWatcher = watchInbox(vault, (result) => {
 });
 
 const stops: Array<() => void | Promise<unknown>> = [stopWatcher];
+let scribe: ScribeJiraHandle | undefined;
 
 if (jiraReady(config.jira)) {
   try {
-    stops.push(await startScribeJira(config, vault));
+    scribe = await startScribeJira(config, vault);
+    stops.push(() => scribe?.stop());
   } catch (error) {
     console.error(`[scribe] jira poller failed to start: ${error instanceof Error ? error.message : error}`);
     console.error("[scribe] run `pnpm jira:doctor` to see which check fails.");
@@ -47,13 +50,44 @@ if (config.curator.botToken && config.curator.appToken) {
   console.log("[curator] Slack tokens not set — create the app from slack-manifests/curator.yaml, then fill .env");
 }
 
-// Cloud Run (and anything else that health-checks a port) needs a listener; locally there is none.
-if (process.env.PORT) {
-  createServer((_request, response) => {
-    response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(JSON.stringify({ status: "ok", jira: jiraReady(config.jira), slack: Boolean(config.curator.botToken) }));
-  }).listen(config.port, () => console.log(`[scriptorium] health endpoint on :${config.port}`));
-}
+// One HTTP surface: health plus the two webhooks. The Jira webhook is a latency
+// optimisation over the poller — same handler, same ledger — and the GitHub webhook is the
+// inbound half of the round trip.
+const ingress = startIngress({
+  config,
+  hooks: {
+    nudge: scribe ? (issueKey) => scribe!.nudge(issueKey) : undefined,
+    docsChanged: docsRepoReady(config.docsRepo)
+      ? async ({ paths, commitUrl }) => {
+          const change = await syncFromDocsRepo(config, vault, paths);
+          if (change.vaultUpdated.length) {
+            await updateMoc(vault);
+            console.log(`[docs] pulled ${change.vaultUpdated.length} internal note(s) back into the vault`);
+          }
+          // A human edited a published doc: tell the ticket, don't overwrite the vault note
+          // with its own published projection.
+          for (const edited of change.externalEdited) {
+            if (!edited.issueKey || !scribe) continue;
+            await scribe.comment(
+              edited.issueKey,
+              [
+                `**A human edited the published doc** \`${edited.repoPath}\` in the docs repo.`,
+                "",
+                commitUrl ? `- Commit: ${commitUrl}` : "",
+                "- I did not import it: the published copy has its wikilinks rewritten and its internal frontmatter stripped, so importing it back would overwrite the vault note with a lossy projection of itself.",
+                "- Fold the change into the vault note and comment `approve` to republish, or leave it as a site-only edit.",
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            );
+          }
+        }
+      : undefined,
+  },
+});
+stops.push(() => {
+  ingress.close();
+});
 
 if (!jiraReady(config.jira) && !config.curator.botToken) {
   console.log("[scriptorium] local mode: drop a PRD or design into vault/_inbox and watch Curator file it. Ctrl+C to stop.");

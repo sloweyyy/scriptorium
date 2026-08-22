@@ -39,6 +39,14 @@ export interface IssueState {
   appliedLessons?: string[];
   feedback?: string[];
   publishedPath?: string;
+  /**
+   * Whether the docs-repo push for this doc actually succeeded.
+   *
+   * Separate from `publishedPath` because the two can disagree: the vault copy is written
+   * and committed locally, and then the push fails. Without this, `approve` short-circuits
+   * on "already published" and the egress can never be retried from the ticket.
+   */
+  docsPushed?: boolean;
   pendingLessonId?: string;
 }
 

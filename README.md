@@ -218,6 +218,12 @@ gcloud run deploy scriptorium \
 The GCS volume is what makes the ledger survive a restart: without it, every ticket looks
 like first sight again and the agent re-greets and re-drafts work it already did.
 
+**Do not put the docs-repo work tree on that volume.** `DOCS_REPO_WORKDIR` must point at
+local disk (`/tmp/docs-repo`). A GCS FUSE mount has no hardlinks and weak rename/lock
+semantics, so `git clone` into it fails — and the failure surfaces as a publish that wrote
+the vault copy but never reached the repo. The clone is scratch: it is re-created from the
+remote on every boot, so it needs no persistence at all.
+
 **Claude on Vertex** additionally requires the Anthropic models to be enabled in Model
 Garden for the project, and online-prediction quota for the base model
 (`aiplatform.googleapis.com/global_online_prediction_requests_per_base_model`,

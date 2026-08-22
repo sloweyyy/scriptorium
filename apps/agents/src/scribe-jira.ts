@@ -495,7 +495,10 @@ async function runPublish(
   const known = ctx.state.get(key);
 
   // Approving twice (comment then transition, or the reverse) is normal — say nothing.
-  if (known?.publishedPath) {
+  // But "published to the vault" and "pushed to the docs repo" are different facts, and
+  // when the second failed, approving again has to retry it rather than report success.
+  const alreadyPublished = Boolean(known?.publishedPath);
+  if (alreadyPublished && known?.docsPushed) {
     if (!options.quietWhenPublished) {
       await say(ctx, key, `Already published to \`${known.publishedPath}\`. Comment \`draft\` to start a new revision.`);
     }
@@ -504,17 +507,21 @@ async function runPublish(
 
   // Approving with nothing to publish is never silent: a reviewer whose first move is
   // dragging the ticket to Approved must be told why nothing happened.
-  const draft = await ctx.state.readDraft(key);
-  if (!draft) {
-    await say(
-      ctx,
-      key,
-      "I have no draft on this ticket yet, so there is nothing to publish. Attach the PRD as a `.md` file and comment `draft`.",
-    );
-    return;
-  }
+  let relPath = known?.publishedPath;
 
-  const relPath = await publishDoc({
+  if (alreadyPublished && relPath) {
+    await say(ctx, key, `The vault copy of \`${relPath}\` is already published — retrying the docs-repo push only.`);
+  } else {
+    const draft = await ctx.state.readDraft(key);
+    if (!draft) {
+      await say(
+        ctx,
+        key,
+        "I have no draft on this ticket yet, so there is nothing to publish. Attach the PRD as a `.md` file and comment `draft`.",
+      );
+      return;
+    }
+    relPath = await publishDoc({
     vault: ctx.vault,
     auditFile: ctx.config.auditFile,
     repoRoot: ctx.config.repoRoot,
@@ -540,9 +547,10 @@ async function runPublish(
       "- Curator has cross-linked it to the PRD and refreshed `index.md`",
       "- Committed to git with the approver recorded — that commit is the audit trail",
       "",
-      "Ask Curator about it in Slack; it will answer from this note and cite it.",
-    ].join("\n"),
-  );
+        "Ask Curator about it in Slack; it will answer from this note and cite it.",
+      ].join("\n"),
+    );
+  }
 
   // Egress: push the allowlisted trees to the docs repo and open the PR whose merge
   // publishes. Never fatal — a doc approved in Jira and written to the vault stays
@@ -557,6 +565,8 @@ async function runPublish(
       appliedLessons: known?.appliedLessons,
     });
     await say(ctx, key, outcome.comment);
+    // Only a real push clears the retry flag; a refusal or a conflict must stay retryable.
+    if (outcome.published) await ctx.state.patch(key, { docsPushed: true });
     await audit(ctx.config.auditFile, {
       type: outcome.published ? "docs.pushed" : "docs.push.refused",
       actor: approvedBy,
@@ -566,8 +576,17 @@ async function runPublish(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await say(ctx, key, `⚠️ Published to the vault, but pushing to the docs repo failed:\n\n\`${message.split("\n")[0]}\``);
+    // The ticket gets the first line; the logs get all of it. Reporting a production
+    // failure only into a Jira comment left nothing to diagnose from.
+    console.warn(`[scribe] ${key}: docs-repo push failed:\n${message}`);
+    await say(
+      ctx,
+      key,
+      `⚠️ Published to the vault, but pushing to the docs repo failed:\n\n\`${message.split("\n")[0]}\`\n\nComment \`approve\` again to retry the push — the vault copy stays published.`,
+    );
   }
+
+  if (alreadyPublished) return;
 
   await announcePublished(ctx.config, {
     relPath,

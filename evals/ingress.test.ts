@@ -39,7 +39,7 @@ function config(): AppConfig {
     curator: {},
     slack: {},
     webhook: { jiraSecret: JIRA_SECRET, githubSecret: GITHUB_SECRET, jiraHmacSecret: JIRA_HMAC },
-    docsRepo: { base: "main", internalBranch: "vault-live", workDir: path.join(tmpRoot, "docs-repo"), url: "git@github.com:o/r.git" },
+    docsRepo: { base: "main", internalBranch: "vault-live", commitName: "scriptorium agent", commitEmail: "agent@example.invalid", workDir: path.join(tmpRoot, "docs-repo"), url: "git@github.com:o/r.git" },
     jira: {
       label: "doc-request",
       issueType: "Task",

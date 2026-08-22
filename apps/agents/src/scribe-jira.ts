@@ -496,6 +496,9 @@ async function runPublish(
     sourcePrd: known?.sourcePrd,
     appliedLessons: known?.appliedLessons,
     slug: known?.docSlug,
+    // The join key for the GitHub -> Jira round trip. Without it a human edit to a
+    // published doc has no ticket to be reported on.
+    jiraIssue: key,
   });
   await organizePublishedDoc(ctx.vault, relPath);
   await ctx.state.patch(key, { publishedPath: relPath });

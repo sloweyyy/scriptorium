@@ -77,6 +77,44 @@ describe("answer blocks", () => {
     expect(blocks[1]?.elements?.[0]?.text).toContain("docs/scheduled-maintenance-announcements");
   });
 
+  it("counts rather than repeats when the answer already cites inline", () => {
+    // The case from the real thread: a six-item list, each item carrying its own path, with
+    // all six repeated underneath. That duplication is what pushed the message past Slack's
+    // "Show less" fold — a correct answer made to look unwieldy by its own footnotes.
+    const listed = [
+      "There are **6** documents:",
+      "1. **Vault index** [[index]]",
+      "2. **Maintenance** [[docs/scheduled-maintenance-announcements]]",
+    ].join("\n");
+    const blocks = answerBlocks({
+      markdown: listed,
+      citations: ["index", "docs/scheduled-maintenance-announcements"],
+    }) as SectionBlock[];
+
+    const footer = blocks[1]?.elements?.[0]?.text ?? "";
+    expect(footer).toBe("📚 Answered from 2 notes in the vault, cited above.");
+    // The paths still appear — in the answer, once.
+    expect(blocks[0]?.text?.text).toContain("`docs/scheduled-maintenance-announcements`");
+  });
+
+  it("names the sources when the answer does not show them", () => {
+    const blocks = answerBlocks({
+      markdown: "Maintenance windows are quoted in UTC.",
+      citations: ["docs/scheduled-maintenance-announcements"],
+    }) as SectionBlock[];
+    expect(blocks[1]?.elements?.[0]?.text).toBe("📚 `docs/scheduled-maintenance-announcements`");
+  });
+
+  it("caps the chips so the footer stays a glance", () => {
+    const many = ["a", "b", "c", "d", "e", "f"];
+    const blocks = answerBlocks({ markdown: "An answer citing nothing visibly.", citations: many }) as SectionBlock[];
+    const footer = blocks[1]?.elements?.[0]?.text ?? "";
+    expect(footer).toContain("`a`");
+    expect(footer).toContain("`d`");
+    expect(footer).not.toContain("`e`");
+    expect(footer).toContain("+2 more");
+  });
+
   it("says so when nothing was cited, rather than showing an empty footer", () => {
     const blocks = answerBlocks({ markdown: "Something.", citations: [] }) as SectionBlock[];
     // An uncited answer is the fail-closed rule having been broken. Silence would hide it.

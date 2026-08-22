@@ -64,10 +64,11 @@ RUN_LLM_EVALS=1 pnpm eval     # + live grounded-Q&A evals
 ## Jira setup (Agent A, ~5 minutes)
 
 1. Create a free Jira Cloud site and a project (key `DOC` in the examples).
-2. Create an API token at
-   [id.atlassian.com → Security → API tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
-   for the account the agent posts as, and put `JIRA_BASE_URL`, `JIRA_EMAIL`,
-   `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in `.env`.
+2. Create a dedicated service account for the agent, display-named **Scribe** — the
+   name is what every ticket thread shows, and the agent must be able to tell its own
+   comments from a human's, which a shared account makes impossible. Create its API
+   token at [id.atlassian.com → Security → API tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
+   and put `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in `.env`.
 3. Add a status named **Approved** to the project's workflow (optional — an `approve`
    comment does the same thing; set `JIRA_APPROVED_STATUS` if you name it differently).
    The agent also drives the columns in between when they exist: `JIRA_IN_PROGRESS_STATUS`

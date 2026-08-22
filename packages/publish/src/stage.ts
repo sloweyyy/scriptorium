@@ -49,9 +49,11 @@ async function walkFiles(root: string, prefix = ""): Promise<string[]> {
  * wrong, and "filter the bad file out and carry on" would hide that. Only a divergence
  * against the docs repo (see `publishToRepo`) is a structured, recoverable result.
  *
- * Gate 1 — nothing outside the include-list is staged. Asserted against a raw filesystem
- * walk of `destDir`, so a stale file already sitting there, or a non-`.md` file, is caught
- * too.
+ * Gate 1 — nothing outside the include-list is staged. It is asserted against a raw
+ * filesystem walk of `destDir` (not the list it just wrote), so it catches a stale file
+ * already sitting in the destination and any non-`.md` stray. What it cannot catch is a bug
+ * in `isIncluded` itself — anything the allowlist wrongly admits is in the list and passes.
+ * `NEVER_PUBLISH` and gate 2 are the backstops for that.
  *
  * Gate 2 — no staged file carries `source_url` frontmatter. That key is the marker every
  * retrieved reference note carries, and this gate keys on content rather than path, so it

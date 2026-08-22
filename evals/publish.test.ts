@@ -209,6 +209,50 @@ describe("publish divergence gate", () => {
     expect(publishCommits.split("\n").filter(Boolean)).toHaveLength(1);
   });
 
+  it("refuses to rebase its own unpushed publish commit, which would corrupt the baseline", async () => {
+    // The subtle one. A local publish commit that never reached the remote gets rewritten by
+    // the rebase: every path that commit did not itself touch comes back carrying the
+    // human's content, so baseline blob == HEAD blob and the divergence gate waves through
+    // exactly the file it should protect. Refuse before rebasing.
+    await vault.writeNote("docs/csv-format.md", "# CSV format\n\nAgent body.", { kind: "doc" });
+    await fs.mkdir(path.join(agentClone, "docs"), { recursive: true });
+    await fs.writeFile(path.join(agentClone, "docs/widget-exports.md"), "# Widget exports\n\nShared.\n");
+    await run(agentClone, ["add", "docs/widget-exports.md"]);
+    await run(agentClone, ["commit", "-m", "docs: seed shared page"]);
+    await run(agentClone, ["push", "origin", "main"]);
+
+    // A publish that commits but does not push (push disabled, or a rejected push).
+    const local = await publishVault({
+      vault,
+      target: "external",
+      repoDir: agentClone,
+      approvedBy: "pm@example.com",
+      push: false,
+    });
+    expect(local.push.status).toBe("published");
+
+    await run(tmpRoot, ["clone", bare, humanClone]);
+    await run(humanClone, ["config", "user.name", "Human"]);
+    await run(humanClone, ["config", "user.email", "human@example.com"]);
+    await fs.writeFile(path.join(humanClone, "docs/widget-exports.md"), "# Widget exports\n\nHand-edited.\n");
+    await run(humanClone, ["commit", "-am", "docs: human edit"]);
+    await run(humanClone, ["push", "origin", "main"]);
+    const remoteTip = await run(bare, ["rev-parse", "refs/heads/main"]);
+
+    await vault.writeNote("docs/widget-exports.md", "# Widget exports\n\nAgent body.", { kind: "doc" });
+    const second = await publishVault({ vault, target: "external", repoDir: agentClone, approvedBy: "pm@example.com" });
+
+    expect(second.push.status).toBe("conflict");
+    if (second.push.status !== "conflict") throw new Error("expected a conflict");
+    expect(second.push.reason).toBe("unpushed-local-commits");
+    expect(second.push.unpushed).toBe(1);
+    expect(second.push.committed).toBe(false);
+    // No rebase happened, so the human's commit is still the only thing on the remote and
+    // the agent's local history is untouched.
+    expect(await run(bare, ["rev-parse", "refs/heads/main"])).toBe(remoteTip);
+    expect(await run(agentClone, ["status", "--porcelain"])).toBe("");
+  });
+
   it("refuses to overwrite a path it has never published (no baseline commit)", async () => {
     // Fail-closed first publish: whatever is already at a target path is somebody else's.
     await fs.mkdir(path.join(agentClone, "docs"), { recursive: true });

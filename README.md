@@ -226,11 +226,30 @@ increase is requested per base model — `gcloud alpha quotas preferences create
 
 ## Status
 
-- [x] Core: vault, LLM client, audit log, config
+- [x] Core: vault, LLM client (Anthropic API **or** Claude on Vertex AI), audit log, config
 - [x] Scribe: contract, draft (vision), lint, revise, lesson store/distiller, publish
 - [x] Scribe on Jira: poll → contract → draft → feedback → approve → publish → lesson gate
+- [x] Mention-only intake: the poller watches the whole project; the `doc-request` label
+      decides whether Scribe drafts unprompted, and an unlabelled ticket is adopted in
+      silence until someone mentions it
+- [x] Self-healing ledger: a restart reconstructs from the ticket instead of re-greeting,
+      and only comments newer than the agent's own last comment are replayed
 - [x] Curator: organizer + MOC, watcher, grounded Q&A with citations, gap notes
 - [x] Cross-surface loop: gap note → Jira doc request
 - [x] Publish → organize hook (cross-link + re-index on approval)
+- [x] Egress: allowlisted push to the docs repo, fail-closed staging, divergence refusal,
+      per-ticket branch + pull request whose merge publishes
+- [x] Ingress: `/health`, `/jira/webhook/<secret>`, `/github/webhook` (HMAC), with the
+      poller as the reconciler behind it
+- [x] Round trip: internal notes come back into the vault; an edit to a published doc is
+      reported on its ticket rather than imported over the source
+- [x] Slack: publish announcements (Curator) and draft-approval buttons (Scribe)
 - [x] Second sample PRD demonstrating lesson transfer (`samples/prd-002-subscriber-management.md`)
+- [ ] Docs sites deployed (Astro Starlight external, Quartz internal)
 - [ ] Demo video
+
+**Not done, and worth saying plainly:** no LLM path has run yet. Claude on Vertex is wired
+and the credentials work, but the project's per-base-model online-prediction quota is zero
+and the increase is queued with Google, so `draftDoc` / `reviseDoc` / `distillLesson` have
+never executed. Everything above them — contract refusal, intake, the ledger, the
+allowlist, the ingress, the git egress — is covered by 63 evals that need no model.

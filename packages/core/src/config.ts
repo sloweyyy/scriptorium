@@ -68,9 +68,16 @@ export function jiraReady(jira: JiraSettings): boolean {
  * silence — no code path ever runs. The label decides whether the agent *drafts*
  * unasked (see `JiraSettings.label`), not whether it can see the ticket at all.
  */
+/**
+ * The approval-status clause is load-bearing: approval by workflow transition is only
+ * observable while the issue is still in the result set after it moves. When the approval
+ * status sits in the Done category — `JIRA_APPROVED_STATUS=Done`, the default on a
+ * team-managed project with no "Approved" column — a bare `statusCategory != Done` filter
+ * drops the issue at the exact moment a human approves it.
+ */
 export function defaultJql(jira: JiraSettings): string {
   if (jira.jql) return jira.jql;
-  return `project = "${jira.projectKey}" AND statusCategory != Done ORDER BY updated ASC`;
+  return `project = "${jira.projectKey}" AND (statusCategory != Done OR status = "${jira.approvedStatus}") ORDER BY updated ASC`;
 }
 
 export function loadConfig(repoRoot = process.cwd()): AppConfig {

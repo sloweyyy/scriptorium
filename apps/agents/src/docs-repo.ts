@@ -243,11 +243,46 @@ export async function publishApprovedDoc(
   };
 }
 
+/**
+ * Push ONLY the internal plane — the durability call for state that must survive the
+ * container. A lesson used to exist nowhere but the local vault between its proposal and
+ * the next publish: a redeploy in that window deleted it, reset the id numbering, and the
+ * next proposal reused L-001 for a different rule. Anything a human decided (a proposal
+ * they will vote on, an approval they gave) is pushed the moment it exists.
+ */
+export async function pushInternalPlane(config: AppConfig, vault: Vault, message: string): Promise<boolean> {
+  if (!docsRepoReady(config.docsRepo)) return false;
+  try {
+    const repoDir = await ensureDocsRepo(config);
+    const result = await publishVault({
+      vault,
+      repoDir,
+      target: "internal",
+      subdir: "internal",
+      branch: config.docsRepo.internalBranch,
+      baseBranch: config.docsRepo.base,
+      remote: "origin",
+      approvedBy: "scriptorium agent",
+      message,
+    });
+    return result.push.status === "published" || result.push.status === "unchanged";
+  } catch (error) {
+    // Durability is best-effort here; the lesson flow itself must not die on a push.
+    console.warn(`[docs] internal-plane push failed: ${error instanceof Error ? error.message : error}`);
+    return false;
+  }
+}
+
 export interface DocsRepoChange {
   /** Vault notes updated from the repo — internal tree only, see below. */
   vaultUpdated: string[];
-  /** Published docs a human edited, per ticket. Reported, never imported. */
-  externalEdited: Array<{ repoPath: string; issueKey?: string }>;
+  /**
+   * Published docs that changed on the base branch, per ticket. Reported, never imported.
+   * `landed: true` means the change IS the agent's own publish arriving via its PR merge
+   * — the copy on base now equals the publish branch tip — and the ticket hears "live",
+   * not an edit warning.
+   */
+  externalEdited: Array<{ repoPath: string; issueKey?: string; landed: boolean }>;
 }
 
 /**
@@ -299,15 +334,32 @@ export async function syncFromDocsRepo(config: AppConfig, vault: Vault, paths: r
       continue;
     }
 
-    const issueKey = (() => {
-      try {
-        const value = parseMarkdown(content).frontmatter.jira_issue;
-        return typeof value === "string" ? value : undefined;
-      } catch {
-        return undefined;
-      }
-    })();
-    change.externalEdited.push({ repoPath, issueKey });
+    let issueKey: string | undefined;
+    let slug: string | undefined;
+    try {
+      const frontmatter = parseMarkdown(content).frontmatter;
+      issueKey = typeof frontmatter.jira_issue === "string" ? frontmatter.jira_issue : undefined;
+      slug = typeof frontmatter.slug === "string" ? frontmatter.slug : undefined;
+    } catch {
+      // Unparseable frontmatter: still a change worth reporting, just unattributable.
+    }
+
+    // A merge of the agent's own publish PR changes this file too — but that is the doc
+    // LANDING, not a human editing it, and warning about an overwrite that isn't one
+    // teaches people to ignore the warning. The tell is content: when main's copy now
+    // equals the tip of the agent's publish branch, this change is the merge of that
+    // branch. A real human edit differs from what the agent pushed, whichever route it
+    // took into main.
+    let landed = false;
+    if (issueKey) {
+      const branch = docBranchName(issueKey, slug ?? path.basename(repoPath, ".md"));
+      await exec("git", ["fetch", "origin", branch], { cwd: repoDir, env }).catch(() => undefined);
+      const branchCopy = await exec("git", ["show", `origin/${branch}:${repoPath}`], { cwd: repoDir, maxBuffer: 8_000_000 }).catch(
+        () => undefined,
+      );
+      landed = branchCopy !== undefined && branchCopy.stdout === content;
+    }
+    change.externalEdited.push({ repoPath, issueKey, landed });
   }
   return change;
 }

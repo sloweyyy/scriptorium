@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Vault, type AppConfig } from "@scriptorium/core";
-import { hydrateVaultFromDocsRepo, publishApprovedDoc } from "@scriptorium/agents";
+import { hydrateVaultFromDocsRepo, publishApprovedDoc, syncFromDocsRepo } from "@scriptorium/agents";
 
 /**
  * Boot restore, against a real git remote on disk.
@@ -211,5 +211,65 @@ describe("publishing a note the vault has lost", () => {
 
     expect(outcome.published).toBe(false);
     expect(outcome.comment).toContain("Publish refused");
+  });
+});
+
+describe("telling a landed publish from a human edit", () => {
+  async function publishIncident(): Promise<void> {
+    await vault.writeNote("docs/incident-timeline-embed.md", "## Overview\n\nReal content.\n", {
+      title: "Incident timeline embed",
+      slug: "incident-timeline-embed",
+      jira_issue: "DOC-3",
+    });
+    const outcome = await publishApprovedDoc(config(), vault, {
+      issueKey: "DOC-3",
+      issueUrl: "https://example.atlassian.net/browse/DOC-3",
+      slug: "incident-timeline-embed",
+      relPath: "docs/incident-timeline-embed.md",
+      approvedBy: "A Reviewer",
+    });
+    expect(outcome.published).toBe(true);
+  }
+
+  async function mergePublishBranch(): Promise<void> {
+    const work = path.join(tmpRoot, "merge-clone");
+    await exec("git", ["clone", "--quiet", remote, work]);
+    await git(work, "config", "user.email", "human@example.invalid");
+    await git(work, "config", "user.name", "A Human");
+    await git(work, "merge", "--no-ff", "-m", "merge publish PR", "origin/docs/doc-3-incident-timeline-embed");
+    await git(work, "push", "--quiet", "origin", "main");
+  }
+
+  it("reports the PR merge as the doc going live, not as a human edit", async () => {
+    // Merging the agent's own publish branch changes docs/* on main too — but that is
+    // the doc LANDING. Warning about an overwrite that is not one teaches people to
+    // ignore the warning that matters.
+    await publishIncident();
+    await mergePublishBranch();
+
+    const change = await syncFromDocsRepo(config(), vault, ["docs/incident-timeline-embed.md"]);
+    expect(change.externalEdited).toHaveLength(1);
+    expect(change.externalEdited[0]?.issueKey).toBe("DOC-3");
+    expect(change.externalEdited[0]?.landed).toBe(true);
+  });
+
+  it("still reports a genuine human edit as one", async () => {
+    await publishIncident();
+    await mergePublishBranch();
+
+    // A human then edits the published copy on main: content no longer matches the
+    // publish branch tip, whatever route it took in.
+    const work = path.join(tmpRoot, "edit-clone");
+    await exec("git", ["clone", "--quiet", remote, work]);
+    await git(work, "config", "user.email", "human@example.invalid");
+    await git(work, "config", "user.name", "A Human");
+    const target = path.join(work, "docs/incident-timeline-embed.md");
+    await fs.writeFile(target, (await fs.readFile(target, "utf8")) + "\nA human addendum.\n");
+    await git(work, "add", "-A");
+    await git(work, "commit", "-m", "human touch-up");
+    await git(work, "push", "--quiet", "origin", "main");
+
+    const change = await syncFromDocsRepo(config(), vault, ["docs/incident-timeline-embed.md"]);
+    expect(change.externalEdited[0]?.landed).toBe(false);
   });
 });

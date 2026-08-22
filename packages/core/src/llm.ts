@@ -1,12 +1,39 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { AnthropicVertex } from "@anthropic-ai/vertex-sdk";
 
-let client: Anthropic | undefined;
+/**
+ * Two ways in, one surface. The first-party client wants an API key; the Vertex client
+ * wants a GCP project and Google credentials (ADC or a service-account key) and no key
+ * at all. Both expose the same `messages.create` and `beta.messages.toolRunner`, so the
+ * pipeline never learns which one it is talking to.
+ */
+export type LlmClient = Anthropic | AnthropicVertex;
 
-export function anthropic(): Anthropic {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error("ANTHROPIC_API_KEY is not set — copy .env.example to .env and fill it in.");
+let client: LlmClient | undefined;
+
+export function llmProvider(): "vertex" | "anthropic" | "none" {
+  if (process.env.VERTEX_PROJECT_ID?.trim()) return "vertex";
+  return process.env.ANTHROPIC_API_KEY?.trim() ? "anthropic" : "none";
+}
+
+export function anthropic(): LlmClient {
+  if (client) return client;
+
+  if (llmProvider() === "vertex") {
+    client = new AnthropicVertex({
+      projectId: process.env.VERTEX_PROJECT_ID!.trim(),
+      // "global" is the recommended default; a specific region pins where inference runs.
+      region: process.env.VERTEX_REGION?.trim() || "global",
+    });
+    return client;
   }
-  client ??= new Anthropic();
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error(
+      "No model access configured — set ANTHROPIC_API_KEY, or VERTEX_PROJECT_ID (+ GOOGLE_APPLICATION_CREDENTIALS) to use Claude on Vertex AI.",
+    );
+  }
+  client = new Anthropic();
   return client;
 }
 

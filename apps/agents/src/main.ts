@@ -14,7 +14,11 @@ const vault = new Vault(config.vaultDir);
 await vault.ensure();
 
 console.log(`[scriptorium] vault:  ${config.vaultDir}`);
-console.log(`[scriptorium] model:  ${config.model} (ANTHROPIC_API_KEY ${config.hasAnthropicKey ? "present" : "MISSING"})`);
+console.log(
+  `[scriptorium] model:  ${config.model} via ${
+    config.provider === "vertex" ? `Vertex AI (${config.vertexProject}, ${config.vertexRegion})` : config.provider === "anthropic" ? "Anthropic API" : "NO PROVIDER CONFIGURED"
+  }`,
+);
 
 const stopWatcher = watchInbox(vault, (result) => {
   console.log(`[curator] ${result.action}: ${result.from}${result.to ? ` -> ${result.to}` : ""}${result.note ? ` (${result.note})` : ""}`);

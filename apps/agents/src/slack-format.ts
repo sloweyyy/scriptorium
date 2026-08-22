@@ -83,6 +83,27 @@ export interface AnswerBlocksInput {
   markdown: string;
   /** Vault-relative note paths the answer relied on. */
   citations: string[];
+  /**
+   * Cited path -> where a reader can open it. Absent entries stay plain text: a citation
+   * that names its note is worth less than one that opens it, and far more than one that
+   * opens the wrong thing.
+   */
+  links?: Map<string, string>;
+}
+
+/**
+ * Make cited paths clickable where they already appear in the answer.
+ *
+ * The conversion has turned `[[docs/x]]` into `` `docs/x` `` by this point, so the code span
+ * is the anchor. Longest path first, or a citation that is a prefix of another rewrites the
+ * shorter one inside the longer and produces a broken link.
+ */
+function linkifyCitations(rendered: string, links: Map<string, string>): string {
+  let output = rendered;
+  for (const [notePath, url] of [...links].sort(([a], [b]) => b.length - a.length)) {
+    output = output.split(`\`${notePath}\``).join(`<${url}|${notePath}>`);
+  }
+  return output;
 }
 
 /** Beyond this many chips the footer stops being a glance and becomes a second list. */
@@ -103,15 +124,28 @@ const MAX_SOURCE_CHIPS = 4;
  * edge — it is the fail-closed rule having been broken, and a silently absent footer is
  * exactly how that would go unnoticed.
  */
-function sourceLine(rendered: string, citations: string[]): string {
+function sourceLine(rendered: string, citations: string[], links: Map<string, string>): string {
   if (citations.length === 0) return "⚠️ No source cited — treat this answer as unverified.";
 
   const count = `${citations.length} note${citations.length === 1 ? "" : "s"}`;
   if (citations.every((citation) => rendered.includes(citation))) {
-    return `📚 Answered from ${count} in the vault, cited above.`;
+    const linked = citations.filter((citation) => links.has(citation)).length;
+    // Say when a citation is a dead end. Some notes are deliberately never published —
+    // retrieved pages with no source_url among them — and a reader who cannot open one
+    // should learn that from the footer rather than from a link that is not there.
+    //
+    // But only when linking is on at all: "0 of them linked" where no site is configured
+    // reports the absence of a feature as a shortcoming of the answer.
+    if (linked === 0) return `📚 Answered from ${count} in the vault, cited above.`;
+    const openable = linked === citations.length ? "each one linked" : `${linked} of them linked`;
+    return `📚 Answered from ${count} in the vault, cited above — ${openable}.`;
   }
 
-  const shown = citations.slice(0, MAX_SOURCE_CHIPS).map((citation) => `\`${citation}\``).join("  ");
+  const chip = (citation: string): string => {
+    const url = links.get(citation);
+    return url ? `<${url}|${citation}>` : `\`${citation}\``;
+  };
+  const shown = citations.slice(0, MAX_SOURCE_CHIPS).map(chip).join("  ");
   const rest = citations.length - MAX_SOURCE_CHIPS;
   return rest > 0 ? `📚 ${shown}  _+${rest} more_` : `📚 ${shown}`;
 }
@@ -123,11 +157,14 @@ function sourceLine(rendered: string, citations: string[]): string {
  * provenance should look like — always present, never competing with the answer. Running
  * both together as one italic line made the citations read like part of the claim.
  */
-export function answerBlocks({ markdown, citations }: AnswerBlocksInput): unknown[] {
+export function answerBlocks({ markdown, citations, links = new Map() }: AnswerBlocksInput): unknown[] {
   const rendered = clamp(toSlackMrkdwn(markdown));
+  // The footer is decided from the unlinked text so that "is this path visible in the
+  // answer?" is asked of the paths, not of the URLs that replace them.
+  const footer = sourceLine(rendered, citations, links);
   return [
-    { type: "section", text: { type: "mrkdwn", text: rendered } },
-    { type: "context", elements: [{ type: "mrkdwn", text: clamp(sourceLine(rendered, citations)) }] },
+    { type: "section", text: { type: "mrkdwn", text: clamp(linkifyCitations(rendered, links)) } },
+    { type: "context", elements: [{ type: "mrkdwn", text: clamp(footer) }] },
   ];
 }
 

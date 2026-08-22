@@ -88,6 +88,18 @@ export interface SlackSettings {
   notifyChannel?: string;
 }
 
+/**
+ * Where a published note can actually be read. Optional: without these a citation still
+ * names its note, it just cannot be opened — which is the difference between provenance
+ * a reader can trust and provenance a reader can check.
+ */
+export interface SiteSettings {
+  /** Public docs site, built from the docs repo's base branch. Serves `docs/x` at `/x`. */
+  external?: string;
+  /** Access-controlled internal site, built from the internal branch. Serves paths 1:1. */
+  internal?: string;
+}
+
 export interface WebhookSettings {
   /** High-entropy path segment. Always required; the URL is the first credential. */
   jiraSecret?: string;
@@ -119,6 +131,7 @@ export interface AppConfig {
   docsRepo: DocsRepoSettings;
   webhook: WebhookSettings;
   slack: SlackSettings;
+  sites: SiteSettings;
 }
 
 export function docsRepoReady(docs: DocsRepoSettings): boolean {
@@ -201,6 +214,10 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       stateDir: path.resolve(repoRoot, env("STATE_DIR") ?? ".scriptorium-state"),
     },
     slack: { notifyChannel: env("SLACK_NOTIFY_CHANNEL") },
+    sites: {
+      external: env("EXTERNAL_SITE_URL")?.replace(/\/+$/, ""),
+      internal: env("INTERNAL_SITE_URL")?.replace(/\/+$/, ""),
+    },
     webhook: {
       jiraSecret: env("JIRA_WEBHOOK_SECRET"),
       jiraHmacSecret: env("JIRA_WEBHOOK_HMAC_SECRET"),

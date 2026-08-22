@@ -74,6 +74,7 @@ function config(): AppConfig {
     scribe: {},
     curator: {},
     slack: {},
+    sites: {},
     webhook: {},
     docsRepo: {
       url: remote,

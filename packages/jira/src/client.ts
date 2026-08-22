@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import type { JiraSettings } from "@scriptorium/core";
-import type { JiraAttachment, JiraComment, JiraIssue, JiraTransition, JiraUser } from "./types";
+import type { JiraAttachment, JiraComment, JiraIssue, JiraRemoteLink, JiraTransition, JiraUser } from "./types";
 
 export interface JiraClientConfig {
   baseUrl: string;
@@ -85,6 +85,28 @@ export class JiraClient {
   /** The authenticated bot account — used to ignore the agent's own comments. */
   async myself(): Promise<JiraUser> {
     return this.get<JiraUser>("/rest/api/2/myself");
+  }
+
+  /**
+   * The ticket's remote links — where a linked Confluence page shows up. Jira and
+   * Confluence on the same site create one automatically the moment a page is linked
+   * to the issue, so this is how a "PRD lives in Confluence" ticket points at its PRD.
+   */
+  async remoteLinks(key: string): Promise<JiraRemoteLink[]> {
+    return this.get<JiraRemoteLink[]>(`/rest/api/2/issue/${encodeURIComponent(key)}/remotelink`);
+  }
+
+  /**
+   * One Confluence page, as storage-format XHTML.
+   *
+   * Same site, same token: Confluence Cloud lives under `/wiki` on the Jira base URL and
+   * accepts the same basic auth, so reading a PRD out of Confluence costs no new
+   * credential and no new configuration.
+   */
+  async confluencePage(pageId: string): Promise<{ title: string; storage: string }> {
+    const endpoint = `/wiki/rest/api/content/${encodeURIComponent(pageId)}?expand=body.storage`;
+    const page = await this.get<{ title?: string; body?: { storage?: { value?: string } } }>(endpoint);
+    return { title: page.title ?? `Confluence page ${pageId}`, storage: page.body?.storage?.value ?? "" };
   }
 
   /**

@@ -14,6 +14,9 @@ import { organizePublishedDoc } from "@scriptorium/curator";
 import { publishApprovedDoc } from "./docs-repo";
 import { announceDraftForApproval, announcePublished } from "./slack-notify";
 import {
+  confluencePageIdFromUrl,
+  confluencePageIdsIn,
+  confluenceStorageToMarkdown,
   issueStatus,
   jiraClient,
   JiraState,
@@ -104,6 +107,11 @@ const PRD_EXTENSIONS = new Set([".md", ".markdown", ".txt"]);
 const HELP = [
   "**Scribe** — I draft user documentation from the PRD on this ticket. A human approves everything I publish.",
   "",
+  "The PRD can live in any of these places (checked in this order):",
+  "- a `.md` file attached to this ticket,",
+  "- a **Confluence page** linked to the ticket (or its URL pasted in the description) — if the page changes later, comment `draft` to re-read it,",
+  "- the issue description itself.",
+  "",
   "How to work with me, all from this comment box:",
   "- **feedback** — just write it in plain English; I revise the draft and post it again",
   "- `approve` — publish the current draft to the knowledge vault (or move this issue to the approved status)",
@@ -118,10 +126,12 @@ const NO_PRD = [
   "**I can't find a PRD on this ticket.**",
   "",
   "Give me one of these, then comment `draft`:",
-  "- attach the PRD as a `.md` file (best fidelity), or",
-  "- paste the PRD into the issue description.",
+  "- attach the PRD as a `.md` file,",
+  "- link the Confluence page that holds it (or paste its URL in the description), or",
+  "- write the PRD into the issue description.",
   "",
-  "It must carry YAML frontmatter with `feature`, `audience` and `user_goal` — I refuse to guess those.",
+  "Wherever it lives, it must state `feature`, `audience` and `user_goal` — as YAML frontmatter,",
+  "as labeled lines (`audience: workspace admins`), or as headings. I refuse to guess those.",
   "Wireframes help: attach them as PNG, JPEG, WEBP or GIF and I will read them.",
 ].join("\n");
 
@@ -205,6 +215,8 @@ interface PrdSource {
   images: ImageInput[];
   imageNames: string[];
   skipped: string[];
+  /** A Confluence page was pointed at but could not be read. */
+  confluenceError?: boolean;
 }
 
 /** Read the PRD and designs off the ticket: attachments first, description as the fallback. */
@@ -228,15 +240,84 @@ async function loadSource(ctx: Ctx, issue: JiraIssue): Promise<PrdSource> {
     source.skipped.push(attachment.filename);
   }
 
+  // Between the attachment and the description: a linked Confluence page. That is where
+  // PRDs actually live, and the ticket already points at it — Jira creates a remote link
+  // the moment a page is linked, and a pasted URL in the description works the same way.
+  if (!source.markdown) {
+    const confluence = await loadConfluencePrd(ctx, issue);
+    if (confluence) {
+      source.markdown = confluence.markdown;
+      source.origin = confluence.origin;
+    } else if (confluence === null) {
+      // A page was pointed at but could not be read — say so instead of "no PRD found",
+      // because "attach a .md file" is the wrong advice when the fix is page permissions.
+      source.confluenceError = true;
+    }
+  }
+
   if (!source.markdown) {
     const description = issue.fields.description?.trim();
-    if (description) {
+    // A description that is essentially just the link to the (unreadable) page is a
+    // pointer, not a PRD — running the contract on it would answer "add feature,
+    // audience, user_goal" when the actual problem is page permissions.
+    const withoutUrls = (description ?? "").replace(/https?:\/\/[^\s|\]")>]+/g, "").replace(/\W+/g, " ").trim();
+    const pointerOnly = source.confluenceError && withoutUrls.length < 80;
+    if (description && !pointerOnly) {
       // Jira's editor rewrites pasted markdown as wiki markup — put it back before the contract check.
       source.markdown = jiraToMarkdown(description);
       source.origin = "the issue description";
     }
   }
   return source;
+}
+
+/**
+ * The PRD from a Confluence page the ticket points at.
+ *
+ * Sources, in order: the issue's remote links (what "link a Confluence page" creates),
+ * then any Confluence URL sitting in the description. Returns `undefined` when nothing
+ * points at Confluence, and `null` when something does but the page could not be read —
+ * the caller words its refusal differently for those two.
+ *
+ * A page read this way is snapshot at draft time: editing the page does not touch the
+ * issue's `updated`, so the poller cannot see the change. `draft` re-reads it — HELP
+ * says so.
+ */
+async function loadConfluencePrd(
+  ctx: Ctx,
+  issue: JiraIssue,
+): Promise<{ markdown: string; origin: string } | null | undefined> {
+  const candidates: string[] = [];
+
+  try {
+    for (const link of await ctx.client.remoteLinks(issue.key)) {
+      const url = link.object?.url;
+      if (!url) continue;
+      const id = confluencePageIdFromUrl(url);
+      if (id && !candidates.includes(id)) candidates.push(id);
+    }
+  } catch (error) {
+    // Remote links are an enrichment; a 4xx here must not take down description intake.
+    console.warn(`[scribe] ${issue.key}: remote links unreadable: ${errorMessage(error)}`);
+  }
+
+  for (const id of confluencePageIdsIn(issue.fields.description ?? "")) {
+    if (!candidates.includes(id)) candidates.push(id);
+  }
+  if (!candidates.length) return undefined;
+
+  for (const id of candidates) {
+    try {
+      const page = await ctx.client.confluencePage(id);
+      const markdown = confluenceStorageToMarkdown(page.storage);
+      if (markdown.trim()) {
+        return { markdown, origin: `the linked Confluence page “${page.title}”` };
+      }
+    } catch (error) {
+      console.warn(`[scribe] ${issue.key}: Confluence page ${id} unreadable: ${errorMessage(error)}`);
+    }
+  }
+  return null;
 }
 
 /**
@@ -314,7 +395,13 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
 
   const source = await loadSource(ctx, issue);
   if (!source.markdown?.trim()) {
-    await say(ctx, key, NO_PRD);
+    await say(
+      ctx,
+      key,
+      source.confluenceError
+        ? "**This ticket points at a Confluence page I can't read** — it may be restricted, or deleted. Grant my account view access to it (or attach the PRD as a `.md` file), then comment `draft`."
+        : NO_PRD,
+    );
     return;
   }
 
@@ -331,7 +418,10 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
           "",
           formatContractQuestions(contract),
           "",
-          `Add them to the YAML frontmatter in ${source.origin ?? "the PRD"} and comment \`draft\`.`,
+          `State them in ${source.origin ?? "the PRD"} — YAML frontmatter, a labeled line (\`audience: workspace admins\`), or a heading with the answer under it — and comment \`draft\`.`,
+          ...(source.confluenceError
+            ? ["", "_This ticket also links a Confluence page I can't read — if the PRD lives there, grant my account view access and comment `draft`._"]
+            : []),
         ].join("\n"),
       );
       await ctx.state.patch(key, { askedForFields: missing });

@@ -79,6 +79,8 @@ function stubJira(): void {
       return json(posted);
     }
     if (url.includes("/transitions")) return json({ transitions: [] });
+    // A draft the agent attached earlier — what a restart with no ledger recovers from.
+    if (url.includes("/attachment/content/")) return new Response("# Incident timeline embed\n\nA draft.\n", { status: 200 });
     if (url.includes("/rest/api/2/issue/")) return json(issue);
     return new Response("unexpected call", { status: 500 });
   });
@@ -164,5 +166,127 @@ describe("scribe on jira", () => {
 
     expect(comments.length).toBeGreaterThan(afterFirstPoll);
     expect(comments.at(-1)?.body).toContain("user_goal");
+  });
+});
+
+/** Everything the poller sees but was not labelled as a doc request. */
+function unlabelled(): void {
+  issue = { ...issue, fields: { ...(issue.fields as object), labels: [] } };
+}
+
+function bumpUpdated(stamp: string): void {
+  issue = { ...issue, fields: { ...(issue.fields as object), updated: stamp } };
+}
+
+function human(id: string, body: string): StubComment {
+  return { id, body, created: "2026-08-20T09:00:00.000+0000", author: { accountId: "human-1", displayName: "Reviewer" } };
+}
+
+describe("mention-only mode", () => {
+  it("adopts an unlabelled ticket in silence — no greeting, no unsolicited draft", async () => {
+    unlabelled();
+    const stop = await startScribeJira(config(), vault);
+    stop();
+
+    // The poller can see it (that is the point of the widened JQL) but nobody asked for
+    // anything, so it spends neither a comment nor an LLM call.
+    expect(comments).toHaveLength(0);
+    expect(await vault.listNotes("docs")).toHaveLength(0);
+    expect(await vault.listNotes("_inbox")).toHaveLength(0);
+  });
+
+  it("ignores other people's feedback on a ticket it has never engaged with", async () => {
+    unlabelled();
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first();
+
+    comments.push(human("h1", "the intro should mention the retention window"));
+    bumpUpdated("2026-08-20T10:10:00.000+0000");
+    const second = await startScribeJira(settings, vault);
+    second();
+
+    // Two humans talking to each other. Answering would be barging in.
+    expect(comments.filter((comment) => comment.author.accountId === "bot-1")).toHaveLength(0);
+  });
+
+  it("answers a mention on an unlabelled ticket", async () => {
+    unlabelled();
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first();
+    expect(comments).toHaveLength(0);
+
+    comments.push(human("h1", "[~accountid:bot-1] can you draft this?"));
+    bumpUpdated("2026-08-20T10:15:00.000+0000");
+    const second = await startScribeJira(settings, vault);
+    second();
+
+    // Substantive, not a greeting: the PRD is incomplete, so it names what it needs.
+    const reply = comments.filter((comment) => comment.author.accountId === "bot-1");
+    expect(reply).toHaveLength(1);
+    expect(reply[0]?.body).toContain("user_goal");
+  });
+});
+
+describe("restart with no ledger", () => {
+  it("reconstructs from the ticket instead of re-greeting, and answers only what came after its last comment", async () => {
+    // The state directory is empty — a fresh container on a ticket already worked: the
+    // agent's own comment is on the thread and its draft is attached.
+    comments = [
+      human("h1", "make the intro shorter"),
+      {
+        id: "b1",
+        body: "*Draft ready*",
+        created: "2026-08-20T09:30:00.000+0000",
+        author: { accountId: "bot-1", displayName: "Scribe" },
+      },
+      human("h2", "[~accountid:bot-1]"),
+    ];
+    issue = {
+      ...issue,
+      fields: {
+        ...(issue.fields as object),
+        attachment: [
+          {
+            id: "a1",
+            filename: "draft-incident-timeline-embed.md",
+            mimeType: "text/markdown",
+            content: "https://example.atlassian.net/rest/api/2/attachment/content/a1",
+            created: "2026-08-20T09:30:00.000+0000",
+          },
+        ],
+      },
+    };
+
+    const stop = await startScribeJira(config(), vault);
+    stop();
+
+    const posted = comments.slice(3);
+    // Exactly one reply: the wake after its last word. No second HELP, no redraft, and the
+    // pre-restart feedback stayed history instead of replaying as a duplicate revision
+    // (which would have needed the model and surfaced as an error comment).
+    expect(posted).toHaveLength(1);
+    expect(posted[0]?.body).toContain("draft-incident-timeline-embed.md");
+    expect(posted[0]?.body).not.toContain("How to work with me");
+    expect(posted[0]?.body).not.toContain("hit an error");
+  });
+
+  it("says nothing at all on a ticket it already answered and nobody has replied to", async () => {
+    // Greeted, refused the incomplete PRD, then went down. No draft was ever attached, so
+    // recovery has nothing but the ticket's own inputs to go on — and must still stay quiet.
+    comments = [
+      {
+        id: "b1",
+        body: "*I can't draft from this PRD yet* — it is missing {{audience}} and {{user_goal}}.",
+        created: "2026-08-20T09:30:00.000+0000",
+        author: { accountId: "bot-1", displayName: "Scribe" },
+      },
+    ];
+
+    const stop = await startScribeJira(config(), vault);
+    stop();
+
+    expect(comments).toHaveLength(1);
   });
 });

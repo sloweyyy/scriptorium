@@ -218,8 +218,8 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
   // Recorded before the work, so a ticket with no usable PRD is told once, not every poll.
   await ctx.state.patch(key, { sourceFingerprint: fingerprint });
 
-  if (!ctx.config.hasAnthropicKey) {
-    await say(ctx, key, "⚠️ `ANTHROPIC_API_KEY` is not configured on the agent host, so I can't draft yet.");
+  if (!ctx.config.hasModelAccess) {
+    await say(ctx, key, "⚠️ No model provider is configured on the agent host, so I can't draft yet.");
     return;
   }
 
@@ -304,8 +304,8 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
     await runDraft(ctx, issue);
     return;
   }
-  if (!ctx.config.hasAnthropicKey) {
-    await say(ctx, key, "⚠️ `ANTHROPIC_API_KEY` is not configured on the agent host, so I can't revise yet.");
+  if (!ctx.config.hasModelAccess) {
+    await say(ctx, key, "⚠️ No model provider is configured on the agent host, so I can't revise yet.");
     return;
   }
 
@@ -333,7 +333,7 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
 async function proposeLesson(ctx: Ctx, key: string, approvedBy: string): Promise<void> {
   const known = ctx.state.get(key);
   const feedback = known?.feedback ?? [];
-  if (!feedback.length || !ctx.config.hasAnthropicKey) return;
+  if (!feedback.length || !ctx.config.hasModelAccess) return;
 
   const rule = await distillLesson(feedback.join("\n"));
   if (!rule) {

@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
+    "@anthropic-ai/vertex-sdk": "^0.19.5",
     "dotenv": "^17.4.2",
     "gray-matter": "^4.0.3",
     "zod": "^4.4.3"

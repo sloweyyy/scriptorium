@@ -27,8 +27,8 @@ export async function startCuratorBot(config: AppConfig, vault: Vault): Promise<
       return;
     }
 
-    if (!config.hasAnthropicKey) {
-      await say({ thread_ts: threadTs, text: "⚠️ `ANTHROPIC_API_KEY` is not configured, so I can't answer yet." });
+    if (!config.hasModelAccess) {
+      await say({ thread_ts: threadTs, text: "⚠️ No model provider is configured, so I can't answer yet." });
       return;
     }
 

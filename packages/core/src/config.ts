@@ -35,7 +35,11 @@ export interface JiraSettings {
 
 export interface AppConfig {
   model: string;
-  hasAnthropicKey: boolean;
+  /** True when either provider is configured — an API key or a Vertex project. */
+  hasModelAccess: boolean;
+  provider: "vertex" | "anthropic" | "none";
+  vertexProject?: string;
+  vertexRegion: string;
   repoRoot: string;
   vaultDir: string;
   auditFile: string;
@@ -56,9 +60,14 @@ export function defaultJql(jira: JiraSettings): string {
 }
 
 export function loadConfig(repoRoot = process.cwd()): AppConfig {
+  const vertexProject = env("VERTEX_PROJECT_ID");
+  const provider = vertexProject ? "vertex" : env("ANTHROPIC_API_KEY") ? "anthropic" : "none";
   return {
     model: env("MODEL") ?? "claude-opus-5",
-    hasAnthropicKey: Boolean(env("ANTHROPIC_API_KEY")),
+    hasModelAccess: provider !== "none",
+    provider,
+    vertexProject,
+    vertexRegion: env("VERTEX_REGION") ?? "global",
     repoRoot,
     vaultDir: path.resolve(repoRoot, env("VAULT_DIR") ?? "vault"),
     auditFile: path.resolve(repoRoot, env("AUDIT_FILE") ?? "audit/log.jsonl"),

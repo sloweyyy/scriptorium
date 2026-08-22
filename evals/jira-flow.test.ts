@@ -35,7 +35,9 @@ const INCOMPLETE_PRD = prdInJira("feature: Incident timeline embed");
 function config(): AppConfig {
   return {
     model: "claude-opus-5",
-    hasAnthropicKey: true,
+    hasModelAccess: true,
+    provider: "anthropic",
+    vertexRegion: "global",
     repoRoot: tmpRoot,
     vaultDir: path.join(tmpRoot, "vault"),
     auditFile: path.join(tmpRoot, "audit.jsonl"),

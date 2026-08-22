@@ -18,6 +18,8 @@ oauth_config:
       - im:history
       - reactions:read
       - reactions:write
+      # The approver's name ends up in a git commit message, so resolve it to a human name.
+      - users:read
 settings:
   event_subscriptions:
     bot_events:

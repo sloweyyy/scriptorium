@@ -36,6 +36,7 @@ function config(): AppConfig {
     port: 0,
     scribe: {},
     curator: {},
+    slack: {},
     webhook: { jiraSecret: JIRA_SECRET, githubSecret: GITHUB_SECRET },
     docsRepo: { base: "main", workDir: path.join(tmpRoot, "docs-repo"), url: "git@github.com:o/r.git" },
     jira: {

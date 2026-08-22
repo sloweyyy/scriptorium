@@ -44,6 +44,7 @@ function config(): AppConfig {
     port: 8080,
     scribe: {},
     curator: {},
+    slack: {},
     webhook: {},
     docsRepo: { base: "main", workDir: path.join(tmpRoot, "docs-repo") },
     jira: {

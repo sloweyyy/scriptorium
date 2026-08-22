@@ -55,6 +55,11 @@ export interface DocsRepoSettings {
   slug?: string;
 }
 
+export interface SlackSettings {
+  /** Channel id for publish announcements and draft-approval buttons. Optional. */
+  notifyChannel?: string;
+}
+
 export interface WebhookSettings {
   /** High-entropy path segment: Jira Cloud cannot sign webhook payloads, so the URL is the credential. */
   jiraSecret?: string;
@@ -78,6 +83,7 @@ export interface AppConfig {
   jira: JiraSettings;
   docsRepo: DocsRepoSettings;
   webhook: WebhookSettings;
+  slack: SlackSettings;
 }
 
 export function docsRepoReady(docs: DocsRepoSettings): boolean {
@@ -150,6 +156,7 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       pollMs: envNumber("JIRA_POLL_MS", 15_000),
       stateDir: path.resolve(repoRoot, env("STATE_DIR") ?? ".scriptorium-state"),
     },
+    slack: { notifyChannel: env("SLACK_NOTIFY_CHANNEL") },
     webhook: {
       jiraSecret: env("JIRA_WEBHOOK_SECRET"),
       githubSecret: env("GITHUB_WEBHOOK_SECRET"),

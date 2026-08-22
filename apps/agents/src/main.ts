@@ -41,7 +41,7 @@ if (jiraReady(config.jira)) {
 }
 
 if (config.scribe.botToken && config.scribe.appToken) {
-  await startScribeBot(config, vault);
+  await startScribeBot(config, vault, scribe);
 }
 
 if (config.curator.botToken && config.curator.appToken) {

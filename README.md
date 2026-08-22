@@ -224,6 +224,41 @@ Garden for the project, and online-prediction quota for the base model
 dimension `base_model=anthropic-claude-opus`). A fresh project starts at zero and the
 increase is requested per base model — `gcloud alpha quotas preferences create`.
 
+## How the docs repo is laid out
+
+Two branches, each owning exactly one content tree and one site build:
+
+| Branch | Content | Site | Who writes it |
+|---|---|---|---|
+| `main` | `docs/` — approved, public | Astro Starlight, public | a human merging a pull request |
+| `vault-live` | `internal/` — PRDs, gap notes, house rules, index | Quartz, basic-auth gated | the agent, on approval |
+
+The agent never pushes `main`. Approved docs land on a per-ticket branch and reach `main`
+only when a human merges — GitHub offers no branch protection on a private repo on the free
+plan, so making the merge gate a property of what the agent *does* is stronger than relying
+on what its token is forbidden to do.
+
+**A doc therefore exists twice in that repo**, transformed for the public site and
+untransformed for the graph. Those are two derived renderings of one vault note, not two
+sources: the vault is the source, and a human edit to either copy is detected by the
+divergence gate and reported on the originating ticket rather than absorbed. Publishing once
+and filtering at build time would give a single copy, but then the only thing keeping
+internal notes off the public site is a build script — today `main` physically contains
+none of them.
+
+Two known costs, both deliberate:
+
+- Pushing either branch makes the *other* branch's Vercel project fail instantly, because
+  the root directory it wants is not there. Cosmetic, no build minutes, nothing served.
+- Cross-target publishes are not atomic. One target can land while the other refuses, and
+  each divergence gate only compares a copy against what the agent last published for that
+  target — so neither can see the mismatch. The ticket comment says so explicitly when it
+  happens.
+
+Both disappear in the end state recorded in the design doc: two repositories, one
+public-safe and one private, each with a single branch, so the boundary is a repository
+permission rather than a branch convention.
+
 ## Status
 
 - [x] Core: vault, LLM client (Anthropic API **or** Claude on Vertex AI), audit log, config

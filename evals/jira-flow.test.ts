@@ -49,6 +49,7 @@ function config(): AppConfig {
     scribe: {},
     curator: {},
     slack: {},
+    sites: {},
     webhook: {},
     docsRepo: { base: "main", internalBranch: "vault-live", commitName: "scriptorium agent", commitEmail: "agent@example.invalid", workDir: path.join(tmpRoot, "docs-repo") },
     jira: {

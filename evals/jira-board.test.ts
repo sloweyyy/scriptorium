@@ -81,6 +81,7 @@ function config(): AppConfig {
     scribe: {},
     curator: {},
     slack: {},
+    sites: {},
     webhook: {},
     docsRepo: {
       base: "main",

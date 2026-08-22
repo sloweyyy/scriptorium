@@ -2,6 +2,7 @@ import type { AppConfig, Vault } from "@scriptorium/core";
 import { answerQuestion, fileGapNote } from "@scriptorium/curator";
 import { App } from "@slack/bolt";
 import { gapTicketOpener } from "./gap-ticket";
+import { citationLinks, resolveCitations } from "./citations";
 import { answerBlocks, contextBlocks, progressLine, toSlackMrkdwn } from "./slack-format";
 import { stripMentions } from "./util";
 
@@ -194,12 +195,15 @@ export async function startCuratorBot(config: AppConfig, vault: Vault): Promise<
         return;
       }
 
+      // Resolved after the answer, not during it: where a note can be READ is a property of
+      // publication, and has no business influencing what the model retrieved.
+      const links = citationLinks(await resolveCitations(vault, config, answer.citations));
       await say({
         thread_ts: threadTs,
         // `text` is the notification and the accessible fallback, so it carries the answer
         // too — a blocks-only message shows as an empty push on a phone.
         text: toSlackMrkdwn(answer.text),
-        blocks: answerBlocks({ markdown: answer.text, citations: answer.citations }) as never,
+        blocks: answerBlocks({ markdown: answer.text, citations: answer.citations, links }) as never,
       });
       await react.remove("eyes");
       await react.add("white_check_mark");

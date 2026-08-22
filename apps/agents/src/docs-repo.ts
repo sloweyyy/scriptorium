@@ -265,6 +265,13 @@ export async function pushInternalPlane(config: AppConfig, vault: Vault, message
       approvedBy: "scriptorium agent",
       message,
     });
+    if (result.push.status === "conflict") {
+      // A silent false here cost a human's lesson approval once: the push was refused,
+      // nothing said so, and the next container swap rolled the decision back.
+      console.warn(
+        `[docs] internal-plane push REFUSED (${message}): ${result.push.diverged.map((item) => `${item.path} (${item.reason})`).join(", ")}`,
+      );
+    }
     return result.push.status === "published" || result.push.status === "unchanged";
   } catch (error) {
     // Durability is best-effort here; the lesson flow itself must not die on a push.

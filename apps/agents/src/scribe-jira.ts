@@ -232,6 +232,12 @@ async function loadSource(ctx: Ctx, issue: JiraIssue): Promise<PrdSource> {
       source.imageNames.push(attachment.filename);
       continue;
     }
+    // Never its own output: the agent attaches every draft as `draft-<slug>.md`, and a
+    // later re-draft that reads one back as "the PRD" refuses on missing frontmatter —
+    // the agent asking the PM for fields its own draft never carries.
+    if (DRAFT_ATTACHMENT.test(attachment.filename)) {
+      continue;
+    }
     if (!source.markdown && PRD_EXTENSIONS.has(path.extname(attachment.filename).toLowerCase())) {
       const bytes = await ctx.client.downloadAttachment(attachment);
       source.markdown = bytes.toString("utf8");

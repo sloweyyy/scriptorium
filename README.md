@@ -70,6 +70,10 @@ RUN_LLM_EVALS=1 pnpm eval     # + live grounded-Q&A evals
    `JIRA_API_TOKEN`, `JIRA_PROJECT_KEY` in `.env`.
 3. Add a status named **Approved** to the project's workflow (optional — an `approve`
    comment does the same thing; set `JIRA_APPROVED_STATUS` if you name it differently).
+   The agent also drives the columns in between when they exist: `JIRA_IN_PROGRESS_STATUS`
+   (default `In Progress`) while it is drafting or revising, and `JIRA_IN_REVIEW_STATUS`
+   (default `In Review`) once a draft is posted and the next move is a human's. Every move
+   is best-effort — a workflow without those columns still gets its draft, in a comment.
 4. `pnpm jira:doctor` — it reports which search endpoint your site answers on, what the
    poller's JQL matches, and whether the approval transition exists.
    `pnpm jira:doctor --write` also proves comment + attachment permissions.
@@ -209,7 +213,7 @@ gcloud run deploy scriptorium \
   --source . --project "$PROJECT" --region us-central1 \
   --service-account "$SA" \
   --min-instances=1 --max-instances=1 --no-cpu-throttling \
-  --set-env-vars "VERTEX_PROJECT_ID=$PROJECT,VERTEX_REGION=global,MODEL=claude-opus-5,JIRA_BASE_URL=https://your-site.atlassian.net,JIRA_EMAIL=you@example.com,JIRA_PROJECT_KEY=DOC,JIRA_APPROVED_STATUS=Done,STATE_DIR=/state" \
+  --set-env-vars "VERTEX_PROJECT_ID=$PROJECT,VERTEX_REGION=global,MODEL=claude-opus-5,JIRA_BASE_URL=https://your-site.atlassian.net,JIRA_EMAIL=you@example.com,JIRA_PROJECT_KEY=DOC,JIRA_IN_PROGRESS_STATUS=In Progress,JIRA_IN_REVIEW_STATUS=In Review,JIRA_APPROVED_STATUS=Done,STATE_DIR=/state" \
   --set-secrets "JIRA_API_TOKEN=jira-api-token:latest,CURATOR_SLACK_BOT_TOKEN=curator-slack-bot-token:latest,CURATOR_SLACK_APP_TOKEN=curator-slack-app-token:latest" \
   --add-volume=name=state,type=cloud-storage,bucket=$PROJECT-state \
   --add-volume-mount=volume=state,mount-path=/state
@@ -223,6 +227,12 @@ local disk (`/tmp/docs-repo`). A GCS FUSE mount has no hardlinks and weak rename
 semantics, so `git clone` into it fails — and the failure surfaces as a publish that wrote
 the vault copy but never reached the repo. The clone is scratch: it is re-created from the
 remote on every boot, so it needs no persistence at all.
+
+**The deploy key is mounted read-only 0444,** and ssh refuses a private key that is
+group- or world-readable — `chmod` on a Secret Manager mount is not available. The agent
+copies the key once per process to a 0600 path under `TMPDIR` and points
+`GIT_SSH_COMMAND` at the copy. Nothing to configure; it is noted because the failure
+surfaces as `Permission denied (publickey)`, which reads like a wrong key.
 
 **Claude on Vertex** additionally requires the Anthropic models to be enabled in Model
 Garden for the project, and online-prediction quota for the base model

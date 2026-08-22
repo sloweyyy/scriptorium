@@ -80,10 +80,14 @@ pnpm seed:corpus        # corpus/*.md -> vault/reference/ (--inbox to let the wa
    watcher files them for Curator.
 4. [x] **Cross-surface loop** — `fileGapNote` takes an injected `openTicket`; the Slack
    Curator wires it to Jira, so an unanswered question becomes Agent A's ticket.
-5. **Verify against the real instance** — `pnpm jira:doctor` before trusting the poller;
-   then hosting for async review (Dockerfile ships; Cloud Run min-instances=1, or an
-   announced local window). Vault persistence via push to a `vault-live` branch.
-6. `samples/prd-002-*` (second PRD to demo lesson transfer) + full demo run.
+5. [x] **Verify against the real instance** — `pnpm jira:doctor`, then Cloud Run
+   (`min-instances=1 --no-cpu-throttling`, GCS-mounted ledger). Both webhooks verified
+   live (Jira HMAC-signed, GitHub `x-hub-signature-256`); both sites deploy from the
+   docs repo — `main`/`docs/` public, `vault-live`/`internal/` basic-auth gated. The
+   board chain drives all four DOC columns. The deploy key is copied off its 0444
+   secret mount, proved against the real remote.
+   Left: one live `approve` -> push -> PR round trip on the current revision.
+6. `samples/prd-002-*` exists — the full demo run (lesson transfer across two PRDs) does not.
 7. Demo video.
 
 Slack Scribe bot (`apps/agents/src/scribe-bot.ts`) stays as a thin secondary surface —

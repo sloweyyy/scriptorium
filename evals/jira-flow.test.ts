@@ -325,6 +325,38 @@ describe("restart with no ledger", () => {
   });
 });
 
+describe("re-draft with the agent's own attachments present", () => {
+  it("never reads its own draft attachment back as the PRD", async () => {
+    // After a draft, the ticket carries `draft-<slug>.md` uploaded by the agent. A later
+    // `draft` command re-reads the sources — and picking its own output as "the PRD" made
+    // it ask the PM for frontmatter fields that no draft ever carries.
+    issue = {
+      ...issue,
+      fields: {
+        ...(issue.fields as object),
+        description: "",
+        attachment: [
+          {
+            id: "att-draft",
+            filename: "draft-incident-timeline-embed.md",
+            mimeType: "text/markdown",
+            content: "https://example.atlassian.net/rest/api/2/attachment/content/att-draft",
+          },
+        ],
+      },
+    };
+
+    const stop = await startScribeJira(config(), vault);
+    stop.stop();
+
+    const bodies = comments.map((comment) => comment.body);
+    // With only its own draft present there is NO PRD — and it must say that, not demand
+    // frontmatter from a file it wrote itself.
+    expect(bodies.some((body) => body.includes("can't find a PRD"))).toBe(true);
+    expect(bodies.some((body) => body.includes("can't draft"))).toBe(false);
+  });
+});
+
 describe("prd in confluence", () => {
   it("reads the PRD off the linked page and names it as the source", async () => {
     // The ticket carries no attachment and no description PRD — just the remote link

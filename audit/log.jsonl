@@ -1,2 +1,4 @@
 {"ts":"2026-08-22T11:34:52.012Z","type":"jira.draft.posted","actor":"scribe","issue":"DOC-1","slug":"scheduled-maintenance-announcements","appliedLessons":[],"lint":[]}
 {"ts":"2026-08-22T11:35:15.302Z","type":"doc.published","actor":"Truong (smoke test)","relPath":"docs/scheduled-maintenance-announcements.md","sourcePrd":"prd/scheduled-maintenance-announcements","appliedLessons":[]}
+{"ts":"2026-08-22T19:37:45.249Z","type":"gap.filed","actor":"curator","relPath":"_gaps/G-001-what-does-Acme-charge-per-seat-per-month.md","question":"What does Acme charge per seat per month?"}
+{"ts":"2026-08-22T19:37:46.421Z","type":"gap.ticketed","actor":"curator","relPath":"_gaps/G-001-what-does-Acme-charge-per-seat-per-month.md","issue":"DOC-9"}

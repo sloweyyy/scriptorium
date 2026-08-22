@@ -184,6 +184,10 @@ async function moveTo(ctx: Ctx, key: string, statusName: string, currentStatus?:
   try {
     const moved = await ctx.client.transitionTo(key, statusName);
     if (moved) await ctx.state.patch(key, { lastStatus: statusName });
+    // A workflow that does not offer the column is a legitimate configuration, but silence
+    // here is indistinguishable from success — and a board that never moves looks like the
+    // agent is inert rather than like the project is missing a status.
+    else console.warn(`[scribe] ${key}: workflow offers no transition to "${statusName}" from "${currentStatus ?? "its current status"}"`);
   } catch (error) {
     console.warn(`[scribe] ${key}: could not move to "${statusName}": ${errorMessage(error)}`);
   }

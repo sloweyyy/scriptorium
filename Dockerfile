@@ -2,7 +2,9 @@
 # No ingress required — both surfaces dial out — but a health port is exposed for Cloud Run.
 FROM node:22-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+# openssh-client is not optional: the docs repo is reached over SSH with a deploy key,
+# and without it git fails at clone with a bare "ssh: not found".
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && corepack enable
 

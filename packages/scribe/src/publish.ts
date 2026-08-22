@@ -6,6 +6,13 @@ export interface PublishInput {
   repoRoot: string;
   markdown: string;
   approvedBy: string;
+  /**
+   * The Jira issue this doc was approved on. Written as `jira_issue` frontmatter: it is the
+   * join key for the round trip — a human edit landing in the docs repo has to be reported
+   * back onto the ticket that produced the doc, and `source` is the PRD wikilink, not a key.
+   * Optional so the existing call site keeps compiling while the Jira flow is wired up.
+   */
+  jiraIssue?: string;
   sourcePrd?: string;
   appliedLessons?: string[];
   slug?: string;
@@ -25,6 +32,7 @@ export async function publishDoc(input: PublishInput): Promise<string> {
     kind: "doc",
     status: "published",
     feature: title,
+    jira_issue: input.jiraIssue,
     source: input.sourcePrd ? `[[${input.sourcePrd}]]` : undefined,
     applied_lessons: input.appliedLessons?.length ? input.appliedLessons : undefined,
     approved_by: input.approvedBy,
@@ -35,6 +43,7 @@ export async function publishDoc(input: PublishInput): Promise<string> {
     type: "doc.published",
     actor: input.approvedBy,
     relPath,
+    jiraIssue: input.jiraIssue,
     sourcePrd: input.sourcePrd,
     appliedLessons: input.appliedLessons ?? [],
   });

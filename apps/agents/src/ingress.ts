@@ -6,12 +6,18 @@ import { z } from "zod";
 /**
  * The one HTTP surface: health, plus the two webhooks.
  *
- * Everything here treats its body as untrusted. The Jira route authenticates on a
- * high-entropy path segment (Jira Cloud cannot sign webhooks — `POST /rest/api/3/webhook`
- * answers `403 "Only Connect and OAuth 2.0 apps can use this operation"` for an API token,
- * and the UI form offers no HMAC secret), takes nothing from the payload but the issue key,
- * and then re-fetches the issue from the API. The GitHub route can do better, so it does:
- * `x-hub-signature-256` HMAC over the raw bytes, compared in constant time.
+ * Everything here treats its body as untrusted, and both routes verify an HMAC when one is
+ * configured — GitHub on `x-hub-signature-256`, Jira on `x-hub-signature`, each over the raw
+ * bytes and compared in constant time.
+ *
+ * Jira's registration API is still Connect/OAuth-only (`POST /rest/api/3/webhook` answers
+ * `403 "Only Connect and OAuth 2.0 apps can use this operation"` for an API token, verified
+ * against the live instance), so the webhook is created in the UI — but that form DOES offer
+ * a secret, so signing is available and used when set. The high-entropy path segment stays as
+ * the first gate and as the only gate when no secret is configured.
+ *
+ * Either way the payload is evidence of nothing: only the issue key is read from it, and the
+ * issue is then re-fetched from the API.
  */
 
 /** Probe event the doctor can post to prove reachability without doing any work. */
@@ -90,6 +96,17 @@ export function verifyGitHubSignature(rawBody: Buffer, header: string | undefine
   return secretMatches(header, expected);
 }
 
+/**
+ * Jira signs with the same scheme as GitHub when a secret is configured on the webhook,
+ * but on the unsuffixed `X-Hub-Signature` header. When a secret is set this is the real
+ * gate and the path segment becomes defence in depth.
+ */
+export function verifyJiraSignature(rawBody: Buffer, header: string | undefined, secret: string): boolean {
+  if (!header) return false;
+  const digest = createHmac("sha256", secret).update(rawBody).digest("hex");
+  return secretMatches(header, `sha256=${digest}`) || secretMatches(header, digest);
+}
+
 export function jiraIssueKeyFrom(payload: unknown): { key?: string; event?: string; probe: boolean } {
   const parsed = JiraEvent.safeParse(payload);
   if (!parsed.success) return { probe: false };
@@ -130,7 +147,11 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
           provider: config.provider,
           jira: jiraReady(config.jira),
           docsRepo: docsRepoReady(config.docsRepo),
-          webhooks: { jira: Boolean(jiraSecret), github: Boolean(githubSecret) },
+          webhooks: {
+            jira: Boolean(jiraSecret),
+            jiraSigned: Boolean(config.webhook.jiraHmacSecret),
+            github: Boolean(githubSecret),
+          },
         });
         return;
       }
@@ -142,9 +163,20 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
           send(response, 404, { error: "not found" });
           return;
         }
+        const rawJira = await readBody(request).catch(() => Buffer.alloc(0));
+        const hmacSecret = config.webhook.jiraHmacSecret;
+        if (hmacSecret) {
+          // A configured secret means Jira signs; an unsigned or mis-signed body is refused
+          // even though the caller got the path right.
+          const header = (request.headers["x-hub-signature"] ?? request.headers["x-hub-signature-256"]) as string | undefined;
+          if (!verifyJiraSignature(rawJira, header, hmacSecret)) {
+            send(response, 401, { error: "bad signature" });
+            return;
+          }
+        }
         let payload: unknown;
         try {
-          payload = JSON.parse((await readBody(request)).toString("utf8") || "{}");
+          payload = JSON.parse(rawJira.toString("utf8") || "{}");
         } catch {
           send(response, 400, { error: "invalid json" });
           return;

@@ -17,6 +17,7 @@ import { PROBE_EVENT, secretMatches, startIngress, verifyGitHubSignature } from 
 
 const JIRA_SECRET = "s3cret-path-segment";
 const GITHUB_SECRET = "hmac-shared-secret";
+const JIRA_HMAC = "jira-webhook-signing-secret";
 
 let server: Server;
 let base: string;
@@ -37,7 +38,7 @@ function config(): AppConfig {
     scribe: {},
     curator: {},
     slack: {},
-    webhook: { jiraSecret: JIRA_SECRET, githubSecret: GITHUB_SECRET },
+    webhook: { jiraSecret: JIRA_SECRET, githubSecret: GITHUB_SECRET, jiraHmacSecret: JIRA_HMAC },
     docsRepo: { base: "main", workDir: path.join(tmpRoot, "docs-repo"), url: "git@github.com:o/r.git" },
     jira: {
       label: "doc-request",
@@ -46,6 +47,13 @@ function config(): AppConfig {
       pollMs: 60_000,
       stateDir: path.join(tmpRoot, "state"),
     },
+  };
+}
+
+function jiraSigned(body: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "x-hub-signature": `sha256=${createHmac("sha256", JIRA_HMAC).update(Buffer.from(body)).digest("hex")}`,
   };
 }
 
@@ -83,9 +91,9 @@ describe("ingress", () => {
   it("serves health with what is actually configured", async () => {
     const response = await fetch(`${base}/health`);
     expect(response.status).toBe(200);
-    const body = (await response.json()) as { status: string; webhooks: { jira: boolean; github: boolean } };
+      const body = (await response.json()) as { status: string; webhooks: Record<string, boolean> };
     expect(body.status).toBe("ok");
-    expect(body.webhooks).toEqual({ jira: true, github: true });
+    expect(body.webhooks).toEqual({ jira: true, jiraSigned: true, github: true });
   });
 
   it("answers a wrong Jira secret with 404 and does no work", async () => {
@@ -101,23 +109,39 @@ describe("ingress", () => {
   });
 
   it("accepts a signed-by-path Jira event and works the issue by key", async () => {
-    const response = await fetch(`${base}/jira/webhook/${JIRA_SECRET}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ webhookEvent: "comment_created", issue: { key: "DOC-7" }, comment: { id: "10001" } }),
-    });
+    const body = JSON.stringify({ webhookEvent: "comment_created", issue: { key: "DOC-7" }, comment: { id: "10001" } });
+    const response = await fetch(`${base}/jira/webhook/${JIRA_SECRET}`, { method: "POST", headers: jiraSigned(body), body });
     expect(response.status).toBe(202);
     await settle();
     // Only the key is taken from the payload — the handler re-fetches the issue itself.
     expect(nudged).toEqual(["DOC-7"]);
   });
 
-  it("treats the reachability probe as a no-op", async () => {
+  it("refuses a right-path request that is not signed, once a secret is configured", async () => {
+    // The path segment is no longer sufficient when Jira is signing: an attacker who
+    // learned the URL still cannot forge a payload.
+    const body = JSON.stringify({ webhookEvent: "comment_created", issue: { key: "DOC-9" } });
     const response = await fetch(`${base}/jira/webhook/${JIRA_SECRET}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ webhookEvent: PROBE_EVENT, issue: { key: "DOC-1" } }),
+      body,
     });
+    expect(response.status).toBe(401);
+    await settle();
+    expect(nudged).toEqual([]);
+  });
+
+  it("accepts a correctly signed Jira event", async () => {
+    const body = JSON.stringify({ webhookEvent: "jira:issue_updated", issue: { key: "DOC-11" } });
+    const response = await fetch(`${base}/jira/webhook/${JIRA_SECRET}`, { method: "POST", headers: jiraSigned(body), body });
+    expect(response.status).toBe(202);
+    await settle();
+    expect(nudged).toEqual(["DOC-11"]);
+  });
+
+  it("treats the reachability probe as a no-op", async () => {
+    const probeBody = JSON.stringify({ webhookEvent: PROBE_EVENT, issue: { key: "DOC-1" } });
+    const response = await fetch(`${base}/jira/webhook/${JIRA_SECRET}`, { method: "POST", headers: jiraSigned(probeBody), body: probeBody });
     expect(response.status).toBe(200);
     await settle();
     expect(nudged).toEqual([]);

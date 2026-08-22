@@ -79,11 +79,16 @@ const webhookSecret = process.env.JIRA_WEBHOOK_SECRET?.trim();
 if (publicUrl && webhookSecret) {
   const url = `${publicUrl.replace(/\/+$/, "")}/jira/webhook/${webhookSecret}`;
   try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ webhookEvent: "scriptorium:probe" }),
-    });
+    // Sign the probe when a webhook secret is configured, or the ingress will (correctly)
+    // refuse its own doctor with a 401.
+    const body = JSON.stringify({ webhookEvent: "scriptorium:probe" });
+    const hmac = process.env.JIRA_WEBHOOK_HMAC_SECRET?.trim();
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (hmac) {
+      const { createHmac } = await import("node:crypto");
+      headers["x-hub-signature"] = `sha256=${createHmac("sha256", hmac).update(Buffer.from(body)).digest("hex")}`;
+    }
+    const response = await fetch(url, { method: "POST", headers, body });
     console.log(
       response.ok
         ? `✅ webhook reachable: POST ${publicUrl}/jira/webhook/<secret> -> ${response.status}`

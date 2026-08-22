@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { AnthropicVertex } from "@anthropic-ai/vertex-sdk";
+import { generateWithGemini } from "./gemini";
 
 /**
  * Two ways in, one surface. The first-party client wants an API key; the Vertex client
@@ -11,13 +12,23 @@ export type LlmClient = Anthropic | AnthropicVertex;
 
 let client: LlmClient | undefined;
 
-export function llmProvider(): "vertex" | "anthropic" | "none" {
+export function llmProvider(): "gemini" | "vertex" | "anthropic" | "none" {
+  // Explicit opt-in only: Claude stays the default even when a Vertex project is set.
+  if (process.env.LLM_PROVIDER?.trim() === "gemini" && process.env.VERTEX_PROJECT_ID?.trim()) return "gemini";
   if (process.env.VERTEX_PROJECT_ID?.trim()) return "vertex";
   return process.env.ANTHROPIC_API_KEY?.trim() ? "anthropic" : "none";
 }
 
 export function anthropic(): LlmClient {
   if (client) return client;
+
+  if (llmProvider() === "gemini") {
+    // Curator's grounded Q&A needs the Anthropic tool runner; there is no honest way to
+    // serve it from here, so say so rather than degrade retrieval silently.
+    throw new Error(
+      "LLM_PROVIDER=gemini covers drafting only. Grounded Q&A requires Claude — unset LLM_PROVIDER once Anthropic quota or an API key is available.",
+    );
+  }
 
   if (llmProvider() === "vertex") {
     client = new AnthropicVertex({
@@ -56,7 +67,12 @@ export interface GenerateOptions {
 }
 
 /** Single grounded generation call. Throws on refusal/truncation instead of returning partial output. */
-export async function generateText({ system, prompt, images = [], maxTokens = 16_000 }: GenerateOptions): Promise<string> {
+export async function generateText(options: GenerateOptions): Promise<string> {
+  if (llmProvider() === "gemini") return generateWithGemini(options);
+  return generateWithClaude(options);
+}
+
+async function generateWithClaude({ system, prompt, images = [], maxTokens = 16_000 }: GenerateOptions): Promise<string> {
   const content: Anthropic.ContentBlockParam[] = [
     ...images.map(
       (image): Anthropic.ImageBlockParam => ({

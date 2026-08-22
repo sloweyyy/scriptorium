@@ -55,8 +55,23 @@ export interface PublishToRepoBase {
   baseline?: string;
 }
 
+/**
+ * `human-edit` — a human commit sits on the blob the agent last published.
+ * `unpushed-local-commits` — the agent's own publish commits never reached the remote, so
+ * rebasing them would rewrite the baseline itself (see `publishToRepo`).
+ */
+export type ConflictReason = "human-edit" | "unpushed-local-commits";
+
 export type PublishToRepoResult =
-  | (PublishToRepoBase & { status: "conflict"; diverged: DivergedPath[]; committed: false; pushed: false })
+  | (PublishToRepoBase & {
+      status: "conflict";
+      reason: ConflictReason;
+      diverged: DivergedPath[];
+      /** Number of local commits the remote has not seen, for `unpushed-local-commits`. */
+      unpushed?: number;
+      committed: false;
+      pushed: false;
+    })
   | (PublishToRepoBase & { status: "unchanged"; committed: false; pushed: false })
   | (PublishToRepoBase & { status: "published"; commit: string; changed: string[]; committed: true; pushed: boolean })
   | (PublishToRepoBase & { status: "push-failed"; commit: string; changed: string[]; committed: true; pushed: false; error: string });
@@ -152,15 +167,48 @@ export async function publishToRepo(input: PublishToRepoInput): Promise<PublishT
   if (dirty) throw new Error(`publish: docs repo work tree is not clean (${repoDir}):\n${dirty}`);
 
   if (input.pull !== false) {
-    // Pull FIRST: the human commit the gate has to see may only exist on the remote.
-    await git(repoDir, ["pull", "--rebase", remote, branch]);
+    // Fetch FIRST: the human commit the gate has to see may exist only on the remote.
+    // (fetch + rebase rather than `pull --rebase` so the ahead-check below can run in
+    // between, on knowledge of the remote but before any history is rewritten.)
+    await git(repoDir, ["fetch", remote]);
+    const remoteRef = await gitMaybe(repoDir, ["rev-parse", "--verify", `refs/remotes/${remote}/${branch}`]);
+    if (remoteRef) {
+      // Local commits the remote has not seen make the baseline untrustworthy: rebasing the
+      // agent's own unpushed publish commit rewrites its tree onto the human's, so every
+      // path that commit did not itself change comes back carrying the HUMAN's content —
+      // the baseline blob then equals the HEAD blob and the gate below passes on exactly
+      // the content it exists to protect. Reachable via `push: false` and after a
+      // `push-failed`, so refuse rather than rebase.
+      const ahead = Number(await git(repoDir, ["rev-list", "--count", `${remote}/${branch}..HEAD`]));
+      if (ahead > 0) {
+        return {
+          status: "conflict",
+          reason: "unpushed-local-commits",
+          target,
+          branch,
+          baseline: await lastPublishCommit(repoDir, target),
+          diverged: [],
+          unpushed: ahead,
+          committed: false,
+          pushed: false,
+        };
+      }
+      try {
+        await git(repoDir, ["rebase", `${remote}/${branch}`]);
+      } catch (error) {
+        // A failed rebase leaves the work tree mid-rebase, which would trip the dirty check
+        // above on every later run and wedge the repo. Unwind before surfacing.
+        await gitMaybe(repoDir, ["rebase", "--abort"]);
+        throw error;
+      }
+    }
   }
 
   const baseline = await lastPublishCommit(repoDir, target);
   const targetPaths = files.map((relPath) => repoPath(subdir, relPath));
   const diverged = await detectDivergence(repoDir, targetPaths, baseline);
   if (diverged.length) {
-    return { status: "conflict", target, branch, baseline, diverged, committed: false, pushed: false };
+    return { status: "conflict", reason: "human-edit", target, branch, baseline, diverged, committed: false, pushed: false };
   }
 
   // Copy file by file from the include-list — never a recursive directory copy, even here

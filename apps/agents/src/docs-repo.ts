@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { docsRepoReady, parseMarkdown, type AppConfig, type Vault } from "@scriptorium/core";
-import { docBranchName, docPullRequestBody, openPullRequest, publishVault, type PublishToRepoResult } from "@scriptorium/publish";
+import { docBranchName, docPullRequestBody, installationToken, openPullRequest, publishVault, type PublishToRepoResult } from "@scriptorium/publish";
 
 const exec = promisify(execFile);
 
@@ -177,24 +177,37 @@ export async function publishApprovedDoc(
   let pullRequestUrl: string | undefined;
   const externalPublished = external.push.status === "published" && external.push.pushed;
 
-  if (externalPublished && config.docsRepo.token && config.docsRepo.slug) {
+  if (externalPublished && config.docsRepo.slug) {
     try {
-      const pull = await openPullRequest({
-        repo: config.docsRepo.slug,
-        head: branch,
-        base: config.docsRepo.base,
-        title: `docs: ${input.slug} (${input.issueKey})`,
-        body: docPullRequestBody({ ...input, approvedBy: input.approvedBy }),
-        token: config.docsRepo.token,
-      });
-      pullRequestUrl = pull.url;
-      lines.push(`- Pull request: ${pull.url} — merging it publishes to the site`);
+      // App credentials first: one repo, two permissions, hour-lived tokens, and the PR
+      // shows as the app's own [bot] identity — the same split the Jira service account
+      // makes visible. A PAT is the simpler fallback for a local run.
+      const token =
+        config.docsRepo.githubAppId && config.docsRepo.githubAppKey
+          ? await installationToken({
+              appId: config.docsRepo.githubAppId,
+              privateKey: config.docsRepo.githubAppKey,
+              repo: config.docsRepo.slug,
+            })
+          : config.docsRepo.token;
+      if (token) {
+        const pull = await openPullRequest({
+          repo: config.docsRepo.slug,
+          head: branch,
+          base: config.docsRepo.base,
+          title: `docs: ${input.slug} (${input.issueKey})`,
+          body: docPullRequestBody({ ...input, approvedBy: input.approvedBy }),
+          token,
+        });
+        pullRequestUrl = pull.url;
+        lines.push(`- Pull request: ${pull.url} — merging it publishes to the site`);
+      } else {
+        lines.push(`- No GitHub App or token configured, so no PR was opened — merge \`${branch}\` into \`${config.docsRepo.base}\` to publish`);
+      }
     } catch (error) {
       // A missing PR is not a failed publish: the branch is pushed and mergeable by hand.
       lines.push(`- Pull request could not be opened (${error instanceof Error ? error.message : String(error)}); the branch is pushed and can be merged manually`);
     }
-  } else if (externalPublished) {
-    lines.push(`- No API token configured, so no PR was opened — merge \`${branch}\` into \`${config.docsRepo.base}\` to publish`);
   }
   if (internal.push.status === "published") {
     lines.push(`- Internal site tracks \`${config.docsRepo.internalBranch}\`, so it is already live`);

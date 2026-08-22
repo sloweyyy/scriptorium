@@ -137,7 +137,16 @@ export class JiraClient {
   }
 
   /** Who last moved the issue into `statusName` — the approver of record for the audit log. */
-  async lastStatusChangeAuthor(key: string, statusName: string): Promise<string | undefined> {
+  /**
+   * Who last moved the issue into `statusName` — name AND accountId, because the caller
+   * must be able to tell a human's transition from the agent's own. The agent drives the
+   * board itself, so "someone moved it to Done" is only an approval when that someone is
+   * not the agent.
+   */
+  async lastStatusChangeAuthor(
+    key: string,
+    statusName: string,
+  ): Promise<{ name: string; accountId?: string } | undefined> {
     const data = await this.get<{
       changelog?: { histories?: Array<{ author?: JiraUser; items?: Array<{ field?: string; toString?: string }> }> };
     }>(`/rest/api/2/issue/${encodeURIComponent(key)}?expand=changelog&fields=status`);
@@ -147,7 +156,10 @@ export class JiraClient {
     for (let index = histories.length - 1; index >= 0; index -= 1) {
       const entry = histories[index];
       const moved = entry?.items?.some((item) => item.field === "status" && item.toString?.toLowerCase() === wanted);
-      if (moved) return entry?.author?.displayName ?? entry?.author?.accountId;
+      if (moved) {
+        const name = entry?.author?.displayName ?? entry?.author?.accountId;
+        return name ? { name, accountId: entry?.author?.accountId } : undefined;
+      }
     }
     return undefined;
   }

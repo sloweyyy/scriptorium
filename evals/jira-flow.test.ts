@@ -46,7 +46,7 @@ function config(): AppConfig {
     curator: {},
     slack: {},
     webhook: {},
-    docsRepo: { base: "main", internalBranch: "vault-live", workDir: path.join(tmpRoot, "docs-repo") },
+    docsRepo: { base: "main", internalBranch: "vault-live", commitName: "scriptorium agent", commitEmail: "agent@example.invalid", workDir: path.join(tmpRoot, "docs-repo") },
     jira: {
       baseUrl: "https://example.atlassian.net",
       email: "agent@example.com",

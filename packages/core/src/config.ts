@@ -63,6 +63,16 @@ export interface DocsRepoSettings {
   workDir: string;
   /** "owner/name", derived from the URL, for the REST calls. */
   slug?: string;
+  /**
+   * Identity the agent commits as in the docs repo.
+   *
+   * Not cosmetic: Vercel refuses to build a commit whose author email GitHub cannot
+   * associate with a user (`COMMIT_AUTHOR_REQUIRED`), so an unassociated address means
+   * every published doc is blocked from ever reaching the site. The GitHub noreply form
+   * `<id>+<login>@users.noreply.github.com` always associates.
+   */
+  commitName: string;
+  commitEmail: string;
 }
 
 export interface SlackSettings {
@@ -194,6 +204,8 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       token: env("DOCS_REPO_TOKEN"),
       workDir: path.resolve(repoRoot, env("DOCS_REPO_WORKDIR") ?? path.join(env("STATE_DIR") ?? ".scriptorium-state", "docs-repo")),
       slug: repoSlugFromUrl(env("DOCS_REPO_URL")),
+      commitName: env("DOCS_REPO_COMMIT_NAME") ?? "scriptorium agent",
+      commitEmail: env("DOCS_REPO_COMMIT_EMAIL") ?? "agent@scriptorium.local",
     },
   };
 }

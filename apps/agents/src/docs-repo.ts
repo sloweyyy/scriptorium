@@ -57,10 +57,11 @@ export async function ensureDocsRepo(config: AppConfig): Promise<string> {
     await fs.rm(workDir, { recursive: true, force: true });
     await exec("git", ["clone", "--branch", base, url, workDir], { env });
   }
-  // Identity must exist inside the clone: the commit records the approver in the message,
-  // but git still refuses to commit without an author.
-  await exec("git", ["config", "user.name", "scriptorium agent"], { cwd: workDir });
-  await exec("git", ["config", "user.email", "agent@scriptorium.local"], { cwd: workDir });
+  // Identity must exist inside the clone — and it must be an identity GitHub can associate
+  // with a user, or Vercel blocks the build with COMMIT_AUTHOR_REQUIRED and the published
+  // doc never reaches the site. The approver's name is recorded in the commit message.
+  await exec("git", ["config", "user.name", config.docsRepo.commitName], { cwd: workDir });
+  await exec("git", ["config", "user.email", config.docsRepo.commitEmail], { cwd: workDir });
   return workDir;
 }
 
@@ -100,7 +101,9 @@ export async function publishApprovedDoc(
     vault,
     repoDir,
     target: "external",
-    subdir: "docs",
+    // No subdir: the vault path is already `docs/<slug>.md`, and prefixing again produced
+    // `docs/docs/<slug>.md` in the repo — which the site then failed to build.
+    subdir: undefined,
     branch,
     baseBranch: config.docsRepo.base,
     remote: "origin",

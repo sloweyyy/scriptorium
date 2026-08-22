@@ -31,6 +31,9 @@ export async function publishDoc(input: PublishInput): Promise<string> {
   await input.vault.writeNote(relPath, body, {
     kind: "doc",
     status: "published",
+    // `title` as well as `feature`: static-site generators require it (Starlight fails the
+    // build without one), and a published doc with no title is unrenderable anywhere.
+    title,
     feature: title,
     jira_issue: input.jiraIssue,
     source: input.sourcePrd ? `[[${input.sourcePrd}]]` : undefined,

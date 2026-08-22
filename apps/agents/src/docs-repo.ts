@@ -114,7 +114,9 @@ export async function publishApprovedDoc(
     repoDir,
     target: "internal",
     subdir: "internal",
-    branch: config.docsRepo.base,
+    // Never the base branch: see DocsRepoSettings.internalBranch.
+    branch: config.docsRepo.internalBranch,
+    baseBranch: config.docsRepo.base,
     remote: "origin",
     approvedBy: input.approvedBy,
     message: `vault: ${input.slug} (${input.issueKey})`,
@@ -142,6 +144,9 @@ export async function publishApprovedDoc(
     }
   } else if (externalPublished) {
     lines.push(`- No API token configured, so no PR was opened — merge \`${branch}\` into \`${config.docsRepo.base}\` to publish`);
+  }
+  if (internal.push.status === "published") {
+    lines.push(`- Internal site tracks \`${config.docsRepo.internalBranch}\`, so it is already live`);
   }
 
   const refused = external.push.status === "conflict" || internal.push.status === "conflict";
@@ -183,7 +188,9 @@ export async function syncFromDocsRepo(config: AppConfig, vault: Vault, paths: r
   const repoDir = await ensureDocsRepo(config);
   const env = ssh(config);
   const base = config.docsRepo.base;
+  const internal = config.docsRepo.internalBranch;
   await exec("git", ["fetch", "origin", base], { cwd: repoDir, env });
+  await exec("git", ["fetch", "origin", internal], { cwd: repoDir, env }).catch(() => undefined);
 
   for (const repoPath of paths) {
     const isInternal = repoPath.startsWith("internal/");
@@ -192,7 +199,9 @@ export async function syncFromDocsRepo(config: AppConfig, vault: Vault, paths: r
 
     let content: string;
     try {
-      const { stdout } = await exec("git", ["show", `origin/${base}:${repoPath}`], { cwd: repoDir, maxBuffer: 8_000_000 });
+      // Internal content lives on its own branch; published docs on the base.
+      const ref = isInternal ? `origin/${internal}` : `origin/${base}`;
+      const { stdout } = await exec("git", ["show", `${ref}:${repoPath}`], { cwd: repoDir, maxBuffer: 8_000_000 });
       content = stdout;
     } catch {
       // Deleted upstream. Deleting vault notes on a remote delete is not something an
@@ -241,7 +250,7 @@ export async function hydrateVaultFromDocsRepo(config: AppConfig, vault: Vault):
 
   const repoDir = await ensureDocsRepo(config);
   const env = ssh(config);
-  const base = config.docsRepo.base;
+  const base = config.docsRepo.internalBranch;
   await exec("git", ["fetch", "origin", base], { cwd: repoDir, env });
 
   const { stdout } = await exec("git", ["ls-tree", "-r", "--name-only", `origin/${base}`, "internal/"], {

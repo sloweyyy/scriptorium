@@ -1,7 +1,9 @@
+import { runGeminiToolLoop } from "@scriptorium/core";
+import { z } from "zod";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Vault, llmProvider } from "@scriptorium/core";
 import { answerQuestion } from "@scriptorium/curator";
 
@@ -71,5 +73,64 @@ describe(`curator grounded Q&A (live LLM, provider: ${provider})`, () => {
     // it has to be the whole answer — a hedged paragraph around it is not a refusal.
     expect(answer.text.startsWith("NOT_IN_KB:")).toBe(true);
     expect(answer.citations).toHaveLength(0);
+  });
+});
+
+describe("gemini tool loop transport", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("answers every function call in one turn, in order", async () => {
+    // The live traces only ever contained one call per round, so the multi-call branch was
+    // written to spec and never exercised. Vertex rejects a turn whose functionResponse
+    // parts do not match its functionCall parts 1:1 and in order, and that failure would
+    // surface as an opaque 400 mid-retrieval.
+    const ran: string[] = [];
+    const sent: unknown[] = [];
+    let round = 0;
+
+    vi.stubGlobal("fetch", async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { contents: Array<{ role: string; parts: unknown[] }> };
+      sent.push(body.contents.at(-1));
+      round += 1;
+      const parts =
+        round === 1
+          ? [
+              { functionCall: { name: "alpha", args: { q: "1" } } },
+              { functionCall: { name: "beta", args: { q: "2" } } },
+            ]
+          : [{ text: "done" }];
+      return new Response(JSON.stringify({ candidates: [{ content: { parts }, finishReason: "STOP" }] }), { status: 200 });
+    });
+
+    const tool = (name: string) => ({
+      name,
+      description: name,
+      inputSchema: z.object({ q: z.string() }),
+      run: async (input: unknown) => {
+        ran.push(name);
+        return `${name}:${(input as { q: string }).q}`;
+      },
+    });
+
+    const answer = await runGeminiToolLoop({ system: "s", prompt: "p", tools: [tool("alpha"), tool("beta")] });
+
+    expect(answer).toBe("done");
+    expect(ran).toEqual(["alpha", "beta"]);
+    const replies = (sent.at(-1) as { parts: Array<{ functionResponse?: { name: string; response: { result: string } } }> }).parts;
+    expect(replies.map((p) => p.functionResponse?.name)).toEqual(["alpha", "beta"]);
+    expect(replies.map((p) => p.functionResponse?.response.result)).toEqual(["alpha:1", "beta:2"]);
+  });
+
+  it("throws rather than returning a half-finished answer when the cap binds", async () => {
+    vi.stubGlobal("fetch", async () =>
+      new Response(
+        JSON.stringify({ candidates: [{ content: { parts: [{ functionCall: { name: "alpha", args: {} } }] }, finishReason: "STOP" }] }),
+        { status: 200 },
+      ),
+    );
+    const alpha = { name: "alpha", description: "a", inputSchema: z.object({}), run: async () => "nothing" };
+    await expect(runGeminiToolLoop({ system: "s", prompt: "p", tools: [alpha], maxRounds: 3 })).rejects.toThrow(/3-round cap/);
   });
 });

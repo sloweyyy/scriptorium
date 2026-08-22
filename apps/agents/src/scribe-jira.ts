@@ -63,6 +63,33 @@ interface Ctx {
   client: JiraClient;
   state: JiraState;
   botAccountId: string;
+  /** Per-issue serialisation — see withIssueLock. */
+  locks: Map<string, Promise<unknown>>;
+}
+
+/**
+ * One issue is worked by one caller at a time.
+ *
+ * The ledger makes at-least-once *delivery* safe, but drafting is check-then-act: read
+ * `hasDraft`, make a slow model call, write `hasDraft`. Two entrants both pass the check
+ * and both draft. That is not theoretical — a webhook nudge and a poll tick hit the same
+ * ticket seconds apart and posted two drafts and two attachments, because the poll loop's
+ * in-flight flag never covered the webhook path. Serialise per issue key so the second
+ * caller runs after the first and sees the state it wrote.
+ */
+async function withIssueLock<T>(ctx: Ctx, key: string, work: () => Promise<T>): Promise<T> {
+  const previous = ctx.locks.get(key) ?? Promise.resolve();
+  const run = previous.then(work, work);
+  // Keep a non-rejecting tail in the map so one failure cannot poison the queue.
+  ctx.locks.set(
+    key,
+    run.catch(() => undefined),
+  );
+  try {
+    return await run;
+  } finally {
+    if (ctx.locks.get(key) === run || (await ctx.locks.get(key)) === undefined) ctx.locks.delete(key);
+  }
 }
 
 const VISION_TYPES: Record<string, ImageInput["mediaType"]> = {
@@ -812,7 +839,7 @@ export async function startScribeJira(config: AppConfig, vault: Vault): Promise<
   const client = jiraClient(config.jira);
   const me = await client.myself();
   const state = await JiraState.open(config.jira.stateDir);
-  const ctx: Ctx = { config, vault, client, state, botAccountId: me.accountId };
+  const ctx: Ctx = { config, vault, client, state, botAccountId: me.accountId, locks: new Map() };
   const jql = defaultJql(config.jira);
 
   console.log(`[scribe] 🎫 jira: ${config.jira.baseUrl} as ${me.displayName}, polling every ${Math.round(config.jira.pollMs / 1000)}s`);
@@ -825,7 +852,7 @@ export async function startScribeJira(config: AppConfig, vault: Vault): Promise<
     try {
       for (const issue of await client.searchIssues(jql)) {
         try {
-          await handleIssue(ctx, issue);
+          await withIssueLock(ctx, issue.key, () => handleIssue(ctx, issue));
         } catch (error) {
           console.warn(`[scribe] ${issue.key}: ${errorMessage(error)}`);
           await reportFailure(ctx, issue, error);
@@ -848,7 +875,8 @@ export async function startScribeJira(config: AppConfig, vault: Vault): Promise<
       // time we look the ticket may have moved on anyway.
       const issue = await client.getIssue(issueKey);
       try {
-        await handleIssue(ctx, issue);
+        // Same lock as the poller: a webhook is a faster trigger, not a second worker.
+        await withIssueLock(ctx, issueKey, () => handleIssue(ctx, issue));
       } catch (error) {
         console.warn(`[scribe] ${issueKey} (webhook): ${errorMessage(error)}`);
         await reportFailure(ctx, issue, error);

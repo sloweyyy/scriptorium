@@ -1,4 +1,4 @@
-import { docsRepoReady, jiraReady, loadConfig, Vault } from "@scriptorium/core";
+import { docsRepoReady, geminiModel, jiraReady, loadConfig, Vault } from "@scriptorium/core";
 import { updateMoc, watchInbox } from "@scriptorium/curator";
 import { startIngress } from "./ingress";
 import { hydrateVaultFromDocsRepo, syncFromDocsRepo } from "./docs-repo";
@@ -16,8 +16,17 @@ await vault.ensure();
 
 console.log(`[scriptorium] vault:  ${config.vaultDir}`);
 console.log(
-  `[scriptorium] model:  ${config.model} via ${
-    config.provider === "vertex" ? `Vertex AI (${config.vertexProject}, ${config.vertexRegion})` : config.provider === "anthropic" ? "Anthropic API" : "NO PROVIDER CONFIGURED"
+  // Every provider gets a branch. A missing one silently reads as "NO PROVIDER
+  // CONFIGURED" while the provider is in fact working, which is a log line that costs
+  // someone an hour.
+  `[scriptorium] model:  ${
+    config.provider === "gemini"
+      ? `${geminiModel()} via Gemini on Vertex (${config.vertexProject}, ${config.vertexRegion})`
+      : config.provider === "vertex"
+        ? `${config.model} via Claude on Vertex (${config.vertexProject}, ${config.vertexRegion})`
+        : config.provider === "anthropic"
+          ? `${config.model} via the Anthropic API`
+          : "NO PROVIDER CONFIGURED"
   }`,
 );
 
@@ -107,6 +116,12 @@ if (!jiraReady(config.jira) && !config.curator.botToken) {
   console.log("[scriptorium] local mode: drop a PRD or design into vault/_inbox and watch Curator file it. Ctrl+C to stop.");
 }
 
-process.on("SIGINT", () => {
+const shutdown = (signal: string): void => {
+  console.log(`[scriptorium] ${signal} — closing the poller, the ingress and the socket`);
   void Promise.allSettled(stops.map((stop) => stop())).finally(() => process.exit(0));
-});
+};
+
+// SIGTERM is what Cloud Run actually sends when it replaces a revision; without it the
+// process is killed mid-flight and the platform logs a bare command failure.
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));

@@ -74,20 +74,33 @@ export interface TransformBodyResult {
  * link goes. Embeds (`![[image.png]]`) of excluded targets are removed outright — a stub
  * image is worse than no image.
  */
+/**
+ * "relative" rewrites every surviving wikilink into a relative markdown link, for a
+ * generator that cannot resolve wikilinks (Starlight). "prune" keeps the wikilink syntax
+ * for a generator that resolves them natively (Quartz) and only removes the ones pointing
+ * outside the include-list — which still matters, because an unpublished target leaks its
+ * title onto a published page even when the file itself never ships.
+ */
+export type LinkMode = "relative" | "prune";
+
 export function transformBodyLinks(
   relPath: string,
   body: string,
   included: ReadonlySet<string>,
+  mode: LinkMode = "relative",
 ): TransformBodyResult {
   const dropped: string[] = [];
-  const transformed = body.replace(WIKILINK, (_match, bang: string, inner: string) => {
+  const transformed = body.replace(WIKILINK, (match, bang: string, inner: string) => {
     const link = parseWikilink(inner, bang === "!");
     const resolved = resolveTarget(link.target, included);
     const label = link.alias ?? link.heading ?? link.target;
     if (!resolved) {
       dropped.push(link.target);
-      return link.embed ? "" : label;
+      // No link, and no label either in prune mode: the label IS the leak — a reference
+      // note's title is exactly what must not appear on a published page.
+      return link.embed || mode === "prune" ? "" : label;
     }
+    if (mode === "prune") return match;
     const anchor = link.heading ? `#${slugify(link.heading)}` : "";
     const href = `${relativeLink(relPath, resolved)}${anchor}`;
     return `${link.embed ? "!" : ""}[${label}](${href})`;

@@ -316,3 +316,30 @@ describe("publish divergence gate", () => {
     expect(again.push.status).toBe("unchanged");
   });
 });
+
+describe("internal target link pruning", () => {
+  it("never publishes the title of a note it refuses to publish", async () => {
+    // The vault index lists every retrieved reference note by title. The files are
+    // correctly excluded — but an untransformed label leaks the title onto a published
+    // page, which is the same disclosure with extra steps.
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "scriptorium-prune-"));
+    const vault = new Vault(path.join(root, "vault"));
+    await vault.ensure();
+    await vault.writeNote("reference/api-rate-limits.md", "# Rate limits", { kind: "reference", source_url: "https://example.com/x" });
+    await vault.writeNote("docs/thing.md", "# Thing", { kind: "doc", title: "Thing" });
+    await vault.writeNote(
+      "index.md",
+      ["# Vault index", "", "- [[docs/thing|Thing]]", "- [[reference/api-rate-limits|Rate limits]]"].join("\n"),
+    );
+
+    const staged = await stageVault({ vault, target: "internal", destDir: path.join(root, "staged") });
+    const index = await fs.readFile(path.join(root, "staged", "index.md"), "utf8");
+
+    expect(index).toContain("[[docs/thing|Thing]]"); // wikilink kept — Quartz resolves it
+    expect(index).not.toContain("reference/api-rate-limits");
+    expect(index).not.toContain("Rate limits"); // the label was the leak
+    expect(staged.files).not.toContain("reference/api-rate-limits.md");
+
+    await fs.rm(root, { recursive: true, force: true });
+  });
+});

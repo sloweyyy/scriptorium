@@ -153,9 +153,23 @@ export async function publishApprovedDoc(
   }
 
   const refused = external.push.status === "conflict" || internal.push.status === "conflict";
+
+  // The two targets are two renderings of ONE vault note, pushed in two separate commits.
+  // That is not atomic: one can land while the other refuses, and then the public site and
+  // the internal graph disagree about the same document with nothing to say so. The gate
+  // compares each copy against what the agent last published FOR THAT TARGET, so neither
+  // check can see the mismatch. Say it out loud instead.
+  const landed = (status: string): boolean => status === "published" || status === "unchanged";
+  const inconsistent = landed(external.push.status) !== landed(internal.push.status);
   const heading = refused
     ? "**Publish refused — the docs repo has human edits I would have overwritten.**"
     : "**Pushed to the docs repo.**";
+
+  if (inconsistent) {
+    lines.push(
+      "- ⚠️ **The two published copies now disagree**: one target landed and the other did not, so the public site and the internal graph are out of step for this doc. The vault note is unaffected — re-run `approve` once the refusal above is resolved.",
+    );
+  }
 
   return {
     comment: [heading, "", ...lines, "", refused ? "Nothing was force-pushed. Reconcile the diverged files and comment `approve` again." : "The vault note is the source; the site builds from the repo."].join("\n"),

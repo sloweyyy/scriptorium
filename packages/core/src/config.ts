@@ -67,6 +67,14 @@ export interface DocsRepoSettings {
   sshKey?: string;
   /** API token, only needed to OPEN a pull request; a deploy key cannot. */
   token?: string;
+  /**
+   * GitHub App credentials — the preferred way to get PR-opening rights. Installed on
+   * one repo, two permissions, hour-lived tokens, its own [bot] identity on the PR.
+   * When both are set they win over `token`.
+   */
+  githubAppId?: string;
+  /** PEM private key, or a path to it (a Secret Manager mount is a path). */
+  githubAppKey?: string;
   /** Local clone the agent works in; lives beside the poller state, never in the vault. */
   workDir: string;
   /** "owner/name", derived from the URL, for the REST calls. */
@@ -229,6 +237,8 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       internalBranch: env("DOCS_REPO_INTERNAL_BRANCH") ?? "vault-live",
       sshKey: env("DOCS_REPO_SSH_KEY"),
       token: env("DOCS_REPO_TOKEN"),
+      githubAppId: env("DOCS_REPO_GITHUB_APP_ID"),
+      githubAppKey: env("DOCS_REPO_GITHUB_APP_KEY"),
       /**
        * Scratch clone, deliberately NOT under STATE_DIR.
        *

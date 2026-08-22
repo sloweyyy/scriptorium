@@ -23,8 +23,15 @@ export interface JiraSettings {
   email?: string;
   apiToken?: string;
   projectKey?: string;
-  /** Overrides the default "open doc requests in this project" query. */
+  /** Overrides the default "every unfinished issue in this project" query. */
   jql?: string;
+  /**
+   * The auto-draft label — no longer the visibility gate.
+   *
+   * The agent watches the whole project so that a mention on any ticket gets an answer;
+   * this label is what makes it draft *unasked* (HELP + a proactive draft on first sight).
+   * An unlabelled ticket is mention-only: adopted quietly, silent until a human asks.
+   */
   label: string;
   issueType: string;
   approvedStatus: string;
@@ -53,10 +60,17 @@ export function jiraReady(jira: JiraSettings): boolean {
   return Boolean(jira.baseUrl && jira.email && jira.apiToken && jira.projectKey);
 }
 
-/** Default JQL: every unfinished doc request in the project, oldest touch first. */
+/**
+ * Default JQL: every unfinished issue in the project, oldest touch first.
+ *
+ * Deliberately not filtered by `jira.label`: a reviewer's first instinct is to open any
+ * ticket and type `@Scribe`, and a query the ticket doesn't match produces permanent
+ * silence — no code path ever runs. The label decides whether the agent *drafts*
+ * unasked (see `JiraSettings.label`), not whether it can see the ticket at all.
+ */
 export function defaultJql(jira: JiraSettings): string {
   if (jira.jql) return jira.jql;
-  return `project = "${jira.projectKey}" AND labels = "${jira.label}" AND statusCategory != Done ORDER BY updated ASC`;
+  return `project = "${jira.projectKey}" AND statusCategory != Done ORDER BY updated ASC`;
 }
 
 export function loadConfig(repoRoot = process.cwd()): AppConfig {

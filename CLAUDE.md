@@ -90,6 +90,10 @@ pnpm seed:corpus        # corpus/*.md -> vault/reference/ (--inbox to let the wa
 6. `samples/prd-002-*` exists — the full demo run (lesson transfer across two PRDs) does not.
 7. Demo video.
 
+Not code, and blocking the deliverable: Jira invite for `reviewer@example.com`,
+push + repo invite for `reviewer@example.com`, reinstall the Curator Slack app for
+`reactions:write`, and `/invite @Curator` to the notify channel.
+
 Slack Scribe bot (`apps/agents/src/scribe-bot.ts`) stays as a thin secondary surface —
 do not extend it further; Jira is Agent A's primary interface now.
 

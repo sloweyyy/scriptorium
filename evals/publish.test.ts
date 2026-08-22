@@ -253,6 +253,31 @@ describe("publish divergence gate", () => {
     expect(await run(agentClone, ["status", "--porcelain"])).toBe("");
   });
 
+  it("does not refuse when the human's commit left the file exactly as the agent would publish it", async () => {
+    // A repair or re-arrangement commit by a human that leaves the bytes identical to the
+    // agent's own projection is a divergence in provenance only. Refusing it blocks every
+    // later publish of the tree until someone "reconciles" files that already agree.
+    await vault.writeNote("docs/widget-exports.md", "# Widget exports\n\nPublished body.", { kind: "doc" });
+    const first = await publishVault({ vault, target: "external", repoDir: agentClone, approvedBy: "pm@example.com" });
+    expect(first.push.status).toBe("published");
+
+    // A human re-commits the same bytes (e.g. via a revert-of-a-revert or a branch repair).
+    const humanClone = path.join(tmpRoot, "human2");
+    await run(tmpRoot, ["clone", bare, humanClone]);
+    await run(humanClone, ["config", "user.email", "human@example.com"]);
+    await run(humanClone, ["config", "user.name", "Human"]);
+    const current = await fs.readFile(path.join(humanClone, "docs/widget-exports.md"), "utf8");
+    await fs.writeFile(path.join(humanClone, "docs/widget-exports.md"), current + "\n");
+    await run(humanClone, ["commit", "-am", "docs: whitespace touch"]);
+    await run(humanClone, ["revert", "--no-edit", "HEAD"]);
+    await run(humanClone, ["push", "origin", "main"]);
+
+    // The agent publishes again with unchanged content: same bytes, new human commits in
+    // between. Content decides — no conflict, and nothing needs to change.
+    const second = await publishVault({ vault, target: "external", repoDir: agentClone, approvedBy: "pm@example.com" });
+    expect(second.push.status).not.toBe("conflict");
+  });
+
   it("refuses to overwrite a path it has never published (no baseline commit)", async () => {
     // Fail-closed first publish: whatever is already at a target path is somebody else's.
     await fs.mkdir(path.join(agentClone, "docs"), { recursive: true });

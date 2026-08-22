@@ -12,6 +12,7 @@ import {
 } from "@scriptorium/core";
 import { organizePublishedDoc } from "@scriptorium/curator";
 import { publishApprovedDoc } from "./docs-repo";
+import { announceDraftForApproval, announcePublished } from "./slack-notify";
 import {
   issueStatus,
   jiraClient,
@@ -324,6 +325,14 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
       revision: false,
     }),
   );
+  await announceDraftForApproval(ctx.config, {
+    issueKey: key,
+    issueUrl: ctx.client.issueUrl(key),
+    feature,
+    lintSummary: formatLintFindings(result.lint).split("\n").join(" · "),
+    appliedLessons: result.appliedLessons,
+  });
+
   await audit(ctx.config.auditFile, {
     type: "jira.draft.posted",
     actor: "scribe",
@@ -529,6 +538,15 @@ async function runPublish(
     const message = error instanceof Error ? error.message : String(error);
     await say(ctx, key, `⚠️ Published to the vault, but pushing to the docs repo failed: {{${message}}}`);
   }
+
+  await announcePublished(ctx.config, {
+    relPath,
+    feature: known?.docSlug ?? relPath,
+    issueKey: key,
+    issueUrl: ctx.client.issueUrl(key),
+    approvedBy,
+    appliedLessons: known?.appliedLessons,
+  });
 
   // Keep the board honest when the approval arrived as a comment.
   if (issueStatus(issue).toLowerCase() !== ctx.config.jira.approvedStatus.toLowerCase()) {
@@ -783,6 +801,8 @@ export interface ScribeJiraHandle {
   nudge(issueKey: string): Promise<void>;
   /** Post a comment on a ticket from outside the poller (e.g. a GitHub event). */
   comment(issueKey: string, markdown: string): Promise<void>;
+  /** Approve and publish from another surface (e.g. a Slack button). Same gate, second doorway. */
+  approve(issueKey: string, approvedBy: string): Promise<void>;
 }
 
 export async function startScribeJira(config: AppConfig, vault: Vault): Promise<ScribeJiraHandle> {
@@ -833,6 +853,12 @@ export async function startScribeJira(config: AppConfig, vault: Vault): Promise<
     },
     async comment(issueKey: string, markdown: string): Promise<void> {
       await say(ctx, issueKey, markdown);
+    },
+    async approve(issueKey: string, approvedBy: string): Promise<void> {
+      // Re-fetch, then take the exact path an `approve` comment takes — including the
+      // fail-closed checks. A button must not be a shortcut around any of them.
+      const issue = await client.getIssue(issueKey);
+      await runPublish(ctx, issue, approvedBy);
     },
   };
 }

@@ -53,15 +53,18 @@ export function buildRevisePrompt({ currentDraft, feedback, lessonsBlock, hasDes
     "---",
   );
   if (hasDesigns) {
-    // Narrowly scoped on purpose. An earlier wording — "follow the images over anything
-    // the draft says" — let an unrelated wireframe redefine the subject: a webhook-retry
-    // document came back rewritten as a status-page document, because the attached mockup
-    // happened to show a status page. Designs settle DETAILS. The draft owns the subject.
+    // Anchored to the document's own title, because the abstract version of this rule
+    // ("keep the same feature as the draft above") did not hold: a webhook-retry document
+    // came back rewritten as a status-page document, the subject taken from an attached
+    // wireframe that happened to show a status page. Naming the subject is what makes the
+    // constraint checkable by the model instead of merely stated.
+    const title = currentDraft.match(/^#\s+(.+)$/m)?.[1]?.trim();
     parts.push(
-      "The attached images are the current design wireframes on this ticket. Use them only",
-      "to settle details the feedback points at — labels, field order, what a screen shows.",
-      "They never change what this document is about: keep the same feature, title and scope",
-      "as the draft above. If an image shows something unrelated to that feature, ignore it.",
+      title ? `This document is about "${title}". It must still be about that when you are done.` : "",
+      "The attached images are wireframes from the ticket. Use them ONLY to settle details",
+      "the feedback points at — labels, field order, what a screen shows. If an image shows",
+      "a different feature, ignore that image completely. Never change the document's title,",
+      "subject or scope.",
       "",
     );
   }

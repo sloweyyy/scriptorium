@@ -278,6 +278,40 @@ describe("publish divergence gate", () => {
     expect(second.push.status).not.toBe("conflict");
   });
 
+  it("publishes other docs even when a human keeps a site-only edit on one", async () => {
+    // The round-trip report offers "leave it as a site-only edit" — and taking that offer
+    // used to freeze the tree: the external publish stages ALL docs, so the next doc's
+    // publish refused on a file it was not even changing. A diverged file the agent has
+    // nothing new for is the human's to keep, and simply is not part of this publish.
+    await vault.writeNote("docs/widget-exports.md", "# Widget exports\n\nPublished body.", { kind: "doc" });
+    const first = await publishVault({ vault, target: "external", repoDir: agentClone, approvedBy: "pm@example.com" });
+    expect(first.push.status).toBe("published");
+
+    // A human makes a site-only edit to the published doc.
+    const humanClone = path.join(tmpRoot, "human3");
+    await run(tmpRoot, ["clone", bare, humanClone]);
+    await run(humanClone, ["config", "user.email", "human@example.com"]);
+    await run(humanClone, ["config", "user.name", "Human"]);
+    const target = path.join(humanClone, "docs/widget-exports.md");
+    const humanBody = (await fs.readFile(target, "utf8")) + "\nA site-only note.\n";
+    await fs.writeFile(target, humanBody);
+    await run(humanClone, ["commit", "-am", "docs: site-only touch-up"]);
+    await run(humanClone, ["push", "origin", "main"]);
+
+    // The agent publishes a DIFFERENT doc. The widget doc is unchanged in the vault.
+    await vault.writeNote("docs/another-feature.md", "# Another feature\n\nNew doc.", { kind: "doc" });
+    const second = await publishVault({ vault, target: "external", repoDir: agentClone, approvedBy: "pm@example.com" });
+
+    expect(second.push.status).toBe("published");
+    if (second.push.status !== "published") throw new Error("expected published");
+    expect(second.push.changed).toContain("docs/another-feature.md");
+    // The human's version was kept, not overwritten and not part of the commit.
+    expect(second.push.changed).not.toContain("docs/widget-exports.md");
+    await run(agentClone, ["pull", "origin", "main"]).catch(() => undefined);
+    const kept = await run(agentClone, ["show", "origin/main:docs/widget-exports.md"]);
+    expect(kept).toContain("A site-only note.");
+  });
+
   it("refuses to overwrite a path it has never published (no baseline commit)", async () => {
     // Fail-closed first publish: whatever is already at a target path is somebody else's.
     await fs.mkdir(path.join(agentClone, "docs"), { recursive: true });

@@ -3,7 +3,16 @@ import { slugify, type Vault } from "@scriptorium/core";
 
 const LESSONS_DIR = "_lessons";
 
-export type LessonStatus = "proposed" | "approved";
+/**
+ * `rejected` is a real state, not the absence of a file. A human judged this rule and said
+ * no; that judgement is worth as much as a yes and has to survive. Deleting the note threw
+ * it away twice over — the internal branch is the only durable copy of `_lessons/`, and
+ * publish has no delete channel, so the rejected rule stayed on the site as `proposed` and
+ * came back into the vault on the next boot. The freed `L-00N` also went straight back into
+ * circulation (see `nextLessonId`), so the next proposal wore a number a human had already
+ * ruled on.
+ */
+export type LessonStatus = "proposed" | "approved" | "rejected";
 
 /**
  * A lesson is what "learning" means here: a reviewed, versioned markdown rule with
@@ -19,6 +28,15 @@ export interface Lesson {
   sourceThread?: string;
 }
 
+/**
+ * Anything not explicitly approved or rejected is still awaiting a human — including an
+ * unreadable or hand-typed value. Defaulting an unknown status to `proposed` is the safe
+ * direction: `proposed` never shapes a draft.
+ */
+function readStatus(raw: unknown): LessonStatus {
+  return raw === "approved" ? "approved" : raw === "rejected" ? "rejected" : "proposed";
+}
+
 export async function listLessons(vault: Vault, options: { status?: LessonStatus } = {}): Promise<Lesson[]> {
   const lessons: Lesson[] = [];
   for (const relPath of await vault.listNotes(LESSONS_DIR)) {
@@ -28,7 +46,7 @@ export async function listLessons(vault: Vault, options: { status?: LessonStatus
     const lesson: Lesson = {
       id,
       scope: String(note.frontmatter.scope ?? "global"),
-      status: note.frontmatter.status === "approved" ? "approved" : "proposed",
+      status: readStatus(note.frontmatter.status),
       text: note.body,
       relPath,
       author: typeof note.frontmatter.author === "string" ? note.frontmatter.author : undefined,
@@ -98,4 +116,21 @@ export async function approveLesson(vault: Vault, id: string, approvedBy: string
     approved_at: new Date().toISOString(),
   });
   return { ...lesson, status: "approved" };
+}
+
+/**
+ * The other half of the gate. Symmetric with `approveLesson` on purpose: a no is recorded
+ * the same way a yes is, in the same file, with the same provenance.
+ */
+export async function rejectLesson(vault: Vault, id: string, rejectedBy: string): Promise<Lesson | undefined> {
+  const lesson = (await listLessons(vault)).find((candidate) => candidate.id === id);
+  if (!lesson) return undefined;
+  const note = await vault.readNote(lesson.relPath);
+  await vault.writeNote(lesson.relPath, note.body, {
+    ...note.frontmatter,
+    status: "rejected",
+    rejected_by: rejectedBy,
+    rejected_at: new Date().toISOString(),
+  });
+  return { ...lesson, status: "rejected" };
 }

@@ -40,6 +40,7 @@ import {
   formatLintFindings,
   lintOk,
   listLessons,
+  rejectLesson,
   publishDoc,
   reviseDoc,
   saveLesson,
@@ -968,17 +969,25 @@ async function runLessonDecision(
     return;
   }
 
-  const lesson = (await listLessons(ctx.vault)).find((candidate) => candidate.id === id);
+  const lesson = await rejectLesson(ctx.vault, id, actor);
   if (!lesson) {
     await say(ctx, key, `I can't find lesson \`${id}\` in the vault.`);
     return;
   }
-  await ctx.vault.deleteFile(lesson.relPath);
   await audit(ctx.config.auditFile, { type: "lesson.rejected", actor, issue: key, id, relPath: lesson.relPath });
   await commitVault(ctx.config.repoRoot, `lessons: reject ${id} (rejected by ${actor})`);
   await pushInternalPlane(ctx.config, ctx.vault, `lessons: reject ${id} (rejected by ${actor})`);
   await ctx.state.patch(key, { pendingLessonId: undefined });
-  await say(ctx, key, `**Lesson ${id} rejected** by ${actor} — deleted from the vault. Nothing was learned from it.`);
+  await say(
+    ctx,
+    key,
+    [
+      `**Lesson ${id} rejected** by ${actor} — it will never shape a draft.`,
+      "",
+      `The note (\`${lesson.relPath}\`) stays, marked \`rejected\` with your name on it. Your decision is` +
+        ` the record: the rule cannot come back under the same number, and nobody has to judge it twice.`,
+    ].join("\n"),
+  );
 }
 
 /** Rebuild what the ledger lost from the evidence that outlives it: the ticket itself and the vault. */

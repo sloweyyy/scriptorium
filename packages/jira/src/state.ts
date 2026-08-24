@@ -46,6 +46,15 @@ export interface IssueState {
    * gate cannot see it and the value has to be fetched and compared deliberately.
    */
   remoteLinkFingerprint?: string;
+  /**
+   * A draft was deferred because an upload was still arriving.
+   *
+   * Load-bearing: attachments are usually the LAST thing to touch a ticket, so the tick
+   * that defers also records their timestamp as "seen" — and the untouched gate would then
+   * park the ticket forever with the PRD sitting right there, waiting for a change that has
+   * already happened.
+   */
+  awaitingUpload?: boolean;
   hasDraft?: boolean;
   docSlug?: string;
   sourcePrd?: string;

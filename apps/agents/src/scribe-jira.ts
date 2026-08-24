@@ -523,13 +523,15 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
       .filter((at) => Number.isFinite(at));
     const newest = landed.length ? Math.max(...landed) : 0;
     if (newest && Date.now() - newest < ATTACHMENT_SETTLE_MS) {
+      // Flagged, not just skipped: the deferral has to survive the tick that made it.
+      await ctx.state.patch(key, { awaitingUpload: true });
       console.log(`[scribe] ${key}: attachments still arriving — waiting for the upload to settle`);
       return;
     }
   }
 
   // Recorded before the work, so a ticket with no usable PRD is told once, not every poll.
-  await ctx.state.patch(key, { sourceFingerprint: fingerprint });
+  await ctx.state.patch(key, { sourceFingerprint: fingerprint, awaitingUpload: false });
 
   if (!ctx.config.hasModelAccess) {
     await say(ctx, key, "⚠️ No model provider is configured on the agent host, so I can't draft yet.");
@@ -1083,6 +1085,10 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
   // "processed" with the PRD it needed one click away. Asked only where the answer could
   // change something — a ticket being worked that still has no draft — and only every few
   // ticks, because this is an API call for a signal that changes once in a ticket's life.
+  // A draft deferred mid-upload must be come back to. Attachments were the last thing to
+  // change the ticket, so "nothing has changed since I looked" is true and wrong at once.
+  if (untouched && known.awaitingUpload) untouched = false;
+
   if (untouched && !known.hasDraft && (autoDraft || engaged(known)) && dueForRemoteLinkCheck(key)) {
     const links = await remoteLinkFingerprint(ctx, key);
     if (links !== undefined && links !== (known.remoteLinkFingerprint ?? "")) {

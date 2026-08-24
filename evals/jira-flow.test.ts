@@ -355,6 +355,50 @@ describe("an upload still in progress", () => {
     expect(comments.some((comment) => comment.body.includes("can't draft"))).toBe(false);
   });
 
+  it("comes back to a deferred draft even though nothing changed since", async () => {
+    // The trap this closes: attachments are usually the LAST thing to touch a ticket, so
+    // the tick that defers also records their timestamp as seen. Without a flag the
+    // untouched gate then parks the ticket forever with the PRD sitting right there —
+    // observed live, a ticket that greeted, deferred, and never spoke again.
+    const warm = {
+      id: "att-warm3",
+      filename: "just-uploaded.png",
+      mimeType: "image/png",
+      content: "https://example.atlassian.net/rest/api/2/attachment/content/att-warm3",
+      created: new Date().toISOString(),
+    };
+    issue = {
+      ...issue,
+      fields: {
+        ...(issue.fields as object),
+        description: prdInJira("feature: X", "audience: admins", "user_goal: do the thing"),
+        attachment: [warm],
+      },
+    };
+
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+    expect(comments.some((comment) => comment.body.includes("Draft ready"))).toBe(false);
+
+    // Same `updated`, same status, same attachments — nothing at all has changed. The
+    // upload has simply finished, and the agent has to notice that by itself.
+    issue = {
+      ...issue,
+      fields: {
+        ...(issue.fields as object),
+        attachment: [{ ...warm, created: new Date(Date.now() - 120_000).toISOString() }],
+      },
+    };
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+
+    // It looked again. (No model in this suite, so the draft itself cannot complete —
+    // what matters is that it stopped deferring and tried.)
+    const log = comments.map((comment) => comment.body).join("\n");
+    expect(log).toContain("Reading this ticket now");
+  });
+
   it("drafts once the upload has settled", async () => {
     issue = {
       ...issue,

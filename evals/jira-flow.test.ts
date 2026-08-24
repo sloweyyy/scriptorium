@@ -325,6 +325,92 @@ describe("restart with no ledger", () => {
   });
 });
 
+describe("an upload still in progress", () => {
+  it("waits instead of drafting from half of it", async () => {
+    // Attachments land one at a time. A tick landing mid-upload used to draft from the PRD
+    // alone and never mention the designs — measured three times out of three on the live
+    // board. The PRD here is complete, so a draft WOULD have been attempted.
+    issue = {
+      ...issue,
+      fields: {
+        ...(issue.fields as object),
+        description: prdInJira("feature: X", "audience: admins", "user_goal: do the thing"),
+        attachment: [
+          {
+            id: "att-warm",
+            filename: "just-uploaded.png",
+            mimeType: "image/png",
+            content: "https://example.atlassian.net/rest/api/2/attachment/content/att-warm",
+            created: new Date().toISOString(),
+          },
+        ],
+      },
+    };
+
+    const stop = await startScribeJira(config(), vault);
+    stop.stop();
+
+    // Greeted, but nothing drafted and nothing refused: it is waiting, not deciding.
+    expect(comments.some((comment) => comment.body.includes("Draft ready"))).toBe(false);
+    expect(comments.some((comment) => comment.body.includes("can't draft"))).toBe(false);
+  });
+
+  it("drafts once the upload has settled", async () => {
+    issue = {
+      ...issue,
+      fields: {
+        ...(issue.fields as object),
+        description: prdInJira("feature: X", "audience: admins", "user_goal: do the thing"),
+        attachment: [
+          {
+            id: "att-cold",
+            filename: "settled.png",
+            mimeType: "image/png",
+            content: "https://example.atlassian.net/rest/api/2/attachment/content/att-cold",
+            // Landed a while ago: the upload is over.
+            created: new Date(Date.now() - 120_000).toISOString(),
+          },
+        ],
+      },
+    };
+
+    const stop = await startScribeJira(config(), vault);
+    stop.stop();
+    // No model in this suite, so the draft call itself throws — what matters is that it
+    // got past the wait and tried, rather than returning early.
+    expect(comments.some((comment) => comment.body.includes("Reading this ticket now"))).toBe(true);
+  });
+
+  it("a human typing `draft` never waits", async () => {
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+
+    issue = {
+      ...issue,
+      fields: {
+        ...(issue.fields as object),
+        attachment: [
+          {
+            id: "att-warm2",
+            filename: "just-uploaded.png",
+            mimeType: "image/png",
+            content: "https://example.atlassian.net/rest/api/2/attachment/content/att-warm2",
+            created: new Date().toISOString(),
+          },
+        ],
+        updated: "2026-08-20T13:00:00.000+0000",
+      },
+    };
+    comments.push(human("h1", "draft"));
+
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+    // Forced: it acts on the ticket rather than silently deferring the human's request.
+    expect(comments.length).toBeGreaterThan(2);
+  });
+});
+
 describe("a page linked after the ticket was already refused", () => {
   it("notices it, even though Jira bumps nothing the poller can see", async () => {
     // The real sequence a PM produces: file the ticket, get told the PRD is missing, then

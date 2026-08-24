@@ -105,6 +105,17 @@ const VISION_TYPES: Record<string, ImageInput["mediaType"]> = {
 
 const PRD_EXTENSIONS = new Set([".md", ".markdown", ".txt"]);
 
+/**
+ * How long to let an upload settle before drafting from it.
+ *
+ * Attachments land one at a time: a PM dragging a PRD and two wireframes onto a ticket
+ * produces three separate events several seconds apart, and a poll tick that lands in the
+ * middle drafts from half an upload — the PRD without its designs, with nothing to say it
+ * happened. Measured on the live board: it hit three uploads out of three. Waiting one
+ * tick costs 15 seconds; drafting early costs a wrong draft and a human's confusion.
+ */
+const ATTACHMENT_SETTLE_MS = 25_000;
+
 const HELP = [
   "**Scribe** — I draft user documentation from the PRD on this ticket. A human approves everything I publish.",
   "",
@@ -461,6 +472,22 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
   const known = ctx.state.get(key);
   const fingerprint = sourceFingerprint(issue, known?.remoteLinkFingerprint);
   if (!options.force && (known?.hasDraft || known?.sourceFingerprint === fingerprint)) return;
+
+  // An upload still in progress is not a PRD yet. The fingerprint is deliberately NOT
+  // recorded here, so the next tick — by which time the rest has landed — sees a source it
+  // has never drafted from and picks it up by itself. A human typing `draft` overrides:
+  // they can see what they attached, and asked for it anyway.
+  if (!options.force) {
+    const landed = (issue.fields.attachment ?? [])
+      .map((attachment) => Date.parse(attachment.created ?? ""))
+      .filter((at) => Number.isFinite(at));
+    const newest = landed.length ? Math.max(...landed) : 0;
+    if (newest && Date.now() - newest < ATTACHMENT_SETTLE_MS) {
+      console.log(`[scribe] ${key}: attachments still arriving — waiting for the upload to settle`);
+      return;
+    }
+  }
+
   // Recorded before the work, so a ticket with no usable PRD is told once, not every poll.
   await ctx.state.patch(key, { sourceFingerprint: fingerprint });
 

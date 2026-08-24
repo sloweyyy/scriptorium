@@ -450,7 +450,7 @@ describe("board transitions", () => {
     expect(revision.prompt).toContain("ignore that image completely");
 
     // ...and the ticket says so, so a reviewer can see the mockup was read.
-    expect(comments.at(-1)?.body).toContain("design image");
+    expect(comments.at(-1)?.body).toContain("designs read: delivery-log-v2.png");
   });
 
   it("withholds the designs when the feedback never points at one", async () => {
@@ -477,7 +477,7 @@ describe("board transitions", () => {
     expect(comments.at(-1)?.body).toContain("Revised draft");
     const revision = vi.mocked(generateText).mock.calls.at(-1)?.[0] as GenerateOptions;
     expect(revision.images ?? []).toHaveLength(0);
-    expect(comments.at(-1)?.body).not.toContain("design image");
+    expect(comments.at(-1)?.body).not.toContain("designs read:");
   });
 
   it("says nothing about designs when a ticket has none", async () => {
@@ -494,7 +494,7 @@ describe("board transitions", () => {
     expect(revision.images ?? []).toHaveLength(0);
     // No design hint in the prompt: the model is never told to look at images that do not exist.
     expect(revision.prompt).not.toContain("never change what this document is about");
-    expect(comments.at(-1)?.body).not.toContain("design image");
+    expect(comments.at(-1)?.body).not.toContain("designs read:");
   });
 
   it("takes the ticket while drafting and hands it back for review", async () => {

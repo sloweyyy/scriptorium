@@ -325,6 +325,65 @@ describe("restart with no ledger", () => {
   });
 });
 
+describe("a page linked after the ticket was already refused", () => {
+  it("notices it, even though Jira bumps nothing the poller can see", async () => {
+    // The real sequence a PM produces: file the ticket, get told the PRD is missing, then
+    // go and link the Confluence page that has it. Adding a remote link does NOT change
+    // `fields.updated`, so the poller's change gate sees an untouched ticket forever and
+    // the PRD sits one click away, invisible.
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+    const afterRefusal = comments.length;
+    expect(comments.some((comment) => comment.body.includes("can't draft"))).toBe(true);
+
+    // The page appears. `updated` is deliberately left exactly as it was.
+    remoteLinks = [{ object: { url: "https://example.atlassian.net/wiki/spaces/PROD/pages/98311/Beacon+PRD" } }];
+    confluenceStorage = "<h1>Beacon PRD</h1><p><strong>Feature:</strong> Incident timeline embed</p>";
+
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+
+    // It looked again, and it read the page — the refusal now names the Confluence source
+    // and asks only for what the page did not answer.
+    expect(comments.length).toBeGreaterThan(afterRefusal);
+    expect(comments.at(-1)?.body).toContain("Confluence page");
+    expect(comments.at(-1)?.body).toContain("Beacon PRD");
+  });
+
+  it("does not re-read a ticket whose links have not moved", async () => {
+    // The other half: the check must not turn every blocked ticket into a per-tick retry.
+    remoteLinks = [{ object: { url: "https://example.atlassian.net/wiki/spaces/PROD/pages/98311/Beacon+PRD" } }];
+    confluenceStorage = "<h1>Beacon PRD</h1><p><strong>Feature:</strong> Incident timeline embed</p>";
+
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+    const afterFirst = comments.length;
+
+    // Same links, same everything: silence.
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+    expect(comments).toHaveLength(afterFirst);
+  });
+
+  it("stays quiet on a ticket nobody asked it to work", async () => {
+    // Unlabelled and never mentioned: a link appearing there is somebody else's business,
+    // and the agent must not even spend the API call finding out.
+    unlabelled();
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+    expect(comments).toHaveLength(0);
+
+    remoteLinks = [{ object: { url: "https://example.atlassian.net/wiki/spaces/PROD/pages/98311/Beacon+PRD" } }];
+    confluenceStorage = "<h1>Beacon PRD</h1><p><strong>Feature:</strong> X</p>";
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+    expect(comments).toHaveLength(0);
+  });
+});
+
 describe("re-draft with the agent's own attachments present", () => {
   it("never reads its own draft attachment back as the PRD", async () => {
     // After a draft, the ticket carries `draft-<slug>.md` uploaded by the agent. A later

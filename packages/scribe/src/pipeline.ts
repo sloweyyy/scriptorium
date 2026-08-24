@@ -26,11 +26,29 @@ export async function draftDoc(vault: Vault, prdRaw: string, images: ImageInput[
   return { markdown, appliedLessons: lessons.map((lesson) => lesson.id), lint: lintDoc(markdown) };
 }
 
-export async function reviseDoc(vault: Vault, currentDraft: string, feedback: string[]): Promise<DraftResult> {
+/**
+ * Feedback -> revised draft.
+ *
+ * Takes images for the same reason `draftDoc` does: a reviewer who attaches a corrected
+ * mockup and writes "match this" has said everything they intend to say. Revising from
+ * the text alone silently ignored the half of the feedback that was visual.
+ */
+export async function reviseDoc(
+  vault: Vault,
+  currentDraft: string,
+  feedback: string[],
+  images: ImageInput[] = [],
+): Promise<DraftResult> {
   const lessons = await listLessons(vault, { status: "approved" });
   const markdown = await generateText({
     system: DOC_SYSTEM_PROMPT,
-    prompt: buildRevisePrompt({ currentDraft, feedback, lessonsBlock: renderLessonsForPrompt(lessons) }),
+    prompt: buildRevisePrompt({
+      currentDraft,
+      feedback,
+      lessonsBlock: renderLessonsForPrompt(lessons),
+      hasDesigns: images.length > 0,
+    }),
+    images,
   });
   return { markdown, appliedLessons: lessons.map((lesson) => lesson.id), lint: lintDoc(markdown) };
 }

@@ -1,6 +1,6 @@
 import { extractWikilinks, type ToolSpec, type Vault } from "@scriptorium/core";
 import { z } from "zod";
-import type { VaultIndex } from "./search";
+import { retrievalBody, type VaultIndex } from "./search";
 
 /**
  * Curator's grounded-Q&A contract — the whole of it, in one file.
@@ -74,7 +74,8 @@ const FOLDER_PURPOSE: Record<string, string> = {
   prd: "product requirement documents, as provided by product managers",
   design: "design wireframes and their descriptions",
   reference: "retrieved third-party reference material, each note carrying its source_url",
-  _lessons: "house style rules learned from feedback and approved by a human",
+  _lessons:
+    "house style rules distilled from feedback, each judged by a human — only the approved ones are rules; a rejected one is a record of a refusal and must never be applied",
   _gaps: "questions the vault could not answer, queued as documentation work",
   _inbox: "files dropped in but not yet filed",
 };
@@ -139,7 +140,8 @@ export function qaTools(vault: Vault, index: VaultIndex): ToolSpec[] {
       run: async ({ path: relPath }) => {
         try {
           const note = await vault.readNote(relPath.endsWith(".md") ? relPath : `${relPath}.md`);
-          return note.body.slice(0, READ_NOTE_CHAR_LIMIT);
+          // Truncate AFTER the status banner, never through it — see `retrievalBody`.
+          return retrievalBody(note.frontmatter, note.body).slice(0, READ_NOTE_CHAR_LIMIT);
         } catch {
           // A wrong path is a retrieval mistake the model can recover from, not a crash.
           return "ERROR: note not found";

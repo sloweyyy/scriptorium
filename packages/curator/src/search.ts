@@ -6,6 +6,8 @@ export interface SearchHit {
   title: string;
   score: number;
   snippet: string;
+  /** Present only on a note a human refused — see `rejectionNotice`. */
+  notice?: string;
 }
 
 export interface VaultIndex {
@@ -17,6 +19,38 @@ interface IndexedNote {
   id: string;
   title: string;
   body: string;
+  notice: string;
+}
+
+/**
+ * Curator reads bodies, never frontmatter — so a note's status is invisible to it, and a
+ * rule a human explicitly refused reads exactly like one they approved.
+ *
+ * That was harmless only while rejection deleted the note. Now that a rejected rule stays
+ * (its whole point: the decision is the record), retrieval hands the model the rule text
+ * with nothing attached to say it was refused. Asked "what are the house style rules?" the
+ * live vault answered with the rejected rule listed second, cited, as a rule to follow.
+ *
+ * So both routes into an answer carry the refusal. `read_note` gets it prepended to the
+ * body; a search hit gets it as its own field, NOT as body text — the snippet is a 240-char
+ * window centred on the match, so a banner sitting at the top of the body is exactly what
+ * that window cuts off. The eval that pins this caught the first version of this fix doing
+ * precisely that. Curator must never be the surface that quietly reinstates something a
+ * human said no to.
+ */
+export function rejectionNotice(frontmatter: Record<string, unknown>): string | undefined {
+  if (frontmatter["status"] !== "rejected") return undefined;
+  const who = typeof frontmatter["rejected_by"] === "string" ? frontmatter["rejected_by"] : "a human reviewer";
+  return (
+    `REJECTED — ${who} reviewed this rule and refused it. This note is the record of that ` +
+    `decision, not guidance. Never present it as a rule to follow, and never apply it to any document.`
+  );
+}
+
+/** `read_note`'s view: the notice first, then the note, so a full read cannot miss it. */
+export function retrievalBody(frontmatter: Record<string, unknown>, body: string): string {
+  const notice = rejectionNotice(frontmatter);
+  return notice ? `${notice}\n\n${body}` : body;
 }
 
 /**
@@ -46,7 +80,7 @@ function makeSnippet(body: string, query: string): string {
 export async function buildIndex(vault: Vault): Promise<VaultIndex> {
   const mini = new MiniSearch<IndexedNote>({
     fields: ["title", "body"],
-    storeFields: ["title", "body"],
+    storeFields: ["title", "body", "notice"],
     processTerm: (term) => {
       const normalized = term.toLowerCase();
       return STOPWORDS.has(normalized) ? null : normalized;
@@ -60,19 +94,23 @@ export async function buildIndex(vault: Vault): Promise<VaultIndex> {
     const title =
       firstHeading(note.body) ??
       (typeof note.frontmatter.feature === "string" ? note.frontmatter.feature : relPath);
-    mini.add({ id: relPath, title, body: note.body });
+    mini.add({ id: relPath, title, body: note.body, notice: rejectionNotice(note.frontmatter) ?? "" });
     size += 1;
   }
 
   return {
     size,
     search(query, limit = 6) {
-      return mini.search(query).slice(0, limit).map((result) => ({
-        relPath: String(result.id),
-        title: String(result["title"] ?? result.id),
-        score: result.score,
-        snippet: makeSnippet(String(result["body"] ?? ""), query),
-      }));
+      return mini.search(query).slice(0, limit).map((result) => {
+        const notice = String(result["notice"] ?? "");
+        const hit: SearchHit = {
+          relPath: String(result.id),
+          title: String(result["title"] ?? result.id),
+          score: result.score,
+          snippet: makeSnippet(String(result["body"] ?? ""), query),
+        };
+        return notice ? { ...hit, notice } : hit;
+      });
     },
   };
 }

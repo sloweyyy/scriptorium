@@ -38,6 +38,28 @@ export interface PublishOutcome {
 let usableKey: string | undefined;
 
 /**
+ * One work tree, one writer at a time.
+ *
+ * Every publish shares a single git clone. The per-issue lock upstream serialises the wrong
+ * axis: two DIFFERENT tickets approved seconds apart both checkout, copy and commit in the
+ * same directory, and the second finds the first one's half-staged tree and refuses with
+ * "work tree is not clean". Observed live — three approvals inside one second, one casualty.
+ * Git is the shared resource, so the lock belongs to git, not to the ticket.
+ *
+ * Failures do not poison the queue: the next caller runs regardless of how the last ended.
+ */
+let repoQueue: Promise<unknown> = Promise.resolve();
+
+function withRepoLock<T>(work: () => Promise<T>): Promise<T> {
+  const run = repoQueue.then(work, work);
+  repoQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/**
  * A key path ssh will actually accept.
  *
  * ssh refuses a private key that group or others can read, and Cloud Run mounts secrets
@@ -118,6 +140,14 @@ export async function publishApprovedDoc(
   if (!docsRepoReady(config.docsRepo)) {
     return { comment: "_Docs repo not configured, so the vault stayed local — nothing was published to a site._", published: false };
   }
+  return withRepoLock(() => publishApprovedDocLocked(config, vault, input));
+}
+
+async function publishApprovedDocLocked(
+  config: AppConfig,
+  vault: Vault,
+  input: { issueKey: string; issueUrl: string; slug: string; relPath: string; approvedBy: string; appliedLessons?: string[] },
+): Promise<PublishOutcome> {
 
   // The note this approval is about must actually be in the vault, or "nothing to push"
   // and "already pushed" become the same answer. That is not hypothetical: a doc published
@@ -252,6 +282,10 @@ export async function publishApprovedDoc(
  */
 export async function pushInternalPlane(config: AppConfig, vault: Vault, message: string): Promise<boolean> {
   if (!docsRepoReady(config.docsRepo)) return false;
+  return withRepoLock(() => pushInternalPlaneLocked(config, vault, message));
+}
+
+async function pushInternalPlaneLocked(config: AppConfig, vault: Vault, message: string): Promise<boolean> {
   try {
     const repoDir = await ensureDocsRepo(config);
     const result = await publishVault({
@@ -306,8 +340,12 @@ export interface DocsRepoChange {
  * agent's own publish branch in the work tree is left alone.
  */
 export async function syncFromDocsRepo(config: AppConfig, vault: Vault, paths: readonly string[]): Promise<DocsRepoChange> {
+  if (!docsRepoReady(config.docsRepo)) return { vaultUpdated: [], externalEdited: [] };
+  return withRepoLock(() => syncFromDocsRepoLocked(config, vault, paths));
+}
+
+async function syncFromDocsRepoLocked(config: AppConfig, vault: Vault, paths: readonly string[]): Promise<DocsRepoChange> {
   const change: DocsRepoChange = { vaultUpdated: [], externalEdited: [] };
-  if (!docsRepoReady(config.docsRepo)) return change;
 
   const repoDir = await ensureDocsRepo(config);
   const env = await ssh(config);
@@ -384,6 +422,10 @@ export async function syncFromDocsRepo(config: AppConfig, vault: Vault, paths: r
  */
 export async function hydrateVaultFromDocsRepo(config: AppConfig, vault: Vault): Promise<string[]> {
   if (!docsRepoReady(config.docsRepo)) return [];
+  return withRepoLock(() => hydrateVaultFromDocsRepoLocked(config, vault));
+}
+
+async function hydrateVaultFromDocsRepoLocked(config: AppConfig, vault: Vault): Promise<string[]> {
 
   // Restore what is MISSING rather than bailing on a non-empty vault. The all-or-nothing
   // guard that used to live here never fired in production: the image ships a committed

@@ -273,3 +273,29 @@ describe("telling a landed publish from a human edit", () => {
     expect(change.externalEdited[0]?.landed).toBe(false);
   });
 });
+
+describe("two tickets approved at once", () => {
+  it("both publish — one work tree, one writer", async () => {
+    // Observed live: three approvals inside one second, all racing the same git clone, and
+    // the loser got "docs repo work tree is not clean". The per-issue lock upstream cannot
+    // help — these are different issues sharing one directory.
+    await vault.writeNote("docs/first-feature.md", "## Overview\n\nFirst.\n", { title: "First" });
+    await vault.writeNote("docs/second-feature.md", "## Overview\n\nSecond.\n", { title: "Second" });
+
+    const publish = (slug: string, key: string): Promise<{ comment: string; published: boolean }> =>
+      publishApprovedDoc(config(), vault, {
+        issueKey: key,
+        issueUrl: `https://example.atlassian.net/browse/${key}`,
+        slug,
+        relPath: `docs/${slug}.md`,
+        approvedBy: "A Reviewer",
+      });
+
+    const [a, b] = await Promise.all([publish("first-feature", "DOC-90"), publish("second-feature", "DOC-91")]);
+
+    for (const outcome of [a, b]) {
+      expect(outcome.comment).not.toContain("not clean");
+      expect(outcome.published).toBe(true);
+    }
+  });
+});

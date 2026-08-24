@@ -39,9 +39,11 @@ export interface RevisePromptInput {
   currentDraft: string;
   feedback: string[];
   lessonsBlock: string;
+  /** Design images travel alongside this prompt; say so, or the model cannot know to look. */
+  hasDesigns?: boolean;
 }
 
-export function buildRevisePrompt({ currentDraft, feedback, lessonsBlock }: RevisePromptInput): string {
+export function buildRevisePrompt({ currentDraft, feedback, lessonsBlock, hasDesigns }: RevisePromptInput): string {
   const parts: string[] = [];
   if (lessonsBlock) parts.push(lessonsBlock, "");
   parts.push(
@@ -49,6 +51,17 @@ export function buildRevisePrompt({ currentDraft, feedback, lessonsBlock }: Revi
     "---",
     currentDraft.trim(),
     "---",
+  );
+  if (hasDesigns) {
+    // The draft was written against whatever the designs looked like THEN. A reviewer who
+    // attaches a corrected mockup is pointing at the images, not at the prose.
+    parts.push(
+      "The attached images are the CURRENT design wireframes for this feature. Where the",
+      "feedback refers to a design, follow the images over anything the draft says.",
+      "",
+    );
+  }
+  parts.push(
     "Reviewer feedback to address (apply all of it, change nothing else):",
     ...feedback.map((item, index) => `${index + 1}. ${item}`),
     "",

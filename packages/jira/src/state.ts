@@ -27,8 +27,25 @@ export interface IssueState {
   engaged?: boolean;
   /** Contract fields already asked about, so the same question is not posted twice. */
   askedForFields?: string[];
+  /**
+   * Which source those questions were asked ABOUT.
+   *
+   * Part of the dedup key because "the same question" is only the same when it is about
+   * the same document. A PM who answers "I can't find a PRD" by linking a Confluence page
+   * has done something, and hearing nothing back cannot be distinguished from the link
+   * having been ignored.
+   */
+  askedFromOrigin?: string;
   /** Attachments + description at the last drafting attempt — a retry only runs when the inputs change. */
   sourceFingerprint?: string;
+  /**
+   * Which pages this ticket linked to, as of the last look.
+   *
+   * Kept apart from `sourceFingerprint` because it is the one input Jira will not tell us
+   * about: adding a remote link does not bump `fields.updated`, so the poller's change
+   * gate cannot see it and the value has to be fetched and compared deliberately.
+   */
+  remoteLinkFingerprint?: string;
   hasDraft?: boolean;
   docSlug?: string;
   sourcePrd?: string;

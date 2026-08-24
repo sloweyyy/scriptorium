@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Vault, type AppConfig } from "@scriptorium/core";
+import { Vault, generateText, type AppConfig, type GenerateOptions } from "@scriptorium/core";
 
 /**
  * The board trail.
@@ -145,6 +145,9 @@ function stubJira(): void {
       }
       return new Response(null, { status: 204 });
     }
+    if (url.includes("/remotelink")) return json([]);
+    // Attachment bytes: any body works, the pipeline only base64s whatever it downloads.
+    if (url.includes("/attachment/content/")) return new Response("PNGBYTES", { status: 200 });
     if (url.includes("/attachments") || url.includes("/attachment")) return json([]);
     if (url.includes("expand=changelog")) return json({ ...issue, changelog: { histories: changelog } });
     if (url.includes("/rest/api/2/issue/")) return json(issue);
@@ -163,6 +166,7 @@ beforeEach(async () => {
   comments = [];
   moves = [];
   changelog = [];
+  vi.mocked(generateText).mockClear();
   board = ["In Progress", "In Review", "Done"];
   issue = {
     id: "1",
@@ -399,6 +403,57 @@ describe("board transitions", () => {
 
     const published = comments.find((comment) => comment.body.includes("*Published* —"));
     expect(published?.body).toContain("approved by Reviewer");
+  });
+
+  it("re-reads the designs when revising, so a mockup attached with the feedback is not ignored", async () => {
+    // A reviewer who attaches a corrected wireframe and writes "match this" has said half
+    // of it visually. The revision used to run on the feedback TEXT alone — the image was
+    // downloaded for the first draft and never looked at again, silently.
+    const withDesign = {
+      id: "att-png",
+      filename: "delivery-log-v2.png",
+      mimeType: "image/png",
+      content: "https://example.atlassian.net/rest/api/2/attachment/content/att-png",
+    };
+    issue = { ...issue, fields: { ...(issue.fields as object), attachment: [withDesign] } };
+
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+
+    comments.push(human("h1", "match the column order in the new mockup"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T14:00:00.000+0000" } };
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+
+    expect(comments.at(-1)?.body).toContain("Revised draft");
+
+    // The revision call — the last one — carried the image, and told the model the
+    // attached designs are the current ones.
+    const calls = vi.mocked(generateText).mock.calls;
+    const revision = calls.at(-1)?.[0] as GenerateOptions;
+    expect(revision.images).toHaveLength(1);
+    expect(revision.prompt).toContain("CURRENT design wireframes");
+
+    // ...and the ticket says so, so a reviewer can see the mockup was read.
+    expect(comments.at(-1)?.body).toContain("design image");
+  });
+
+  it("says nothing about designs when a ticket has none", async () => {
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+
+    comments.push(human("h1", "tighten the overview"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T14:00:00.000+0000" } };
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+
+    const revision = vi.mocked(generateText).mock.calls.at(-1)?.[0] as GenerateOptions;
+    expect(revision.images ?? []).toHaveLength(0);
+    // No design hint in the prompt: the model is never told to look at images that do not exist.
+    expect(revision.prompt).not.toContain("CURRENT design wireframes");
+    expect(comments.at(-1)?.body).not.toContain("design image");
   });
 
   it("never re-announces a move the ticket is already in", async () => {

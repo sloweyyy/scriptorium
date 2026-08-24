@@ -31,6 +31,7 @@ _Maintained by Curator._
 ## Open gaps
 
 - [[_gaps/G-001-what-does-Acme-charge-per-seat-per-month|G-001-what-does-Acme-charge-per-seat-per-month]]
+- [[_gaps/G-002-does-beacon-support-single-sign-on-with-okta|G-002-does-beacon-support-single-sign-on-with-okta]]
 
 ## Lessons
 

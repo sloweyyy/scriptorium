@@ -168,9 +168,48 @@ function lastDraftAttachment(issue: JiraIssue): { attachment: JiraAttachment; sl
  * agent retries by itself when the PM finally attaches the PRD — and stays quiet when
  * the only thing that changed is its own comment.
  */
-function sourceFingerprint(issue: JiraIssue): string {
+function sourceFingerprint(issue: JiraIssue, remoteLinks?: string): string {
   const attachments = (issue.fields.attachment ?? []).map((attachment) => attachment.id).sort();
-  return `${attachments.join(",")}|${issue.fields.description?.trim().length ?? 0}`;
+  return `${attachments.join(",")}|${issue.fields.description?.trim().length ?? 0}|${remoteLinks ?? ""}`;
+}
+
+/**
+ * Which pages this ticket points at, order-independent.
+ *
+ * `undefined` means "I could not look" and never "there are none" — returning an empty
+ * string on a transient API failure would read as "every link was removed", and the next
+ * successful call would then read as "links appeared", re-drafting on nothing at all.
+ */
+async function remoteLinkFingerprint(ctx: Ctx, key: string): Promise<string | undefined> {
+  try {
+    const links = await ctx.client.remoteLinks(key);
+    return links
+      .map((link) => link.object?.url ?? "")
+      .filter(Boolean)
+      .sort()
+      .join(",");
+  } catch (error) {
+    console.warn(`[scribe] ${key}: remote links unreadable: ${errorMessage(error)}`);
+    return undefined;
+  }
+}
+
+/**
+ * Ticks between remote-link re-checks on one blocked ticket — ~2 minutes at a 15s poll.
+ *
+ * Jira does not bump `fields.updated` when a remote link is added, so the only way to see
+ * a Confluence page linked after the fact is to ask. Asking for every issue on every tick
+ * would be one extra API call per ticket per 15 seconds, forever, for a signal that
+ * changes once in a ticket's life — so it is asked rarely, and only where the answer
+ * could change anything.
+ */
+const REMOTE_LINK_EVERY_N_TICKS = 8;
+const remoteLinkTicks = new Map<string, number>();
+
+function dueForRemoteLinkCheck(key: string): boolean {
+  const seen = remoteLinkTicks.get(key) ?? 0;
+  remoteLinkTicks.set(key, seen + 1);
+  return seen % REMOTE_LINK_EVERY_N_TICKS === 0;
 }
 
 function authorName(comment: JiraComment): string {
@@ -220,18 +259,35 @@ interface PrdSource {
   confluenceError?: boolean;
 }
 
-/** Read the PRD and designs off the ticket: attachments first, description as the fallback. */
-async function loadSource(ctx: Ctx, issue: JiraIssue): Promise<PrdSource> {
-  const source: PrdSource = { images: [], imageNames: [], skipped: [] };
-
+/**
+ * Every design image currently on the ticket.
+ *
+ * Split out from `loadSource` because a revision needs the designs and nothing else:
+ * re-reading the PRD there would re-download an attachment and possibly re-fetch a
+ * Confluence page for a question nobody asked. Always the CURRENT set, never a cached
+ * one — the whole point is that a mockup attached after the first draft is seen.
+ */
+async function loadDesignImages(ctx: Ctx, issue: JiraIssue): Promise<{ images: ImageInput[]; names: string[] }> {
+  const images: ImageInput[] = [];
+  const names: string[] = [];
   for (const attachment of issue.fields.attachment ?? []) {
     const mediaType = VISION_TYPES[attachment.mimeType?.toLowerCase() ?? ""];
-    if (mediaType) {
-      const bytes = await ctx.client.downloadAttachment(attachment);
-      source.images.push({ mediaType, base64: bytes.toString("base64") });
-      source.imageNames.push(attachment.filename);
-      continue;
-    }
+    if (!mediaType) continue;
+    const bytes = await ctx.client.downloadAttachment(attachment);
+    images.push({ mediaType, base64: bytes.toString("base64") });
+    names.push(attachment.filename);
+  }
+  return { images, names };
+}
+
+/** Read the PRD and designs off the ticket: attachments first, description as the fallback. */
+async function loadSource(ctx: Ctx, issue: JiraIssue): Promise<PrdSource> {
+  const designs = await loadDesignImages(ctx, issue);
+  const source: PrdSource = { images: designs.images, imageNames: designs.names, skipped: [] };
+
+  for (const attachment of issue.fields.attachment ?? []) {
+    // Images were read above; this pass is only looking for the PRD.
+    if (VISION_TYPES[attachment.mimeType?.toLowerCase() ?? ""]) continue;
     // Never its own output: the agent attaches every draft as `draft-<slug>.md`, and a
     // later re-draft that reads one back as "the PRD" refuses on missing frontmatter —
     // the agent asking the PM for fields its own draft never carries.
@@ -390,7 +446,7 @@ function draftComment(input: {
 async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean } = {}): Promise<void> {
   const key = issue.key;
   const known = ctx.state.get(key);
-  const fingerprint = sourceFingerprint(issue);
+  const fingerprint = sourceFingerprint(issue, known?.remoteLinkFingerprint);
   if (!options.force && (known?.hasDraft || known?.sourceFingerprint === fingerprint)) return;
   // Recorded before the work, so a ticket with no usable PRD is told once, not every poll.
   await ctx.state.patch(key, { sourceFingerprint: fingerprint });
@@ -416,7 +472,13 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
   if (!contract.ok) {
     const missing = contract.missing.map((field) => field.key);
     // Ask once per distinct gap — re-asking the same three questions every poll is noise.
-    if ((known?.askedForFields ?? []).join(",") !== missing.join(",")) {
+    // But the gap is "these fields, in this document": when the source changes the answer
+    // has to be repeated against the new one, or a PM who just linked a page is met with
+    // silence they cannot tell apart from being ignored.
+    const askedBefore =
+      (known?.askedForFields ?? []).join(",") === missing.join(",") &&
+      (known?.askedFromOrigin ?? "") === (source.origin ?? "");
+    if (!askedBefore) {
       await say(
         ctx,
         key,
@@ -431,7 +493,7 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
             : []),
         ].join("\n"),
       );
-      await ctx.state.patch(key, { askedForFields: missing });
+      await ctx.state.patch(key, { askedForFields: missing, askedFromOrigin: source.origin ?? "" });
       await audit(ctx.config.auditFile, { type: "jira.contract.rejected", actor: "scribe", issue: key, missing });
     }
     return;
@@ -515,7 +577,10 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
 
   await moveTo(ctx, key, ctx.config.jira.inProgressStatus, issueStatus(issue));
 
-  const result = await reviseDoc(ctx.vault, draft, feedback);
+  // The designs are re-read on every revision, not carried over from the first draft:
+  // "match the new mockup" is feedback the text alone cannot express.
+  const designs = await loadDesignImages(ctx, issue);
+  const result = await reviseDoc(ctx.vault, draft, feedback, designs.images);
   await ctx.state.saveDraft(key, result.markdown);
   // The vault copy is now stale relative to this draft: the next approve republishes.
   await ctx.state.patch(key, { draftPublished: false });
@@ -532,7 +597,12 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
       markdown: result.markdown,
       lintReport: formatLintFindings(result.lint),
       appliedLessons: result.appliedLessons,
-      source: { images: [], imageNames: [], skipped: [], origin: `${feedback.length} comment(s) of feedback` },
+      source: {
+        images: designs.images,
+        imageNames: designs.names,
+        skipped: [],
+        origin: `${feedback.length} comment(s) of feedback`,
+      },
       revision: true,
     }),
   );
@@ -818,7 +888,10 @@ async function recoverState(ctx: Ctx, issue: JiraIssue): Promise<IssueState> {
   // same contract questions on a ticket it greeted but could not draft — a duplicate, not
   // a retry. A wake still answers (it forces the draft), and if the PRD actually changed
   // during the downtime the fingerprint differs and the retry happens by itself.
-  const patch: Partial<IssueState> = { engaged: true, sourceFingerprint: sourceFingerprint(issue) };
+  const patch: Partial<IssueState> = {
+    engaged: true,
+    sourceFingerprint: sourceFingerprint(issue, ctx.state.get(key)?.remoteLinkFingerprint),
+  };
 
   if (attached) {
     patch.hasDraft = true;
@@ -849,6 +922,12 @@ async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{
   const key = issue.key;
   const history = await ctx.client.listComments(key);
   const seeded = await ctx.state.seed(key, status);
+
+  // The baseline, recorded once per ticket: without it, a ticket created WITH a linked
+  // page would look like a ticket that just gained one on the very next tick, and get a
+  // duplicate refusal for its trouble.
+  const linkedAtAdoption = await remoteLinkFingerprint(ctx, key);
+  if (linkedAtAdoption !== undefined) await ctx.state.patch(key, { remoteLinkFingerprint: linkedAtAdoption });
   const { history: settled, unprocessed } = splitAtLastOwnComment(history, ctx.botAccountId);
 
   // (1) The agent has comments here: this is a restart on a ticket it already worked, not
@@ -903,10 +982,27 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
   // into a "human approval" and published without one.
   const lastStatusAtTickStart = known.lastStatus;
 
-  const untouched = known.lastUpdated && known.lastUpdated === issue.fields.updated && known.lastStatus === status;
-  if (untouched) return;
-
   const autoDraft = autoDrafts(ctx, issue);
+
+  let untouched = Boolean(
+    known.lastUpdated && known.lastUpdated === issue.fields.updated && known.lastStatus === status,
+  );
+
+  // Adding a remote link bumps nothing the gate above can see, so a Confluence page linked
+  // AFTER the agent already said "I can't find a PRD" was invisible forever: the ticket sat
+  // "processed" with the PRD it needed one click away. Asked only where the answer could
+  // change something — a ticket being worked that still has no draft — and only every few
+  // ticks, because this is an API call for a signal that changes once in a ticket's life.
+  if (untouched && !known.hasDraft && (autoDraft || engaged(known)) && dueForRemoteLinkCheck(key)) {
+    const links = await remoteLinkFingerprint(ctx, key);
+    if (links !== undefined && links !== (known.remoteLinkFingerprint ?? "")) {
+      console.log(`[scribe] ${key}: linked pages changed — re-reading the ticket`);
+      known = await ctx.state.patch(key, { remoteLinkFingerprint: links });
+      untouched = false;
+    }
+  }
+
+  if (untouched) return;
   const comments = await ctx.client.listComments(key);
   const pendingFeedback: string[] = [];
 
@@ -1032,6 +1128,11 @@ export async function startScribeJira(config: AppConfig, vault: Vault): Promise<
   const state = await JiraState.open(config.jira.stateDir);
   const ctx: Ctx = { config, vault, client, state, botAccountId: me.accountId, locks: new Map() };
   const jql = defaultJql(config.jira);
+
+  // A fresh poller re-checks every blocked ticket's links once. Cheap — bounded by the
+  // number of tickets still waiting on a PRD — and it means a restart is never the reason
+  // a page linked during the downtime stayed invisible.
+  remoteLinkTicks.clear();
 
   console.log(`[scribe] 🎫 jira: ${config.jira.baseUrl} as ${me.displayName}, polling every ${Math.round(config.jira.pollMs / 1000)}s`);
   console.log(`[scribe]    jql: ${jql}`);

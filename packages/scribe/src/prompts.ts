@@ -53,11 +53,15 @@ export function buildRevisePrompt({ currentDraft, feedback, lessonsBlock, hasDes
     "---",
   );
   if (hasDesigns) {
-    // The draft was written against whatever the designs looked like THEN. A reviewer who
-    // attaches a corrected mockup is pointing at the images, not at the prose.
+    // Narrowly scoped on purpose. An earlier wording — "follow the images over anything
+    // the draft says" — let an unrelated wireframe redefine the subject: a webhook-retry
+    // document came back rewritten as a status-page document, because the attached mockup
+    // happened to show a status page. Designs settle DETAILS. The draft owns the subject.
     parts.push(
-      "The attached images are the CURRENT design wireframes for this feature. Where the",
-      "feedback refers to a design, follow the images over anything the draft says.",
+      "The attached images are the current design wireframes on this ticket. Use them only",
+      "to settle details the feedback points at — labels, field order, what a screen shows.",
+      "They never change what this document is about: keep the same feature, title and scope",
+      "as the draft above. If an image shows something unrelated to that feature, ignore it.",
       "",
     );
   }

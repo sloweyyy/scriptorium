@@ -433,7 +433,9 @@ describe("board transitions", () => {
     const calls = vi.mocked(generateText).mock.calls;
     const revision = calls.at(-1)?.[0] as GenerateOptions;
     expect(revision.images).toHaveLength(1);
-    expect(revision.prompt).toContain("CURRENT design wireframes");
+    // The safety property, not just the presence of a hint: a design settles details and
+    // must never redefine the subject.
+    expect(revision.prompt).toContain("never change what this document is about");
 
     // ...and the ticket says so, so a reviewer can see the mockup was read.
     expect(comments.at(-1)?.body).toContain("design image");
@@ -452,7 +454,7 @@ describe("board transitions", () => {
     const revision = vi.mocked(generateText).mock.calls.at(-1)?.[0] as GenerateOptions;
     expect(revision.images ?? []).toHaveLength(0);
     // No design hint in the prompt: the model is never told to look at images that do not exist.
-    expect(revision.prompt).not.toContain("CURRENT design wireframes");
+    expect(revision.prompt).not.toContain("never change what this document is about");
     expect(comments.at(-1)?.body).not.toContain("design image");
   });
 

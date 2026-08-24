@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Vault } from "@scriptorium/core";
-import { fileGapNote } from "@scriptorium/curator";
+import { fileGapNote, nextGapId } from "@scriptorium/curator";
 
 let vault: Vault;
 let tmpRoot: string;
@@ -61,5 +61,58 @@ describe("cross-surface loop", () => {
 
     const moc = await vault.readNote("index.md");
     expect(moc.body).toContain(result.relPath.replace(/\.md$/, ""));
+  });
+});
+
+/**
+ * Durability and identity — the two things a gap note needs to still mean something
+ * tomorrow. Both were found by watching the live system rather than reading the code:
+ * two gaps filed through Slack, both gone at the next deploy, one of them a real gap whose
+ * Jira ticket still pointed at a note that no longer existed.
+ */
+describe("a gap note that outlives its container", () => {
+  it("hands the finished note to the caller to make durable", async () => {
+    const persisted: string[] = [];
+    const result = await fileGapNote(vault, {
+      question: "Does Beacon support SCIM provisioning?",
+      missing: "nothing about SCIM",
+      askedBy: "U1",
+      auditFile,
+      openTicket: async () => ({ key: "DOC-28", url: "https://example.invalid/browse/DOC-28" }),
+      persist: async (relPath) => {
+        // Called last, so what gets pushed already carries the ticket link.
+        const note = await vault.readNote(relPath);
+        expect(note.frontmatter.jira_key).toBe("DOC-28");
+        persisted.push(relPath);
+      },
+    });
+    expect(persisted).toEqual([result.relPath]);
+  });
+
+  it("still files the gap when it cannot be made durable", async () => {
+    const result = await fileGapNote(vault, {
+      question: "Does Beacon support SCIM provisioning?",
+      missing: "nothing about SCIM",
+      askedBy: "U1",
+      auditFile,
+      persist: async () => { throw new Error("remote unreachable"); },
+    });
+    // The note and its ticket are the product; durability is best-effort around them.
+    expect(await vault.exists(result.relPath)).toBe(true);
+  });
+
+  it("numbers past the highest id on disk, not off the count", async () => {
+    // Exactly the live shape: G-003 and G-004 were filed and then lost, which put a
+    // count-based counter back onto a number a Jira ticket already pointed at.
+    await vault.writeNote("_gaps/G-001-first.md", "one", { id: "G-001", kind: "gap" });
+    await vault.writeNote("_gaps/G-007-much-later.md", "seven", { id: "G-007", kind: "gap" });
+
+    expect(await nextGapId(vault)).toBe("G-008");
+    const filed = await fileGapNote(vault, { question: "A brand new question?", missing: "nothing", askedBy: "U1", auditFile });
+    expect(filed.relPath).toContain("G-008");
+  });
+
+  it("starts at G-001 in an empty vault", async () => {
+    expect(await nextGapId(vault)).toBe("G-001");
   });
 });

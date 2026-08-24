@@ -1,7 +1,8 @@
-import type { AppConfig, Vault } from "@scriptorium/core";
+import { commitVault, type AppConfig, type Vault } from "@scriptorium/core";
 import { answerQuestion, fileGapNote } from "@scriptorium/curator";
 import { App } from "@slack/bolt";
 import { gapTicketOpener } from "./gap-ticket";
+import { pushInternalPlane } from "./docs-repo";
 import { citationLinks, resolveCitations } from "./citations";
 import { answerBlocks, contextBlocks, progressLine, toSlackMrkdwn } from "./slack-format";
 import { stripMentions } from "./util";
@@ -198,6 +199,10 @@ export async function startCuratorBot(config: AppConfig, vault: Vault): Promise<
           askedBy: event.user ?? "unknown",
           auditFile: config.auditFile,
           openTicket,
+          persist: async (relPath) => {
+            await commitVault(config.repoRoot, `gaps: file ${relPath}`);
+            await pushInternalPlane(config, vault, `gaps: file ${relPath}`);
+          },
         });
         const lines = [
           "*Not in the knowledge base yet* — so I won't guess at it.",

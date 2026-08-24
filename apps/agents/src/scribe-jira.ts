@@ -471,6 +471,13 @@ async function seedVault(ctx: Ctx, slug: string, feature: string, source: PrdSou
   }
 }
 
+/** Name the designs, and stay one line about it however many there are. */
+function describeImages(names: string[]): string {
+  const shown = names.slice(0, 3).join(", ");
+  const rest = names.length - 3;
+  return rest > 0 ? `${shown} +${rest} more` : shown;
+}
+
 function draftComment(input: {
   markdown: string;
   lintReport: string;
@@ -480,7 +487,9 @@ function draftComment(input: {
 }): string {
   const provenance = [
     `Drafted from ${input.source.origin ?? "the ticket"}`,
-    input.source.images.length ? `${input.source.images.length} design image(s)` : undefined,
+    // Named, not counted. A ticket accumulates mockups, and "2 design image(s)" cannot tell
+    // a reviewer that the superseded one is still attached and still being read.
+    input.source.images.length ? `designs read: ${describeImages(input.source.imageNames)}` : undefined,
   ]
     .filter(Boolean)
     .join(", ");

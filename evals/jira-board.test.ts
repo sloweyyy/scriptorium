@@ -520,6 +520,25 @@ describe("board transitions", () => {
     expect(status()).toBe("To Do");
   });
 
+  it("leaves a gap ticket unassigned rather than parking it on itself", async () => {
+    // Curator files gap tickets, so the agent is their reporter. Handing one "back" to the
+    // reporter would assign it to the agent while a human is the only one who can supply
+    // the PRD — a board that says the bot is blocked on itself.
+    issue = {
+      ...issue,
+      fields: {
+        ...(issue.fields as object),
+        description: INCOMPLETE_PRD,
+        reporter: { accountId: "bot-1", displayName: "Scribe" },
+      },
+    };
+
+    const stop = await startScribeJira(config(), vault);
+    stop.stop();
+
+    expect(assignments).toEqual([null]);
+  });
+
   it("never re-announces a move the ticket is already in", async () => {
     issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "In Progress" } } };
     const stop = await startScribeJira(config(), vault);

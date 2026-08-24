@@ -239,33 +239,53 @@ export async function publishToRepo(input: PublishToRepoInput): Promise<PublishT
   const targetPaths = files.map((relPath) => repoPath(subdir, relPath));
   const detected = await detectDivergence(repoDir, targetPaths, baseline);
 
-  // A "divergence" where the content the agent is about to write is byte-identical to
-  // what the repo already holds is a refusal with no overwrite in it — nothing of the
-  // human's would be lost, because there is nothing to change. This is not hypothetical:
-  // a repair commit made by a human that leaves the file exactly as the agent would
-  // publish it blocked every later publish of that tree until someone "reconciled"
-  // files that already agreed. Content decides; provenance alone does not.
+  // Two divergences are not conflicts, and telling them apart is what keeps one human
+  // edit from freezing the whole tree:
+  //
+  // - The staged content equals what the repo already holds: writing it changes nothing,
+  //   so there is no overwrite to refuse (a human repair that matches the agent's own
+  //   projection once blocked every later publish until files that already agreed were
+  //   "reconciled").
+  // - The staged content equals the agent's own LAST publish of that file: the agent has
+  //   nothing new for it, only the human does. The publish that hits this is changing
+  //   OTHER files — refusing it turned "leave it as a site-only edit", the option the
+  //   round-trip report itself offers, into a poison pill that blocked every future doc.
+  //   The human's version stands; the file simply is not part of this publish.
+  //
+  // What remains conflicted is the real case: the agent wants to write something new
+  // into a file a human also changed. That still refuses, fail-closed.
   const diverged: typeof detected = [];
+  const humanKept = new Set<string>();
   for (const conflict of detected) {
     const relPath = subdir ? conflict.path.replace(new RegExp(`^${subdir}/`), "") : conflict.path;
     const staged = await fs.readFile(path.join(stagedDir, relPath), "utf8").catch(() => undefined);
     const inRepo = await fs.readFile(path.join(repoDir, conflict.path), "utf8").catch(() => undefined);
     if (staged !== undefined && staged === inRepo) continue;
+    if (staged !== undefined && baseline) {
+      const baselineContent = await gitMaybe(repoDir, ["show", `${baseline}:${conflict.path}`]);
+      // git() trims stdout, so the staged side is trimmed for the comparison too.
+      if (baselineContent !== undefined && baselineContent === staged.trim()) {
+        humanKept.add(relPath);
+        continue;
+      }
+    }
     diverged.push(conflict);
   }
   if (diverged.length) {
     return { status: "conflict", reason: "human-edit", target, branch, baseline, diverged, committed: false, pushed: false };
   }
+  const writable = files.filter((relPath) => !humanKept.has(relPath));
 
   // Copy file by file from the include-list — never a recursive directory copy, even here
   // where the source is a staged tree that gate 1 already proved clean.
-  for (const relPath of files) {
+  for (const relPath of writable) {
     const to = path.join(repoDir, repoPath(subdir, relPath));
     await fs.mkdir(path.dirname(to), { recursive: true });
     await fs.copyFile(path.join(stagedDir, relPath), to);
   }
 
-  if (targetPaths.length) await git(repoDir, ["add", "--", ...targetPaths]);
+  const writablePaths = writable.map((relPath) => repoPath(subdir, relPath));
+  if (writablePaths.length) await git(repoDir, ["add", "--", ...writablePaths]);
   const changed = (await git(repoDir, ["diff", "--cached", "--name-only"])).split("\n").filter(Boolean);
   if (!changed.length) return { status: "unchanged", target, branch, baseline, committed: false, pushed: false };
 

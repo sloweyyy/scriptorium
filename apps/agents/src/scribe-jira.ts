@@ -150,6 +150,19 @@ function engaged(known: IssueState | undefined): boolean {
 const DRAFT_ATTACHMENT = /^draft-(.+)\.md$/i;
 
 /**
+ * Feedback that is pointing at a picture.
+ *
+ * The gate for sending designs into a revision, and deliberately conservative: the
+ * default stays the old text-only behaviour, and images are added only when a human
+ * invoked them. Sending every image on every revision was measurably unsafe — a
+ * wireframe of a different feature rewrote a document's entire subject, twice, even
+ * with the prompt telling it not to. Over-matching here is harmless (an extra image
+ * the model is told to ignore); under-matching costs one `draft` to recover.
+ */
+const REFERS_TO_DESIGN =
+  /\b(image|images|wireframe|wireframes|mock-?up|mock-?ups|design|designs|screenshot|screenshots|screen|figma|attached|attachment)\b/i;
+
+/**
  * The draft the agent last attached, newest first — the only durable record of a draft
  * that lives outside the gitignored state directory, and therefore what a restart with a
  * lost ledger reconstructs from.
@@ -577,9 +590,11 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
 
   await moveTo(ctx, key, ctx.config.jira.inProgressStatus, issueStatus(issue));
 
-  // The designs are re-read on every revision, not carried over from the first draft:
-  // "match the new mockup" is feedback the text alone cannot express.
-  const designs = await loadDesignImages(ctx, issue);
+  // Re-read fresh, never carried over from the first draft — "match the new mockup" is
+  // feedback the text alone cannot express. But only when the feedback actually points at
+  // a design: see REFERS_TO_DESIGN for why the default is text-only.
+  const pointsAtDesign = feedback.some((item) => REFERS_TO_DESIGN.test(item));
+  const designs = pointsAtDesign ? await loadDesignImages(ctx, issue) : { images: [], names: [] };
   const result = await reviseDoc(ctx.vault, draft, feedback, designs.images);
   await ctx.state.saveDraft(key, result.markdown);
   // The vault copy is now stale relative to this draft: the next approve republishes.

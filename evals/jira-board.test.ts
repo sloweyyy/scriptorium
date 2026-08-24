@@ -435,10 +435,40 @@ describe("board transitions", () => {
     expect(revision.images).toHaveLength(1);
     // The safety property, not just the presence of a hint: a design settles details and
     // must never redefine the subject.
-    expect(revision.prompt).toContain("never change what this document is about");
+    // The safety property, not merely the presence of a hint: the subject is named, and
+    // an image of something else is to be ignored rather than followed.
+    expect(revision.prompt).toContain('This document is about "Incident timeline embed"');
+    expect(revision.prompt).toContain("ignore that image completely");
 
     // ...and the ticket says so, so a reviewer can see the mockup was read.
     expect(comments.at(-1)?.body).toContain("design image");
+  });
+
+  it("withholds the designs when the feedback never points at one", async () => {
+    // The dangerous case, measured on the live board twice: an attached wireframe of a
+    // DIFFERENT feature rewrote the document's subject even though the feedback said
+    // nothing about designs. So plain prose feedback stays text-only, as it always was.
+    const withDesign = {
+      id: "att-png",
+      filename: "some-other-feature.png",
+      mimeType: "image/png",
+      content: "https://example.atlassian.net/rest/api/2/attachment/content/att-png",
+    };
+    issue = { ...issue, fields: { ...(issue.fields as object), attachment: [withDesign] } };
+
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+
+    comments.push(human("h1", "the overview is too long, cut it to two sentences"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T14:00:00.000+0000" } };
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+
+    expect(comments.at(-1)?.body).toContain("Revised draft");
+    const revision = vi.mocked(generateText).mock.calls.at(-1)?.[0] as GenerateOptions;
+    expect(revision.images ?? []).toHaveLength(0);
+    expect(comments.at(-1)?.body).not.toContain("design image");
   });
 
   it("says nothing about designs when a ticket has none", async () => {

@@ -125,16 +125,40 @@ describe("boot restore", () => {
     expect(lesson).toContain("quote a maintenance window in UTC");
   });
 
-  it("leaves a note that already exists locally alone", async () => {
-    // The repo is authoritative for what was published; it has no claim on a vault someone
-    // is working in. A restore that clobbered local content would be the worse failure.
-    await vault.writeNote("docs/scheduled-maintenance-announcements.md", "## Overview\n\nLocal edit, not yet published.\n", { title: "Maintenance" });
+  it("replaces a stale copy the image shipped, instead of trusting that it is there", async () => {
+    // This assertion is the reverse of the one it replaces, deliberately. "Present" was
+    // being read as "current", and the image ships a `vault/docs/*.md` frozen at build
+    // time: a doc revised and published afterwards stayed correct on both sites and stale
+    // in the vault, so every deploy rolled Curator's answers back to the build. It told
+    // Slack a maintenance reminder arrives 1 hour before the window while linking the page
+    // that said 24 — an answer contradicting its own citation.
+    await vault.writeNote("docs/scheduled-maintenance-announcements.md", "## Overview\n\nThe copy baked into the image.\n", { title: "Maintenance" });
 
     const restored = await hydrateVaultFromDocsRepo(config(), vault);
 
-    expect(restored).not.toContain("docs/scheduled-maintenance-announcements.md");
-    const kept = await fs.readFile(path.join(vaultDir, "docs/scheduled-maintenance-announcements.md"), "utf8");
-    expect(kept).toContain("Local edit, not yet published");
+    expect(restored).toContain("docs/scheduled-maintenance-announcements.md");
+    const now = await fs.readFile(path.join(vaultDir, "docs/scheduled-maintenance-announcements.md"), "utf8");
+    expect(now).toContain("The version in the docs repo");
+    expect(now).not.toContain("baked into the image");
+  });
+
+  it("rewrites nothing when the vault already agrees with the branch", async () => {
+    // Guards the comparison itself: the vault re-serialises frontmatter, so a note it wrote
+    // is never byte-identical to the blob it came from. Comparing raw bytes would rewrite
+    // every note on every boot and report the entire vault as restored.
+    await hydrateVaultFromDocsRepo(config(), vault);
+    expect(await hydrateVaultFromDocsRepo(config(), vault)).toEqual([]);
+  });
+
+  it("never touches a note the branch does not carry", async () => {
+    // The branch is authoritative for what it holds, and silent about everything else.
+    // Unpublished local work is not its business, and nothing is ever deleted.
+    await vault.writeNote("docs/not-published-anywhere.md", "## Draft\n\nLocal work in progress.\n", { title: "Local" });
+
+    const restored = await hydrateVaultFromDocsRepo(config(), vault);
+
+    expect(restored).not.toContain("docs/not-published-anywhere.md");
+    expect(await fs.readFile(path.join(vaultDir, "docs/not-published-anywhere.md"), "utf8")).toContain("Local work in progress");
   });
 
   it("restores everything into a genuinely empty vault", async () => {

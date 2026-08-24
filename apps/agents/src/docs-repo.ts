@@ -417,8 +417,18 @@ async function syncFromDocsRepoLocked(config: AppConfig, vault: Vault, paths: re
  * notes, house rules and index — so a fresh container comes up with the same knowledge
  * plane it had before, and Curator can cite notes it never saw written.
  *
- * Only runs when the vault has no notes of its own: a restore must never overwrite local
- * work that has not been published yet.
+ * Presence is not enough to decide with: the note can be there and still be WRONG.
+ * Restoring only what was missing left every published doc frozen at whatever the image
+ * was built with. A doc revised and published after the build stayed correct on both
+ * sites and stale in the vault, so the next deploy silently rolled Curator's answers back
+ * — it told Slack a reminder arrives 1 hour before a maintenance window while citing the
+ * live page, which said 24. A cited answer that contradicts its own citation is the one
+ * failure this system cannot have.
+ *
+ * So the internal branch wins on content, not just on absence. That is the same rule
+ * `syncFromDocsRepo` already applies to an internal note edited by a human — hydration
+ * being the weaker of the two was the inconsistency, not the fix. Notes the branch does
+ * not carry are never touched, and nothing is ever deleted.
  */
 export async function hydrateVaultFromDocsRepo(config: AppConfig, vault: Vault): Promise<string[]> {
   if (!docsRepoReady(config.docsRepo)) return [];
@@ -427,16 +437,12 @@ export async function hydrateVaultFromDocsRepo(config: AppConfig, vault: Vault):
 
 async function hydrateVaultFromDocsRepoLocked(config: AppConfig, vault: Vault): Promise<string[]> {
 
-  // Restore what is MISSING rather than bailing on a non-empty vault. The all-or-nothing
-  // guard that used to live here never fired in production: the image ships a committed
-  // `vault/docs/*.md`, so the vault was never empty on boot and the restore never ran. The
-  // notes that matter most are exactly the ones no image can carry — `_lessons/` and
-  // `_gaps/`, both written after the image was built — so an approved house rule silently
-  // stopped shaping drafts at the next deploy while still rendering on the internal site.
-  // Existing notes are left alone: the repo is authoritative for what was published, but
-  // it has no claim on a vault someone is working in locally.
-  const existing = new Set(await vault.listNotes());
-
+  // The all-or-nothing guard that used to live here never fired in production: the image
+  // ships a committed `vault/docs/*.md`, so the vault was never empty on boot and the
+  // restore never ran. The notes that matter most are exactly the ones no image can carry
+  // — `_lessons/` and `_gaps/`, both written after the image was built — so an approved
+  // house rule silently stopped shaping drafts at the next deploy while still rendering on
+  // the internal site. Restoring the missing ones fixed that half; this fixes the other.
   const repoDir = await ensureDocsRepo(config);
   const env = await ssh(config);
   const base = config.docsRepo.internalBranch;
@@ -451,10 +457,18 @@ async function hydrateVaultFromDocsRepoLocked(config: AppConfig, vault: Vault): 
   const restored: string[] = [];
   for (const repoPath of paths) {
     const relPath = repoPath.slice("internal/".length);
-    if (!relPath || existing.has(relPath)) continue;
+    if (!relPath) continue;
     try {
       const blob = await exec("git", ["show", `origin/${base}:${repoPath}`], { cwd: repoDir, maxBuffer: 8_000_000 });
+      // Compare what would be written against what is there, not the raw blob against the
+      // file: the vault round-trips frontmatter through its own serialiser, so a note it
+      // wrote itself is never byte-identical to the blob it came from. Comparing raw would
+      // rewrite every note on every boot and report the whole vault as restored.
       const { frontmatter, body } = parseMarkdown(blob.stdout);
+      const current = await vault.readNote(relPath).catch(() => undefined);
+      if (current && current.body === body && JSON.stringify(current.frontmatter) === JSON.stringify(frontmatter)) {
+        continue;
+      }
       await vault.writeNote(relPath, body, frontmatter);
       restored.push(relPath);
     } catch {

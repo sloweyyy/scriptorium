@@ -19,7 +19,7 @@ import { retrievalBody, type VaultIndex } from "./search";
 
 export const QA_SYSTEM_PROMPT = `You are Curator, the librarian of a product knowledge vault.
 
-Two kinds of question reach you, and they are answered differently.
+Three kinds of message reach you, and they are answered differently.
 
 **Questions about the product** — how a feature works, what a setting does, what a PRD says.
 - Answer ONLY from vault notes you retrieved with your tools in this conversation — never from general knowledge.
@@ -31,6 +31,12 @@ Two kinds of question reach you, and they are answered differently.
 **Questions about the vault itself** — how many notes you hold, what subjects you cover, what is in a folder, whether something is documented at all.
 - Call vault_overview and answer from what it returns. Cite the notes you name.
 - NEVER answer NOT_IN_KB to one of these. You are the authority on your own contents, so the answer always exists — "nothing is documented about X yet" is itself a complete and correct answer. NOT_IN_KB means a human must go and WRITE documentation, and nobody needs to write a document about how many documents there are.
+
+**Requests to change documentation** — write, rewrite, edit, correct, update, publish, approve or delete a document, or add a claim to one.
+- You do not author or change documentation. Scribe does, on a Jira ticket, where a named human approves every word before it is published.
+- Your entire reply must be a single line starting with exactly "NOT_MY_JOB:" followed by a one-line restatement of the change they are asking for. No preamble, no searching, no citations.
+- This is NOT a gap. A gap is a question the vault cannot answer; this is a person telling you to do something you are not allowed to do, and filing it as missing documentation would put their words into Scribe's queue as though the vault had failed.
+- The distinction is what is being asked of YOU, not the grammar. "Where do I find the retry policy" is a question even as an instruction; "say that announcements can be scheduled 90 days ahead" is a change even as a question. If a message genuinely both asks and instructs, answer the question — the human can ask again for the change.
 
 Keep answers short and factual.`;
 
@@ -45,6 +51,17 @@ export interface QaAnswer {
   citations: string[];
   /** Set when the vault could not answer — the one-line description of what's missing. */
   gap: string | null;
+  /**
+   * Set when the message asked Curator to CHANGE documentation rather than answer about it.
+   *
+   * Distinct from `gap` on purpose, and the reason this field exists: asked in Slack to
+   * "rewrite the maintenance doc to say announcements can be scheduled 90 days ahead",
+   * Curator had no branch for a request to do work, fell through to the question path,
+   * found nothing, and filed it as a documentation gap — a ticket asserting the vault had
+   * failed to document a fact the human had just invented, queued for Scribe to draft
+   * from. A person's unverified claim must not enter the pipeline wearing a gap's clothes.
+   */
+  handoff: string | null;
 }
 
 /**
@@ -159,9 +176,13 @@ export function qaTools(vault: Vault, index: VaultIndex): ToolSpec[] {
 export function parseQaAnswer(text: string, question: string): QaAnswer {
   const trimmed = text.trim();
   const gapMatch = trimmed.match(/^NOT_IN_KB:\s*(.*)$/m);
+  const handoffMatch = trimmed.match(/^NOT_MY_JOB:\s*(.*)$/m);
   return {
     text: trimmed,
     citations: extractWikilinks(trimmed),
-    gap: gapMatch ? (gapMatch[1]?.trim() || question) : null,
+    // A handoff is never also a gap: a request to do work is not a hole in the vault, and
+    // treating it as one is exactly the failure this branch exists to stop.
+    gap: gapMatch && !handoffMatch ? (gapMatch[1]?.trim() || question) : null,
+    handoff: handoffMatch ? (handoffMatch[1]?.trim() || question) : null,
   };
 }

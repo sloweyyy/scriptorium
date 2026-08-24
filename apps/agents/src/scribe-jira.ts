@@ -279,8 +279,9 @@ async function moveTo(ctx: Ctx, key: string, statusName: string, currentStatus?:
  * not assign still gets its draft, and the comment thread remains the authoritative
  * narration either way.
  */
-async function assignTo(ctx: Ctx, key: string, accountId: string | undefined): Promise<void> {
-  if (!accountId) return;
+async function assignTo(ctx: Ctx, key: string, accountId: string | null | undefined): Promise<void> {
+  // `undefined` means "leave it alone"; `null` means "explicitly nobody".
+  if (accountId === undefined) return;
   try {
     await ctx.client.assign(key, accountId);
   } catch (error) {
@@ -291,6 +292,19 @@ async function assignTo(ctx: Ctx, key: string, accountId: string | undefined): P
 /** The human who filed it — the one who owes an answer when the agent cannot proceed. */
 function reporterId(issue: JiraIssue): string | undefined {
   return issue.fields.reporter?.accountId;
+}
+
+/**
+ * Give the ticket back to the human who owes the next move.
+ *
+ * Usually that is the reporter. But a gap ticket was filed by Curator, so the agent IS the
+ * reporter — handing it "back" parks it on the agent while a human is the only one who can
+ * move it, and the board then lies about who is blocked. Those go to nobody, which reads
+ * correctly as "unassigned, free for someone to pick up".
+ */
+async function handBack(ctx: Ctx, key: string, issue: JiraIssue): Promise<void> {
+  const reporter = reporterId(issue);
+  await assignTo(ctx, key, reporter && reporter !== ctx.botAccountId ? reporter : null);
 }
 
 /** Post a markdown comment as Jira wiki markup, and remember it so it never reads as feedback. */
@@ -524,7 +538,7 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
 
   const source = await loadSource(ctx, issue);
   if (!source.markdown?.trim()) {
-    await assignTo(ctx, key, reporterId(issue));
+    await handBack(ctx, key, issue);
     await say(
       ctx,
       key,
@@ -562,7 +576,7 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
       );
       await ctx.state.patch(key, { askedForFields: missing, askedFromOrigin: source.origin ?? "" });
       // It cannot proceed without them: the ticket belongs to whoever can answer.
-      await assignTo(ctx, key, reporterId(issue));
+      await handBack(ctx, key, issue);
       await audit(ctx.config.auditFile, { type: "jira.contract.rejected", actor: "scribe", issue: key, missing });
     }
     return;
@@ -611,7 +625,7 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
   );
   // A draft exists and the next move is a human's — so it goes back to them, by name.
   await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
-  await assignTo(ctx, key, reporterId(issue));
+  await handBack(ctx, key, issue);
 
   await announceDraftForApproval(ctx.config, {
     issueKey: key,
@@ -660,7 +674,7 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
   // The vault copy is now stale relative to this draft: the next approve republishes.
   await ctx.state.patch(key, { draftPublished: false });
   await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
-  await assignTo(ctx, key, reporterId(issue));
+  await handBack(ctx, key, issue);
   for (const item of feedback) await ctx.state.appendFeedback(key, item);
 
   const known = ctx.state.get(key);

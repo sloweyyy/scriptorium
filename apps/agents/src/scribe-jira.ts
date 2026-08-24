@@ -267,6 +267,32 @@ async function moveTo(ctx: Ctx, key: string, statusName: string, currentStatus?:
   }
 }
 
+/**
+ * Put the ticket in the hands of whoever owes the next action.
+ *
+ * The assignee column is the fastest thing to read on a board, and it should answer one
+ * question: who is this waiting on? So the agent takes the ticket while it is drafting and
+ * hands it back the moment a human's judgement is what is missing — a review, a decision,
+ * or a PRD it refused to guess at.
+ *
+ * Best-effort, exactly like the status moves: a project where the agent may comment but
+ * not assign still gets its draft, and the comment thread remains the authoritative
+ * narration either way.
+ */
+async function assignTo(ctx: Ctx, key: string, accountId: string | undefined): Promise<void> {
+  if (!accountId) return;
+  try {
+    await ctx.client.assign(key, accountId);
+  } catch (error) {
+    console.warn(`[scribe] ${key}: could not assign: ${errorMessage(error)}`);
+  }
+}
+
+/** The human who filed it — the one who owes an answer when the agent cannot proceed. */
+function reporterId(issue: JiraIssue): string | undefined {
+  return issue.fields.reporter?.accountId;
+}
+
 /** Post a markdown comment as Jira wiki markup, and remember it so it never reads as feedback. */
 async function say(ctx: Ctx, key: string, markdown: string): Promise<void> {
   const comment = await ctx.client.addComment(key, markdownToJira(markdown));
@@ -498,6 +524,7 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
 
   const source = await loadSource(ctx, issue);
   if (!source.markdown?.trim()) {
+    await assignTo(ctx, key, reporterId(issue));
     await say(
       ctx,
       key,
@@ -534,6 +561,8 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
         ].join("\n"),
       );
       await ctx.state.patch(key, { askedForFields: missing, askedFromOrigin: source.origin ?? "" });
+      // It cannot proceed without them: the ticket belongs to whoever can answer.
+      await assignTo(ctx, key, reporterId(issue));
       await audit(ctx.config.auditFile, { type: "jira.contract.rejected", actor: "scribe", issue: key, missing });
     }
     return;
@@ -543,8 +572,10 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
   const slug = slugify(feature);
   await seedVault(ctx, slug, feature, source, key);
 
-  // Working: say so on the board before the slow part, not after.
+  // Working: say so on the board before the slow part, not after — and take the ticket,
+  // so the assignee column agrees with the column it sits in.
   await moveTo(ctx, key, ctx.config.jira.inProgressStatus, issueStatus(issue));
+  await assignTo(ctx, key, ctx.botAccountId);
 
   let result = await draftDoc(ctx.vault, source.markdown, source.images);
   if (!lintOk(result.lint)) {
@@ -578,8 +609,9 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
       revision: false,
     }),
   );
-  // A draft exists and the next move is a human's.
+  // A draft exists and the next move is a human's — so it goes back to them, by name.
   await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
+  await assignTo(ctx, key, reporterId(issue));
 
   await announceDraftForApproval(ctx.config, {
     issueKey: key,
@@ -616,6 +648,7 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
   }
 
   await moveTo(ctx, key, ctx.config.jira.inProgressStatus, issueStatus(issue));
+  await assignTo(ctx, key, ctx.botAccountId);
 
   // Re-read fresh, never carried over from the first draft — "match the new mockup" is
   // feedback the text alone cannot express. But only when the feedback actually points at
@@ -627,6 +660,7 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
   // The vault copy is now stale relative to this draft: the next approve republishes.
   await ctx.state.patch(key, { draftPublished: false });
   await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
+  await assignTo(ctx, key, reporterId(issue));
   for (const item of feedback) await ctx.state.appendFeedback(key, item);
 
   const known = ctx.state.get(key);

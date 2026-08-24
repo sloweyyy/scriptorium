@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Vault } from "@scriptorium/core";
-import { listLessons, nextLessonId, saveLesson } from "@scriptorium/scribe";
+import { approveLesson, listLessons, nextLessonId, rejectLesson, saveLesson } from "@scriptorium/scribe";
 
 /**
  * Lesson identity.
@@ -60,5 +60,57 @@ describe("lesson ids", () => {
     expect(await listLessons(vault, { status: "approved" })).toHaveLength(0);
     // …but its number is taken.
     expect(await nextLessonId(vault)).toBe("L-002");
+  });
+});
+
+/**
+ * Rejection.
+ *
+ * A rejected rule used to be deleted, which lost the human's decision three ways: the
+ * internal branch is the only durable copy of `_lessons/` and publish has no delete
+ * channel, so the rule stayed on the site as `proposed`; hydration read it straight back
+ * into the vault on the next boot; and the freed number went back into circulation. All
+ * three are downstream of treating "no" as an absence instead of an answer.
+ */
+describe("rejecting a lesson", () => {
+  it("records the decision on the note instead of deleting it", async () => {
+    const saved = await saveLesson(vault, { text: "Always mention the beta flag.", author: "PM", sourceThread: "DOC-9" });
+
+    const rejected = await rejectLesson(vault, saved.id, "Alex Kim");
+    expect(rejected?.status).toBe("rejected");
+
+    const note = await vault.readNote(saved.relPath);
+    expect(note.frontmatter.status).toBe("rejected");
+    expect(note.frontmatter.rejected_by).toBe("Alex Kim");
+    // The rule itself survives verbatim — the record is of a judgement, not a deletion.
+    expect(note.body.trim()).toBe("Always mention the beta flag.");
+  });
+
+  it("never shapes a draft again", async () => {
+    const saved = await saveLesson(vault, { text: "Always mention the beta flag.", author: "PM", sourceThread: "DOC-9" });
+    await approveLesson(vault, saved.id, "PM");
+    expect(await listLessons(vault, { status: "approved" })).toHaveLength(1);
+
+    await rejectLesson(vault, saved.id, "Alex Kim");
+    // Drafting reads `status: approved` only; a rejected note is inert whether it sits in
+    // the vault, on the internal branch, or comes back through hydration.
+    expect(await listLessons(vault, { status: "approved" })).toHaveLength(0);
+    expect(await listLessons(vault, { status: "rejected" })).toHaveLength(1);
+    // And it is not silently counted as still awaiting a human.
+    expect(await listLessons(vault, { status: "proposed" })).toHaveLength(0);
+  });
+
+  it("holds its number, so the next proposal cannot wear a judged id", async () => {
+    const saved = await saveLesson(vault, { text: "Always mention the beta flag.", author: "PM", sourceThread: "DOC-9" });
+    expect(saved.id).toBe("L-001");
+
+    await rejectLesson(vault, saved.id, "Alex Kim");
+
+    const next = await saveLesson(vault, { text: "Link the API reference.", author: "PM", sourceThread: "DOC-10" });
+    expect(next.id).toBe("L-002");
+  });
+
+  it("reports a lesson that is not there rather than inventing one", async () => {
+    expect(await rejectLesson(vault, "L-404", "Alex Kim")).toBeUndefined();
   });
 });

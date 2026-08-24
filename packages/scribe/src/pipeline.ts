@@ -53,13 +53,42 @@ export async function reviseDoc(
   return { markdown, appliedLessons: lessons.map((lesson) => lesson.id), lint: lintDoc(markdown) };
 }
 
-/** Returns a candidate lesson rule when the feedback generalizes, null when it is doc-specific. */
+/**
+ * Returns a candidate lesson rule when the feedback generalizes, null when it is doc-specific
+ * — or when the call itself could not be judged.
+ *
+ * `maxTokens: 300` was measured too tight for Gemini, not a deliberate budget: some
+ * DOC_ONLY-shaped feedback truncated at 300 with nothing else about the input to explain
+ * why, and a ticket carrying two rounds of feedback (a generalizable one plus an unrelated
+ * design correction, both accumulated since the last publish and joined into one call at
+ * approval time) truncated reliably. 1000 cleared every case found.
+ *
+ * The transport fails loud on a truncated answer on purpose — `assertUsableCandidate` in
+ * the Gemini dialect exists so a half-finished DRAFT is never mistaken for a finished one.
+ * But this call has a different shape: its own contract already has a "could not tell"
+ * outcome, `null`, that is the deliberately safe direction — no rule proposed.
+ *
+ * Before this fix, a truncation here was a thrown error instead, and it surfaced two
+ * publish steps too late to make sense: `proposeLesson` runs after the doc is already
+ * published, so the ticket got the ⚠️ error comment for a `runPublish` call that had, in
+ * fact, succeeded — with the error message leaking the transport's own wording ("raise
+ * maxTokens") and telling the human to comment `draft` to retry, which would re-draft the
+ * whole document rather than the lesson step, since the feedback that fed the failed call
+ * is cleared before it runs and there is nothing left for a retry to distill from. A wobble
+ * in judging feedback must read exactly like doc-specific feedback did already: the
+ * "nothing generalizes" line, not a leaked error attached to a success.
+ */
 export async function distillLesson(feedback: string): Promise<string | null> {
-  const reply = await generateText({
-    system: DISTILL_SYSTEM_PROMPT,
-    prompt: buildDistillPrompt(feedback),
-    maxTokens: 300,
-  });
+  let reply: string;
+  try {
+    reply = await generateText({
+      system: DISTILL_SYSTEM_PROMPT,
+      prompt: buildDistillPrompt(feedback),
+      maxTokens: 1000,
+    });
+  } catch {
+    return null;
+  }
   const match = reply.match(/^LESSON:\s*(.+)$/m);
   return match?.[1]?.trim() ?? null;
 }

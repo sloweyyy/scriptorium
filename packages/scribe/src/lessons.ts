@@ -29,6 +29,27 @@ export interface Lesson {
 }
 
 /**
+ * Has a human already ruled on this exact rule?
+ *
+ * Only meaningful now that a rejection leaves the note behind: before, the rejected text
+ * was gone, so the distiller re-proposing it was undetectable. Matching is on normalised
+ * text — case, spacing and trailing punctuation vary between two runs of the same
+ * distillation over the same feedback, and none of that makes it a different rule.
+ *
+ * Deliberately exact-after-normalisation, not fuzzy. A paraphrase IS a new proposal and a
+ * human should see it; the only thing worth suppressing is the same sentence twice.
+ */
+function normalizeRule(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").replace(/[^\w ]+/g, "").trim();
+}
+
+export async function findLessonByText(vault: Vault, text: string): Promise<Lesson | undefined> {
+  const wanted = normalizeRule(text);
+  if (!wanted) return undefined;
+  return (await listLessons(vault)).find((candidate) => normalizeRule(candidate.text) === wanted);
+}
+
+/**
  * Anything not explicitly approved or rejected is still awaiting a human — including an
  * unreadable or hand-typed value. Defaulting an unknown status to `proposed` is the safe
  * direction: `proposed` never shapes a draft.

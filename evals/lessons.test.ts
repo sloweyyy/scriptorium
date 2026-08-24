@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Vault } from "@scriptorium/core";
-import { approveLesson, listLessons, nextLessonId, rejectLesson, saveLesson } from "@scriptorium/scribe";
+import { approveLesson, findLessonByText, listLessons, nextLessonId, rejectLesson, saveLesson } from "@scriptorium/scribe";
 
 /**
  * Lesson identity.
@@ -112,5 +112,41 @@ describe("rejecting a lesson", () => {
 
   it("reports a lesson that is not there rather than inventing one", async () => {
     expect(await rejectLesson(vault, "L-404", "Alex Kim")).toBeUndefined();
+  });
+});
+
+/**
+ * Not asking twice.
+ *
+ * The distiller runs over feedback, not over the lesson store, so the same feedback
+ * distils to the same sentence every time — and re-proposing a rule a human already
+ * refused is asking them to make the same decision again. Only detectable at all now that
+ * rejection leaves the note behind; while it deleted, the refused text was simply gone.
+ */
+describe("a rule a human already ruled on", () => {
+  it("is recognised again through the wording noise two distillations differ by", async () => {
+    const saved = await saveLesson(vault, { text: "End every document with a Related articles section.", author: "PM", sourceThread: "t" });
+    await rejectLesson(vault, saved.id, "Alex Kim");
+
+    const again = await findLessonByText(vault, "  end every  document with a related articles section  ");
+    expect(again?.id).toBe(saved.id);
+    expect(again?.status).toBe("rejected");
+  });
+
+  it("is found whatever the human decided, so the reply can say which", async () => {
+    const approved = await saveLesson(vault, { text: "Always specify the timezone.", author: "PM", sourceThread: "t" });
+    await approveLesson(vault, approved.id, "PM");
+    const proposed = await saveLesson(vault, { text: "Link the API reference.", author: "PM", sourceThread: "t" });
+
+    expect((await findLessonByText(vault, "Always specify the timezone."))?.status).toBe("approved");
+    expect((await findLessonByText(vault, "Link the API reference."))?.id).toBe(proposed.id);
+  });
+
+  it("does not swallow a genuinely different rule", async () => {
+    await saveLesson(vault, { text: "Always specify the timezone.", author: "PM", sourceThread: "t" });
+    // A paraphrase IS a new proposal — a human should see it and decide. Matching is exact
+    // after normalisation, never fuzzy, precisely so this stays true.
+    expect(await findLessonByText(vault, "Always state the time zone for scheduled events.")).toBeUndefined();
+    expect(await findLessonByText(vault, "")).toBeUndefined();
   });
 });

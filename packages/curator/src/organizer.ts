@@ -87,6 +87,21 @@ export async function organizePublishedDoc(vault: Vault, relPath: string): Promi
   await updateMoc(vault);
 }
 
+/**
+ * A lesson's line in the index says where it stands with a human.
+ *
+ * Without this the index lists approved, proposed and rejected rules as identical
+ * wikilinks — and the index is a vault note like any other, so "what are the house rules?"
+ * retrieves it and reads a refused rule as a rule. Closing that on the notes themselves
+ * (`rejectionNotice`) is not enough while the note that *lists* them says nothing: the
+ * index has no status of its own to carry.
+ */
+function lessonStanding(status: unknown): string {
+  if (status === "approved") return " — approved, applies to every draft";
+  if (status === "rejected") return " — REJECTED by a human, never apply this";
+  return " — proposed, not yet judged by a human";
+}
+
 async function sectionFor(vault: Vault, dir: string, limit?: number): Promise<string[]> {
   const lines: string[] = [];
   for (const relPath of await vault.listNotes(dir)) {
@@ -95,7 +110,8 @@ async function sectionFor(vault: Vault, dir: string, limit?: number): Promise<st
       (typeof note.frontmatter.feature === "string" && note.frontmatter.feature) ||
       firstHeading(note.body) ||
       path.basename(relPath, ".md");
-    lines.push(`- [[${relPath.replace(/\.md$/, "")}|${title}]]`);
+    const standing = dir === "_lessons" ? lessonStanding(note.frontmatter.status) : "";
+    lines.push(`- [[${relPath.replace(/\.md$/, "")}|${title}]]${standing}`);
   }
   if (limit && lines.length > limit) {
     // Retrieved reference material is bulk; the index stays a map, not a dump.

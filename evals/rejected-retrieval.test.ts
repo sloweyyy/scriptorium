@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Vault } from "@scriptorium/core";
-import { buildIndex, qaTools, retrievalBody } from "@scriptorium/curator";
+import { buildIndex, qaTools, retrievalBody, updateMoc } from "@scriptorium/curator";
 
 /**
  * A rule a human refused must never come back through the other agent.
@@ -87,6 +87,28 @@ describe("rejected notes in retrieval", () => {
     // first version of this fix put the banner where that window sliced it away.
     expect(hit?.notice).toMatch(/^REJECTED — Truong Le Vinh Phuc/);
     expect(hit?.snippet).toContain("Related articles");
+  });
+
+  it("says where each rule stands in the index that lists them", async () => {
+    // The index is a vault note like any other — retrieved, and with no status of its own
+    // to carry. Marking the notes is not enough while the note that lists them shows an
+    // approved and a refused rule as identical wikilinks.
+    await updateMoc(vault);
+    const moc = (await vault.readNote("index.md")).body;
+    expect(moc).toMatch(/L-003-related-articles\|[^\]]*\]\] — REJECTED by a human, never apply this/);
+    expect(moc).toMatch(/L-001-timezone\|[^\]]*\]\] — approved, applies to every draft/);
+  });
+
+  it("marks an unjudged rule as unjudged in the index, not as a rule", async () => {
+    await vault.writeNote("_lessons/L-009-pending.md", "Mention the beta flag.\n", { id: "L-009", status: "proposed" });
+    await updateMoc(vault);
+    expect((await vault.readNote("index.md")).body).toMatch(/L-009-pending\|[^\]]*\]\] — proposed, not yet judged/);
+  });
+
+  it("leaves every other section of the index alone", async () => {
+    await vault.writeNote("docs/beacon.md", "# Maintenance\n\nHow to schedule.\n", { feature: "Maintenance" });
+    await updateMoc(vault);
+    expect((await vault.readNote("index.md")).body).toContain("- [[docs/beacon|Maintenance]]\n");
   });
 
   it("puts no notice on hits a human never refused", async () => {

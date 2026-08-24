@@ -35,6 +35,7 @@ import {
   approveLesson,
   checkContract,
   distillLesson,
+  findLessonByText,
   draftDoc,
   formatContractQuestions,
   formatLintFindings,
@@ -770,6 +771,23 @@ async function proposeLesson(ctx: Ctx, key: string, approvedBy: string): Promise
     return;
   }
 
+  // A rule a human already ruled on is not a new proposal. Only checkable now that a
+  // rejected lesson leaves its note behind — while rejection deleted the note, the
+  // distiller could re-propose the refused rule and nothing could tell.
+  const ruled = await findLessonByText(ctx.vault, rule);
+  if (ruled) {
+    await ctx.state.patch(key, { pendingLessonId: ruled.status === "proposed" ? ruled.id : undefined });
+    await audit(ctx.config.auditFile, { type: "lesson.duplicate", actor: "scribe", issue: key, id: ruled.id, text: rule });
+    const standing =
+      ruled.status === "rejected"
+        ? `a human already refused it (**${ruled.id}**). I'm not asking anyone to judge it twice.`
+        : ruled.status === "approved"
+          ? `it is already in force as **${ruled.id}** — nothing to approve.`
+          : `it is already proposed as **${ruled.id}**, still waiting on a decision.`;
+    await say(ctx, key, [`Your feedback distils to a rule I already hold, so ${standing}`, "", `> ${rule}`].join("\n"));
+    return;
+  }
+
   const lesson = await saveLesson(ctx.vault, {
     text: rule,
     author: approvedBy,
@@ -985,7 +1003,8 @@ async function runLessonDecision(
       `**Lesson ${id} rejected** by ${actor} — it will never shape a draft.`,
       "",
       `The note (\`${lesson.relPath}\`) stays, marked \`rejected\` with your name on it. Your decision is` +
-        ` the record: the rule cannot come back under the same number, and nobody has to judge it twice.`,
+        ` the record: the number stays spoken for, and if this same rule is distilled again I will point at` +
+        ` your refusal instead of asking you again.`,
     ].join("\n"),
   );
 }

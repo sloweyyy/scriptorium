@@ -167,6 +167,30 @@ export async function startCuratorBot(config: AppConfig, vault: Vault): Promise<
       const answer = await answerQuestion(vault, question, { onTool: (name) => progress.observe(name) });
       await progress.finish();
 
+      if (answer.handoff) {
+        // No gap note, no ticket. Curator opening one here would put a person's unverified
+        // claim into Scribe's queue as a documented hole in the vault — the human opens
+        // the ticket themselves, and the claim is theirs, on the record, in Jira.
+        const lines = [
+          "*That's an edit, and I don't author documentation* — I only organize it and answer from it.",
+          `You're asking for: ${answer.handoff}`,
+          "",
+          "Scribe (Agent A) does that, on a Jira ticket, where a named human approves every word before it publishes.",
+          `Open a ticket on the <${config.jira.baseUrl}/browse/${config.jira.projectKey}|${config.jira.projectKey}> board and Scribe will pick it up.`,
+        ];
+        await say({
+          thread_ts: threadTs,
+          text: lines.join("\n"),
+          blocks: [
+            { type: "section", text: { type: "mrkdwn", text: lines.join("\n") } },
+            ...contextBlocks("Separate permissions is the point: I retrieve, Scribe authors, a human approves."),
+          ] as never,
+        });
+        await react.remove("eyes");
+        await react.add("no_entry_sign");
+        return;
+      }
+
       if (answer.gap) {
         const gap = await fileGapNote(vault, {
           question,

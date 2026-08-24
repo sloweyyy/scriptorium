@@ -55,6 +55,8 @@ let issue: Record<string, unknown>;
 let moves: string[];
 /** The columns this stubbed workflow offers. An empty board is one the agent cannot drive. */
 let board: string[];
+/** Every assignee the agent set, in order — the board's "who owes the next action". */
+let assignments: Array<string | null>;
 /** Changelog served under expand=changelog — who moved the ticket where. */
 let changelog: Array<{ author: { displayName: string; accountId: string }; items: Array<{ field: string; toString: string }> }>;
 
@@ -145,6 +147,11 @@ function stubJira(): void {
       }
       return new Response(null, { status: 204 });
     }
+    if (url.includes("/assignee") && method === "PUT") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { accountId: string | null };
+      assignments.push(body.accountId);
+      return new Response(null, { status: 204 });
+    }
     if (url.includes("/remotelink")) return json([]);
     // Attachment bytes: any body works, the pipeline only base64s whatever it downloads.
     if (url.includes("/attachment/content/")) return new Response("PNGBYTES", { status: 200 });
@@ -166,6 +173,7 @@ beforeEach(async () => {
   comments = [];
   moves = [];
   changelog = [];
+  assignments = [];
   vi.mocked(generateText).mockClear();
   board = ["In Progress", "In Review", "Done"];
   issue = {
@@ -175,6 +183,7 @@ beforeEach(async () => {
       summary: "Document the incident timeline embed",
       description: COMPLETE_PRD,
       status: { name: "To Do" },
+      reporter: { accountId: "human-1", displayName: "Reviewer" },
       labels: ["doc-request"],
       attachment: [],
       updated: "2026-08-20T10:00:00.000+0000",
@@ -486,6 +495,29 @@ describe("board transitions", () => {
     // No design hint in the prompt: the model is never told to look at images that do not exist.
     expect(revision.prompt).not.toContain("never change what this document is about");
     expect(comments.at(-1)?.body).not.toContain("design image");
+  });
+
+  it("takes the ticket while drafting and hands it back for review", async () => {
+    // The assignee column is the fastest thing to read on a board and should answer one
+    // question: who is this waiting on? Agent while it works, reporter the moment a
+    // human's judgement is what is missing.
+    const stop = await startScribeJira(config(), vault);
+    stop.stop();
+
+    expect(assignments).toEqual(["bot-1", "human-1"]);
+    expect(status()).toBe("In Review");
+  });
+
+  it("hands the ticket back when it refuses the PRD", async () => {
+    // It cannot proceed without fields only a human can supply, so the ticket is theirs —
+    // and the board should not show it parked on the agent.
+    issue = { ...issue, fields: { ...(issue.fields as object), description: INCOMPLETE_PRD } };
+    const stop = await startScribeJira(config(), vault);
+    stop.stop();
+
+    expect(assignments).toEqual(["human-1"]);
+    // Still To Do: a refusal moves nothing, it just changes whose turn it is.
+    expect(status()).toBe("To Do");
   });
 
   it("never re-announces a move the ticket is already in", async () => {

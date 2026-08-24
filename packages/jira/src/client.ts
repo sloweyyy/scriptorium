@@ -182,6 +182,25 @@ export class JiraClient {
     return data.transitions ?? [];
   }
 
+  /**
+   * Set the assignee. `null` unassigns.
+   *
+   * PUT rather than an edit payload because assignment is its own endpoint in v2, and
+   * because it needs the "Assign issues" permission specifically — a project where the
+   * agent may comment but not assign fails here and nowhere else.
+   */
+  async assign(key: string, accountId: string | null): Promise<void> {
+    const endpoint = `/rest/api/2/issue/${encodeURIComponent(key)}/assignee`;
+    const response = await this.call(endpoint, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accountId }),
+    });
+    if (!response.ok) {
+      throw new JiraError(response.status, endpoint, (await response.text()).slice(0, 200));
+    }
+  }
+
   /** Move the issue by target status name (case-insensitive). Returns false when no such transition exists. */
   async transitionTo(key: string, statusName: string): Promise<boolean> {
     const wanted = statusName.trim().toLowerCase();

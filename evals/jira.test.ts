@@ -39,6 +39,25 @@ describe("jira comment commands", () => {
     expect(parseCommand(comment("reject lesson l7"), "bot-1")).toEqual({ kind: "reject-lesson", id: "L-007" });
   });
 
+  it("reads a command typed in Jira's inline code styling", () => {
+    // Regression, DOC-32: every agent comment prints the vocabulary as code, so the
+    // reviewer types it back the same way and Jira stores `{{...}}`. Unstripped, the
+    // leading brace pushed this to feedback and the agent re-drafted a finished ticket
+    // instead of approving the rule — the gate looked like it fired and had not.
+    expect(parseCommand(comment("{{approve lesson L-006}}"), "bot-1")).toEqual({
+      kind: "approve-lesson",
+      id: "L-006",
+    });
+    expect(parseCommand(comment("{{approve}}"), "bot-1").kind).toBe("approve-doc");
+    expect(parseCommand(comment("{{draft}}"), "bot-1").kind).toBe("draft");
+    expect(parseCommand(comment("{{reject lesson L-007}}"), "bot-1")).toEqual({
+      kind: "reject-lesson",
+      id: "L-007",
+    });
+    // Styling is decoration; it must not turn prose into a command either.
+    expect(parseCommand(comment("I'll {{approve}} once the FAQ is fixed"), "bot-1").kind).toBe("feedback");
+  });
+
   it("reads plain feedback through Jira mention and colour markup", () => {
     const parsed = parseCommand(comment("[~accountid:abc] {color:#de350b}Add a rollback step{color}"), "bot-1");
     expect(parsed).toEqual({ kind: "feedback", text: "Add a rollback step" });

@@ -16,3 +16,8 @@ samples/wireframes/*.png
 .env
 *.log
 .DS_Store
+# This file replaces .gitignore for the source upload, so anything ignored only there
+# still ships. These two are local working context — notes and drafts, never runtime
+# input — and there is no reason for them to be inside the image.
+NOTES.local.md
+scratchpad

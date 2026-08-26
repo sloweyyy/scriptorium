@@ -31,6 +31,12 @@ export function plainText(body: string): string {
     .replace(/\{panel[^}]*\}|\{panel\}/gi, "")
     .replace(/\{quote\}/gi, "")
     .replace(/\{code[^}]*\}|\{code\}|\{noformat\}/gi, "")
+    // `{{...}}` is inline monospace. Every agent comment prints the vocabulary in code
+    // styling, so a reviewer who copies what they were shown types the command wrapped in
+    // it — and an unstripped `{{` made `approve lesson L-006` parse as feedback, which
+    // re-drafted a finished ticket instead of approving the rule. Strip the marker, keep
+    // the word: the styling is decoration, never part of the command.
+    .replace(/\{\{|\}\}/g, "")
     .trim();
 }
 

@@ -12,3 +12,6 @@ vault/reference/
 
 # agent worktrees are local scratch, never part of the repo
 .claude/worktrees/
+
+# local working artifacts — not for the reviewer
+scratchpad/

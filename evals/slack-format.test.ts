@@ -145,7 +145,7 @@ describe("answer blocks", () => {
     // The real failure: a blind slice at 3000 chars landed inside `<url|label>` and Slack
     // rendered the wreckage — half a URL with %7C where the separator had been.
     const url = "https://developer.example.com/reference/a-very-long-endpoint-name-that-goes-on";
-    const line = `${"filler ".repeat(420)}<${url}|reference/api-whatsapp-native>`;
+    const line = `${"filler ".repeat(420)}<${url}|reference/api-some-endpoint>`;
     const blocks = answerBlocks({ markdown: line, citations: [] }) as SectionBlock[];
 
     for (const section of blocks.filter((block) => block.type === "section")) {

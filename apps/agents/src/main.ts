@@ -51,7 +51,7 @@ if (docsRepoReady(config.docsRepo)) {
 try {
   const seeded = await seedCorpusIfEmpty(vault, "corpus");
   if (seeded) {
-    console.log(`[curator] seeded ${seeded.filed}/${seeded.found} reference note(s) from corpus`);
+    console.log(`[curator] seeded ${seeded.filed}/${seeded.found} reference note(s) from corpus/`);
     for (const name of seeded.skipped) console.warn(`[curator] corpus page skipped (bad frontmatter): ${name}`);
   }
 } catch (error) {

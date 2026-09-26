@@ -212,7 +212,6 @@ refusal rule live in one shared module. Switching back is one line of configurat
 | `packages/jira` | REST v2 client, wiki-markup translation, comment commands, poller state |
 | `apps/agents` | the surfaces: Jira poller (Scribe) + Socket-Mode bots (Curator, thin Scribe) |
 | `vault/` | the knowledge vault — open it in Obsidian |
-| `corpus/` | retrieved public Acme pages (read-only, each with `source_url`) |
 | `samples/` | fictional "Beacon" PRDs + wireframes for the demo |
 | `evals/` | scripted checks for every guardrail |
 
@@ -222,7 +221,7 @@ refusal rule live in one shared module. Switching back is one line of configurat
 pnpm install
 cp .env.example .env          # provider key + the Jira block (Slack optional)
 pnpm jira:doctor              # verifies auth, JQL, comments, attachments, transitions
-pnpm seed:corpus              # load the reference corpus into the vault (Curator's knowledge)
+pnpm seed:corpus              # optional: load a reference corpus from corpus/ into the vault
 pnpm dev                      # vault watcher + Jira poller + any Slack bot with tokens
 ```
 
@@ -284,25 +283,14 @@ place and is deleted when the answer lands, Slack's own mrkdwn dialect, and cita
 resolve — a retrieved page to its `source_url`, an approved doc to the public site, a PRD or
 house rule to the internal one.
 
-## The demo knowledge base
+## Reference material
 
-`corpus/` holds 64 pages retrieved from Acme's public website and its public
-developer documentation (product, channels, API reference, security/compliance, policies).
-Every file carries the `source_url` it came from and the date it was retrieved; nothing in it
-is generated. `pnpm seed:corpus` files them into `vault/reference/`, which is deliberately
-**not committed** — the retrieved corpus is the record, the vault copy is derived, and the
-assignment's own artifacts (PRDs, published docs, lessons, gaps) stay the visible content of
-the vault.
-
-That gives Curator a real knowledge base to be graded on: ask it about rate limits, iMessage
-onboarding, retention deletion or an ethical wall and it answers from those notes, citing each
-one — and when the corpus does not cover something, that question becomes a gap note and a Jira
-doc request.
-
-Scribe's PRDs stay the fictional **Beacon** product on purpose. A PRD describes behaviour that
-does not exist yet; writing one about someone else's real product would mean publishing invented
-requirements as documentation, which is exactly what the guardrails in this repo exist to
-prevent.
+Curator can also answer from retrieved reference pages. Put markdown files in `corpus/`,
+each with a `title` and the `source_url` it came from, and `pnpm seed:corpus` files them into
+`vault/reference/` — deliberately **not committed**, since the retrieved pages are the record
+and the vault copy is derived. No corpus ships with this repo; without one, Curator answers
+from the Beacon docs, PRDs and lessons in the vault, and anything they do not cover becomes a
+gap note and a Jira doc request.
 
 ## Deploy it
 
@@ -407,5 +395,5 @@ it are documented where they live:
 
 TypeScript strict, ESM, no build step — `tsx` runs source; workspace packages export
 `./src/index.ts`. `pnpm typecheck` and `pnpm eval` stay green before every commit. Sample
-content is the fictional "Beacon" product plus the retrieved public Acme corpus; no
+content is the fictional "Beacon" product; no
 employer-internal or customer content is in this repo or the vault.

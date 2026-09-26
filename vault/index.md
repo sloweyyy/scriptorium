@@ -16,21 +16,10 @@ _Maintained by Curator._
 
 ## Reference (retrieved sources)
 
-- [[reference/about-Acme|The Governed Communication Intelligence Leader]]
-- [[reference/acceptable-use-policy|Acceptable Use Policy]]
-- [[reference/api-audit-log-retrieve|Retrieve audit logs for audit reconciliation]]
-- [[reference/api-authentication|Authentication]]
-- [[reference/api-change-log|API change log]]
-- [[reference/api-channel-integration-enable|Enable channel integration by Client username]]
-- [[reference/api-channel-integration-status|Retrieve Governed channel integration status]]
-- [[reference/api-clients-retrieve|Retrieve the Client list]]
-- [[reference/api-cyber-security-logs|Get cyber-security logs]]
-- [[reference/api-data-retention-delete|Delete messages/attachments by entity ID]]
-- _…and 53 more in `reference/`_
+- _none yet_
 
 ## Open gaps
 
-- [[_gaps/G-001-what-does-Acme-charge-per-seat-per-month|G-001-what-does-Acme-charge-per-seat-per-month]]
 - [[_gaps/G-002-does-beacon-support-single-sign-on-with-okta|G-002-does-beacon-support-single-sign-on-with-okta]]
 
 ## Lessons

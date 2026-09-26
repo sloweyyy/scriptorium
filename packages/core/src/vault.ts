@@ -30,6 +30,22 @@ export function slugify(input: string): string {
   );
 }
 
+/**
+ * The slug a doc is published under — it becomes a public URL, so it is capped on a word
+ * boundary. A gap-note question used verbatim as a ticket summary ("Doc request: Users can
+ * export …") must not become an 80-character path cut off mid-word.
+ */
+export function docSlug(input: string, maxWords = 8, maxLength = 60): string {
+  const words = slugify(input.replace(/^\s*doc request\s*:\s*/i, "")).split("-").filter(Boolean);
+  let slug = "";
+  for (const word of words.slice(0, maxWords)) {
+    const next = slug ? `${slug}-${word}` : word;
+    if (next.length > maxLength) break;
+    slug = next;
+  }
+  return slug || words[0]?.slice(0, maxLength) || "untitled";
+}
+
 export function parseMarkdown(raw: string): { frontmatter: Frontmatter; body: string } {
   const parsed = matter(raw);
   return { frontmatter: parsed.data as Frontmatter, body: parsed.content.trim() };

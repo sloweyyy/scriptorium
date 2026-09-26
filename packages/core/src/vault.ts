@@ -46,8 +46,33 @@ export function docSlug(input: string, maxWords = 8, maxLength = 60): string {
   return slug || words[0]?.slice(0, maxLength) || "untitled";
 }
 
+function refuseExecutableFrontmatter(): never {
+  throw new Error("Frontmatter must be YAML. Executable frontmatter (`---js`, `---coffee`) is refused.");
+}
+
+/**
+ * gray-matter's defaults are unsafe for untrusted input, and every PRD is untrusted input:
+ * a `---js` fence is EVALUATED, with `require` and `process` in reach, so a PRD attached to
+ * a Jira ticket ran code on the agent host before any human or model saw it. YAML only —
+ * the executable engines throw.
+ *
+ * Passing options also bypasses gray-matter's cache keyed on the input string, which made
+ * malformed YAML throw on the first parse and quietly return `{}` on every later one: the
+ * same PRD judged two different ways on consecutive polls.
+ */
+const MATTER_OPTIONS = {
+  language: "yaml",
+  engines: {
+    js: refuseExecutableFrontmatter,
+    javascript: refuseExecutableFrontmatter,
+    coffee: refuseExecutableFrontmatter,
+    coffeescript: refuseExecutableFrontmatter,
+    cson: refuseExecutableFrontmatter,
+  },
+};
+
 export function parseMarkdown(raw: string): { frontmatter: Frontmatter; body: string } {
-  const parsed = matter(raw);
+  const parsed = matter(raw, MATTER_OPTIONS);
   return { frontmatter: parsed.data as Frontmatter, body: parsed.content.trim() };
 }
 

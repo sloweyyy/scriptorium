@@ -1140,12 +1140,26 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
   if (untouched) return;
   const comments = await ctx.client.listComments(key);
   const pendingFeedback: string[] = [];
+  // Set once this tick rewrites the draft. An approval that arrives in the same poll was
+  // given to the PREVIOUS version — the reviewer has not seen the one it would publish.
+  let revisedThisTick = false;
 
   const flushFeedback = async (): Promise<void> => {
     if (!pendingFeedback.length) return;
     const batch = [...pendingFeedback];
     pendingFeedback.length = 0;
     await runRevise(ctx, issue, batch);
+    revisedThisTick = true;
+  };
+
+  /** Approval of a draft nobody has seen is not approval: post it, and ask again. */
+  const holdUnseenRevision = async (): Promise<void> => {
+    await say(
+      ctx,
+      key,
+      "I revised the draft from the feedback that came in with this approval, so the version above is one you haven't seen yet — nothing is published. Read it, then comment `approve` (or move the ticket to Approved) to publish it.",
+    );
+    await audit(ctx.config.auditFile, { type: "jira.approve.held", actor: "scribe", issue: key, reason: "unseen-revision" });
   };
 
   for (const comment of comments) {
@@ -1196,7 +1210,8 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
         break;
       case "approve-doc":
         await flushFeedback();
-        await runPublish(ctx, issue, authorName(comment));
+        if (revisedThisTick) await holdUnseenRevision();
+        else await runPublish(ctx, issue, authorName(comment));
         break;
       case "approve-lesson":
         await flushFeedback();
@@ -1227,6 +1242,11 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
     // fail-closed rule is "no human approval, no publish", and this is where it is held.
     if (mover?.accountId && mover.accountId === ctx.botAccountId) {
       console.warn(`[scribe] ${key}: ignoring my own transition to "${ctx.config.jira.approvedStatus}" — not a human approval`);
+    } else if (revisedThisTick) {
+      // Dragged to Approved while feedback was still being applied: the column was set
+      // for the old draft. Put it back in review with the new one.
+      await holdUnseenRevision();
+      await moveTo(ctx, key, ctx.config.jira.inReviewStatus, ctx.state.get(key)?.lastStatus);
     } else {
       await runPublish(ctx, issue, mover?.name ?? "a Jira approver", { quietWhenPublished: true });
     }

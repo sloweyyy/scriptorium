@@ -1,5 +1,5 @@
 import path from "node:path";
-import { slugify, type Vault } from "@scriptorium/core";
+import { docSlug, type Vault } from "@scriptorium/core";
 
 const LESSONS_DIR = "_lessons";
 
@@ -112,7 +112,7 @@ export interface NewLesson {
 
 export async function saveLesson(vault: Vault, input: NewLesson): Promise<Lesson> {
   const id = await nextLessonId(vault);
-  const relPath = `${LESSONS_DIR}/${id}-${slugify(input.text.slice(0, 40))}.md`;
+  const relPath = `${LESSONS_DIR}/${id}-${docSlug(input.text, 8, 40)}.md`;
   const status: LessonStatus = input.status ?? "proposed";
   await vault.writeNote(relPath, input.text, {
     id,

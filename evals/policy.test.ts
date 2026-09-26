@@ -131,7 +131,9 @@ describe("approvals", () => {
     for (const approver of [{ accountId: "stranger" }, { accountId: "bot-1" }, undefined]) {
       expect((await decideApproval(store, envelope, request.id, "approved", approver)).ok).toBe(false);
     }
+    // With no approver list, "any human" still excludes the agent and the requester.
     const loose: Envelope = { ...envelope, tools: { publish_doc: { tier: "approve", separateDuties: true } } };
+    expect((await decideApproval(store, loose, request.id, "approved", { accountId: "bot-1" })).ok).toBe(false);
     expect((await decideApproval(store, loose, request.id, "approved", { accountId: "author-1" })).ok).toBe(false);
     expect((await runUnderPolicy(envelope, publish, DRAFT, deps(store))).kind).toBe("pending");
   });

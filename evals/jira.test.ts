@@ -33,6 +33,37 @@ describe("jira comment commands", () => {
     expect(parseCommand(comment("I'll approve once the FAQ is fixed"), "bot-1").kind).toBe("feedback");
   });
 
+  it("never acts on a command inside a quote or a code block", () => {
+    // Quoting the agent's vocabulary back is talking about the command, not issuing it.
+    // With the markers stripped and the words kept, this comment published the doc.
+    const quoted = parseCommand(comment("{quote}approve{quote}\nnot yet, the intro is wrong"), "bot-1");
+    expect(quoted.kind).toBe("feedback");
+    // …and the feedback keeps its quote, which is what gives it meaning.
+    expect(quoted).toMatchObject({ text: expect.stringContaining("approve") });
+    expect(parseCommand(comment("{code}approve{code}\nwhy does this say approve?"), "bot-1").kind).toBe("feedback");
+    expect(parseCommand(comment("{noformat}publish{noformat}"), "bot-1").kind).toBe("feedback");
+    expect(parseCommand(comment("bq. approve\nshould this be the command?"), "bot-1").kind).toBe("feedback");
+    // A command typed after a quote is still the reviewer's own words.
+    expect(parseCommand(comment("{quote}Step 2 is fine{quote}approve"), "bot-1").kind).toBe("approve-doc");
+  });
+
+  it("reads tone around a command as tone", () => {
+    for (const body of ["Approved, thanks!", "*approve*", "approve 👍", "_Approve_ please", "approve the draft, thank you"]) {
+      expect(parseCommand(comment(body), "bot-1").kind, body).toBe("approve-doc");
+    }
+  });
+
+  it("asks instead of guessing when something only looks like an approval", () => {
+    // Publishing is irreversible and a rewrite is not what they asked for: ask.
+    expect(parseCommand(comment("LGTM"), "bot-1")).toEqual({ kind: "unclear", suggestion: "approve" });
+    expect(parseCommand(comment("ship it"), "bot-1")).toEqual({ kind: "unclear", suggestion: "approve" });
+    expect(parseCommand(comment("approve the intro but shorten step 2"), "bot-1").kind).toBe("unclear");
+    expect(parseCommand(comment("approve L-001"), "bot-1")).toEqual({ kind: "unclear", suggestion: "approve lesson L-001" });
+    // Not approval-shaped at all: still ordinary feedback.
+    expect(parseCommand(comment("I'll approve once the FAQ is fixed"), "bot-1").kind).toBe("feedback");
+    expect(parseCommand(comment("Looking at step 2, it is wrong"), "bot-1").kind).toBe("feedback");
+  });
+
   it("parses lesson decisions with and without an explicit id", () => {
     expect(parseCommand(comment("approve lesson L-002"), "bot-1")).toEqual({ kind: "approve-lesson", id: "L-002" });
     expect(parseCommand(comment("approve lesson"), "bot-1")).toEqual({ kind: "approve-lesson", id: undefined });

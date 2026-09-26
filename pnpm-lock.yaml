@@ -26,6 +26,9 @@ importers:
       '@scriptorium/publish':
         specifier: workspace:*
         version: link:packages/publish
+      '@scriptorium/runtime':
+        specifier: workspace:*
+        version: link:packages/runtime
       '@scriptorium/scribe':
         specifier: workspace:*
         version: link:packages/scribe
@@ -127,6 +130,12 @@ importers:
         version: link:../core
 
   packages/publish:
+    dependencies:
+      '@scriptorium/core':
+        specifier: workspace:*
+        version: link:../core
+
+  packages/runtime:
     dependencies:
       '@scriptorium/core':
         specifier: workspace:*

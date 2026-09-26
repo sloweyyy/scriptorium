@@ -1,7 +1,7 @@
 import { anthropic, llmProvider, modelId, runGeminiToolLoop, type ToolSpec, type Vault } from "@scriptorium/core";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { buildIndex } from "./search";
-import { QA_MAX_TOKENS, QA_SYSTEM_PROMPT, parseQaAnswer, qaTools, type QaAnswer } from "./qa-contract";
+import { QA_MAX_TOKENS, QA_SYSTEM_PROMPT, enforceGrounding, parseQaAnswer, qaTools, type QaAnswer } from "./qa-contract";
 
 /**
  * Grounded Q&A: two transports, one contract.
@@ -22,10 +22,13 @@ export interface AnswerOptions {
 }
 
 export async function answerQuestion(vault: Vault, question: string, options: AnswerOptions = {}): Promise<QaAnswer> {
-  const tools = observe(qaTools(vault, await buildIndex(vault)), options.onTool);
+  // The evidence the answer is judged against: which tools ran, and what they returned.
+  const used = new Set<string>();
+  const retrieved: string[] = [];
+  const tools = record(observe(qaTools(vault, await buildIndex(vault)), options.onTool), used, retrieved);
   try {
     const text = llmProvider() === "gemini" ? await askGemini(tools, question) : await askClaude(tools, question);
-    return parseQaAnswer(text, question);
+    return await enforceGrounding(vault, parseQaAnswer(text, question), { usedOverview: used.has("vault_overview"), retrieved });
   } catch (error) {
     // A retrieval loop that exhausts its round cap has searched hard and concluded
     // nothing — which is NOT_IN_KB with extra steps, not a crash. A question whose terms
@@ -51,6 +54,19 @@ function observe(tools: ToolSpec[], onTool: ((name: string) => void) | undefined
         // Progress reporting is decoration. It never decides whether a question is answered.
       }
       return tool.run(input);
+    },
+  }));
+}
+
+/** Keep every tool result, so the answer can be checked against what was actually retrieved. */
+function record(tools: ToolSpec[], used: Set<string>, retrieved: string[]): ToolSpec[] {
+  return tools.map((tool) => ({
+    ...tool,
+    run: async (input) => {
+      used.add(tool.name);
+      const result = await tool.run(input);
+      retrieved.push(typeof result === "string" ? result : JSON.stringify(result));
+      return result;
     },
   }));
 }

@@ -15,6 +15,12 @@ export type JiraCommand =
   /** Someone said the agent's name and nothing more useful — answer, whatever the state. */
   | { kind: "wake" }
   | { kind: "feedback"; text: string }
+  /**
+   * Reads like an approval but is not one exactly (`LGTM`, `approve L-001`, `approve the
+   * intro but…`). Publishing is the one irreversible thing a comment can do, so a guess is
+   * never made in either direction: not published, not rewritten — asked.
+   */
+  | { kind: "unclear"; suggestion: string }
   | { kind: "ignore"; reason: "own-comment" | "empty" };
 
 /** What the parser needs to know about the ticket to resolve a mention. */
@@ -39,6 +45,40 @@ export function plainText(body: string): string {
     .replace(/\{\{|\}\}/g, "")
     .trim();
 }
+
+/**
+ * Remove quoted and preformatted blocks — content AND markers.
+ *
+ * A reviewer quoting the agent's own vocabulary back (`{quote}approve{quote} not yet, the
+ * intro is wrong`) is talking ABOUT the command, not issuing it; with the markers stripped
+ * and the content kept, that comment published the doc. A command only counts when typed
+ * in the reviewer's own words. `{{...}}` inline styling is different and stays readable:
+ * it is how every agent comment prints the vocabulary, so it is how reviewers copy it.
+ */
+export function withoutQuotedBlocks(body: string): string {
+  return body
+    .replace(/\{quote\}[\s\S]*?(\{quote\}|$)/gi, "")
+    .replace(/\{code[^}]*\}[\s\S]*?(\{code\}|$)/gi, "")
+    .replace(/\{noformat[^}]*\}[\s\S]*?(\{noformat\}|$)/gi, "")
+    .replace(/^\s*bq\.\s.*$/gim, "");
+}
+
+/**
+ * The first line as a command candidate: bold/italic markers, emoji and a trailing
+ * courtesy ("Approved, thanks!") are tone, not part of the command.
+ */
+function commandHead(text: string): string {
+  return (text.split("\n")[0] ?? "")
+    .toLowerCase()
+    .replace(/\p{Extended_Pictographic}|\uFE0F/gu, "")
+    .replace(/(^|\s)[*_+]+|[*_+]+(?=\s|$)/g, "$1")
+    .replace(/[\s,;:—-]+(thanks|thank you|thx|ty|please|pls)\b.*$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Starts the way an approval does. Not a match — a reason to ask instead of acting. */
+const APPROVAL_LIKE = /^(approve|approved|approving|publish|lgtm|ship it|looks good)\b/;
 
 /**
  * Does this body mention the agent?
@@ -96,17 +136,24 @@ export function parseCommand(comment: JiraComment, botAccountId?: string, contex
   // Read the mention off the raw body — `plainText` below deletes the marker.
   const mentioned = mentionsAccount(body, botAccountId);
 
+  // Feedback keeps the whole comment, quotes included — "{quote}step 2{quote} is wrong"
+  // needs its quote to make sense. Commands are read only from the reviewer's own words.
   const text = plainText(body);
   // A mention on its own strips to nothing: that is a wake, not an empty comment.
   if (!text) return mentioned ? { kind: "wake" } : { kind: "ignore", reason: "empty" };
 
-  const head = text.split("\n")[0]?.trim().toLowerCase() ?? "";
+  const head = commandHead(plainText(withoutQuotedBlocks(body)));
 
   if (/^(approve|accept)\s+lesson\b/.test(head)) return { kind: "approve-lesson", id: lessonId(head) };
   if (/^(reject|decline|discard)\s+lesson\b/.test(head)) return { kind: "reject-lesson", id: lessonId(head) };
   if (/^(approve|approved|publish)(\s+(the\s+)?(doc|document|draft))?[.!]?$/.test(head)) return { kind: "approve-doc" };
   if (/^(draft|redraft|retry|start)[.!]?$/.test(head)) return { kind: "draft" };
   if (/^(help|\?|commands)[.!]?$/.test(head)) return { kind: "help" };
+
+  if (APPROVAL_LIKE.test(head)) {
+    const id = lessonId(head);
+    return { kind: "unclear", suggestion: id ? `approve lesson ${id}` : "approve" };
+  }
 
   if (mentioned && (!context?.hasDraft || mentionIsTheWholeMessage(text))) return { kind: "wake" };
 

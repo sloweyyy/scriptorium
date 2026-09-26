@@ -1180,6 +1180,16 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
         await flushFeedback();
         await say(ctx, key, HELP);
         break;
+      case "unclear":
+        // Neither published nor rewritten: a near-miss on the one irreversible command gets
+        // a question, and the reviewer's next comment decides.
+        await flushFeedback();
+        await say(
+          ctx,
+          key,
+          `That reads like an approval, so I haven't published or changed anything yet. If you meant it, comment exactly \`${command.suggestion}\`. If it was feedback, rephrase it without starting on "approve" and I'll revise.`,
+        );
+        break;
       case "draft":
         await flushFeedback();
         await runDraft(ctx, issue, { force: true });

@@ -6,3 +6,4 @@ export * from "./gap-ticket";
 export * from "./scribe-bot";
 export * from "./scribe-jira";
 export * from "./slack-format";
+export * from "./slack-approval";

@@ -601,3 +601,18 @@ describe("approving a revision nobody has seen", () => {
     expect(status()).toBe("In Review");
   });
 });
+
+describe("the Slack approve button", () => {
+  it("refuses a card posted for an earlier draft, and publishes the draft it names", async () => {
+    const { draftFingerprint } = await import("@scriptorium/agents");
+    const settings = config();
+    const handle = await startScribeJira(settings, vault);
+    handle.stop();
+
+    await expect(handle.approve("DOC-1", "Pat (slack:U1)", "0000000000000000")).rejects.toThrow(/draft has changed/);
+    expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(0);
+
+    await handle.approve("DOC-1", "Pat (slack:U1)", draftFingerprint(CLEAN_DRAFT));
+    expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(1);
+  });
+});

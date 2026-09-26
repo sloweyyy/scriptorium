@@ -13,6 +13,7 @@ import {
 } from "@scriptorium/core";
 import { organizePublishedDoc } from "@scriptorium/curator";
 import { publishApprovedDoc, pushInternalPlane } from "./docs-repo";
+import { draftFingerprint } from "./slack-approval";
 import { announceDraftForApproval, announcePublished } from "./slack-notify";
 import {
   confluencePageIdFromUrl,
@@ -648,6 +649,7 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
     feature,
     lintSummary: formatLintFindings(result.lint).split("\n").join(" · "),
     appliedLessons: result.appliedLessons,
+    draftMarkdown: result.markdown,
   });
 
   await audit(ctx.config.auditFile, {
@@ -1284,7 +1286,8 @@ export interface ScribeJiraHandle {
   /** Post a comment on a ticket from outside the poller (e.g. a GitHub event). */
   comment(issueKey: string, markdown: string): Promise<void>;
   /** Approve and publish from another surface (e.g. a Slack button). Same gate, second doorway. */
-  approve(issueKey: string, approvedBy: string): Promise<void>;
+  /** `draft` is the fingerprint the Slack card was posted for; a changed draft refuses. */
+  approve(issueKey: string, approvedBy: string, draft?: string): Promise<void>;
 }
 
 export async function startScribeJira(config: AppConfig, vault: Vault): Promise<ScribeJiraHandle> {
@@ -1342,11 +1345,18 @@ export async function startScribeJira(config: AppConfig, vault: Vault): Promise<
     async comment(issueKey: string, markdown: string): Promise<void> {
       await say(ctx, issueKey, markdown);
     },
-    async approve(issueKey: string, approvedBy: string): Promise<void> {
+    async approve(issueKey: string, approvedBy: string, draft?: string): Promise<void> {
       // Re-fetch, then take the exact path an `approve` comment takes — including the
-      // fail-closed checks. A button must not be a shortcut around any of them.
-      const issue = await client.getIssue(issueKey);
-      await runPublish(ctx, issue, approvedBy);
+      // fail-closed checks. A button must not be a shortcut around any of them, and it
+      // takes the same per-issue lock, so it cannot race a tick that is revising.
+      await withIssueLock(ctx, issueKey, async () => {
+        const current = await ctx.state.readDraft(issueKey);
+        if (draft && (!current || draftFingerprint(current) !== draft)) {
+          throw new Error("the draft has changed since this card was posted. Review the latest draft on the ticket and approve it there");
+        }
+        const issue = await client.getIssue(issueKey);
+        await runPublish(ctx, issue, approvedBy);
+      });
     },
   };
 }

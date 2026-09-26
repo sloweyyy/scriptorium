@@ -4,9 +4,9 @@ import {
   audit,
   commitVault,
   defaultJql,
+  docSlug,
   docsRepoReady,
   parseMarkdown,
-  slugify,
   type AppConfig,
   type ImageInput,
   type Vault,
@@ -463,6 +463,8 @@ async function seedVault(ctx: Ctx, slug: string, feature: string, source: PrdSou
       ...frontmatter,
       kind: "prd",
       feature,
+      // Pinned so the organizer files it under the same slug the doc is published as.
+      slug,
       jira_issue: issueKey,
       source_ticket: ctx.client.issueUrl(issueKey),
     });
@@ -596,7 +598,7 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
   }
 
   const feature = String(contract.frontmatter.feature ?? issue.fields.summary);
-  const slug = slugify(feature);
+  const slug = docSlug(feature);
   await seedVault(ctx, slug, feature, source, key);
 
   // Working: say so on the board before the slow part, not after — and take the ticket,
@@ -691,7 +693,7 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
   for (const item of feedback) await ctx.state.appendFeedback(key, item);
 
   const known = ctx.state.get(key);
-  const slug = known?.docSlug ?? slugify(issue.fields.summary);
+  const slug = known?.docSlug ?? docSlug(issue.fields.summary);
   await ctx.client.uploadAttachment(key, `draft-${slug}.md`, result.markdown, "text/markdown");
   await say(
     ctx,
@@ -741,7 +743,7 @@ async function runWake(ctx: Ctx, issue: JiraIssue): Promise<void> {
       ctx,
       key,
       [
-        `I'm here. There's a draft on this ticket already (attached as \`draft-${known.docSlug ?? slugify(issue.fields.summary)}.md\`).`,
+        `I'm here. There's a draft on this ticket already (attached as \`draft-${known.docSlug ?? docSlug(issue.fields.summary)}.md\`).`,
         "",
         "Send feedback in plain English and I'll revise it, or comment `approve` to publish it to the vault. `help` lists everything.",
       ].join("\n"),

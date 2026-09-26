@@ -19,6 +19,7 @@
     "@scriptorium/core": "workspace:*",
     "@scriptorium/curator": "workspace:*",
     "@scriptorium/jira": "workspace:*",
+    "@scriptorium/policy": "workspace:*",
     "@scriptorium/publish": "workspace:*",
     "@scriptorium/scribe": "workspace:*",
     "@types/node": "^26.2.0",

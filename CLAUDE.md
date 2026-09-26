@@ -29,7 +29,7 @@ pnpm seed:corpus        # corpus/*.md -> vault/reference/ (--inbox to let the wa
 | `packages/curator` | `_inbox` watcher, organizer + MOC (idempotent regen), BM25 index (minisearch), tool-runner Q&A (`search_vault` + `read_note`), gap notes |
 | `packages/jira` | REST v2 client (search fallback, attachments, transitions), markdown↔wiki markup, comment commands, poller state (gitignored `.scriptorium-state/`) |
 | `apps/agents` | the surfaces: `scribe-jira.ts` (poller + full flow), Bolt Socket-Mode bots, `gap-ticket.ts` (cross-surface loop); manifests in `slack-manifests/` |
-| `corpus/` | retrieved public Acme pages, each with `source_url`; seeded into `vault/reference/` (gitignored, regenerate with `pnpm seed:corpus`) |
+| `corpus/` | optional retrieved reference pages (not shipped), each with `source_url`; seeded into `vault/reference/` (gitignored, regenerate with `pnpm seed:corpus`) |
 | `vault/` | the knowledge plane — plain Obsidian folder, git history = audit trail |
 | `evals/` | vitest checks for every guardrail |
 
@@ -55,8 +55,7 @@ pnpm seed:corpus        # corpus/*.md -> vault/reference/ (--inbox to let the wa
 - TypeScript strict, ESM, no build step — `tsx` runs source; workspace packages
   export `./src/index.ts`. Keep `pnpm typecheck` and `pnpm eval` green before commit.
 - Use SDK types (`Anthropic.*`, Bolt's) — don't redefine shapes.
-- Sample content is the fictional "Beacon" product, plus `corpus/` — public
-  Acme web pages, retrieved read-only for the demo, each carrying its `source_url`.
+- Sample content is the fictional "Beacon" product.
   Never put employer-internal or customer content in this repo or the vault.
 - Commit trailer block (both lines):
   `Co-Authored-By: Truong Le Vinh Phuc <truonglevinhphuc2006@gmail.com>`
@@ -64,9 +63,8 @@ pnpm seed:corpus        # corpus/*.md -> vault/reference/ (--inbox to let the wa
 
 ## Engineering TODO (in order)
 
-> **Pivot (reviewer request): Agent A (Scribe) demos through JIRA, not Slack.**
-> Curator stays on Slack. The reviewer will be invited to the Jira project and
-> will exercise Scribe himself — the Scribe surface must survive unsupervised use.
+> **Agent A (Scribe) runs through JIRA, not Slack.** Curator stays on Slack.
+> The Scribe surface must survive unsupervised use.
 
 1. [x] **`packages/jira` adapter** — REST v2, API-token auth, `/search/jql` with legacy
    fallback, comments, attachment download (auth-stripped redirect) + upload,
@@ -90,9 +88,8 @@ pnpm seed:corpus        # corpus/*.md -> vault/reference/ (--inbox to let the wa
 6. `samples/prd-002-*` exists — the full demo run (lesson transfer across two PRDs) does not.
 7. Demo video.
 
-Not code, and blocking the deliverable: Jira invite for `reviewer@example.com`,
-push + repo invite for `reviewer@example.com`, reinstall the Curator Slack app for
-`reactions:write`, and `/invite @Curator` to the notify channel.
+Not code: reinstall the Curator Slack app for `reactions:write`, and `/invite @Curator`
+to the notify channel.
 
 Slack Scribe bot (`apps/agents/src/scribe-bot.ts`) stays as a thin secondary surface —
 do not extend it further; Jira is Agent A's primary interface now.

@@ -111,6 +111,13 @@ export interface TeammateSettings extends SlackAppTokens {
   jiraProjects: string[];
   /** Confluence space keys it may search and read. */
   confluenceSpaces: string[];
+  /**
+   * The Teammate's OWN Atlassian account (a service account). Without it the Teammate may
+   * read Jira and Confluence with the shared token, but it may not write: two agents on one
+   * token are one identity, and every write would be attributed to the other agent.
+   */
+  atlassianEmail?: string;
+  atlassianToken?: string;
   /** Channel for the weekly digest. Unset: no digest. */
   digestChannel?: string;
   /** When it goes out, UTC: weekday 1–7 (Mon–Sun) and hour. Default Monday 09:00. */
@@ -257,6 +264,8 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       channels: list(env("TEAMMATE_SLACK_CHANNELS")),
       jiraProjects: list(env("TEAMMATE_JIRA_PROJECTS")),
       confluenceSpaces: list(env("TEAMMATE_CONFLUENCE_SPACES")),
+      atlassianEmail: env("TEAMMATE_ATLASSIAN_EMAIL"),
+      atlassianToken: env("TEAMMATE_ATLASSIAN_TOKEN"),
       digestChannel: env("TEAMMATE_DIGEST_CHANNEL"),
       digestWeekday: envNumber("TEAMMATE_DIGEST_WEEKDAY", 1),
       digestHour: envNumber("TEAMMATE_DIGEST_HOUR", 9),

@@ -121,8 +121,9 @@ The model is untrusted too. It proposes; the platform decides what runs.
 - **Set `SCRIPTORIUM_SIGNING_KEY`.** Without it, approvals are unsigned and the docs repo's
   internal branch is trusted. Rules approved before the key was set are unsigned and stop
   applying once it is set, so re-approve them.
-- Atlassian writes are made with one person's API token. A scoped service-account token
-  would make the agent its own identity in Jira and Confluence.
+- Scribe's Atlassian writes still use one person's API token. The Teammate writes only
+  under its own service account (`TEAMMATE_ATLASSIAN_EMAIL`/`_TOKEN`). Without one, its Jira
+  and Confluence tools are read-only: it never borrows another agent's identity to write.
 - The Teammate acts on Jira only from Slack in v1. Answering inside Jira needs a second
   Atlassian identity, so it doesn't share Scribe's.
 - Prompt-injection resistance is structural and cannot be proved deterministically. It

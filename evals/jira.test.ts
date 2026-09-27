@@ -322,3 +322,26 @@ describe("mayApproveOnJira", () => {
     expect(mayApproveOnJira({ approvers: ["pm"] }, "bot", "pm").ok).toBe(true);
   });
 });
+
+describe("reading a PRD out of Confluence", () => {
+  it("uses the v2 pages API, falls back to v1 only when v2 is absent, and rejects a non-numeric id", async () => {
+    const { JiraClient } = await import("@scriptorium/jira");
+    const hits: string[] = [];
+    let v2Exists = true;
+    vi.stubGlobal("fetch", async (input: string) => {
+      const url = String(input);
+      hits.push(url.replace("https://example.atlassian.net", ""));
+      if (url.includes("/api/v2/pages/") && !v2Exists) return new Response("", { status: 404 });
+      return new Response(JSON.stringify({ title: "PRD", body: { storage: { value: "<p>x</p>" } } }), { status: 200 });
+    });
+    const client = new JiraClient({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", projectKey: "DOC" });
+    expect(await client.confluencePage("123")).toEqual({ title: "PRD", storage: "<p>x</p>" });
+    expect(hits).toEqual(["/wiki/api/v2/pages/123?body-format=storage"]);
+    v2Exists = false;
+    hits.length = 0;
+    await client.confluencePage("123");
+    expect(hits).toEqual(["/wiki/api/v2/pages/123?body-format=storage", "/wiki/rest/api/content/123?expand=body.storage"]);
+    await expect(client.confluencePage("../admin")).rejects.toThrow(/not a Confluence page id/);
+    vi.unstubAllGlobals();
+  });
+});

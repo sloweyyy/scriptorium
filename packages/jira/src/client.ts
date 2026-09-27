@@ -107,8 +107,18 @@ export class JiraClient {
    * credential and no new configuration.
    */
   async confluencePage(pageId: string): Promise<{ title: string; storage: string }> {
-    const endpoint = `/wiki/rest/api/content/${encodeURIComponent(pageId)}?expand=body.storage`;
-    const page = await this.get<{ title?: string; body?: { storage?: { value?: string } } }>(endpoint);
+    // A page id is digits. Anything else is a URL fragment someone typed, not a page.
+    if (!/^\d+$/.test(pageId)) throw new JiraError(400, "/wiki/api/v2/pages", `not a Confluence page id: ${pageId}`);
+    // v2 first: the v1 content GET is gone from Atlassian's current spec. v1 stays as the
+    // fallback for sites that still serve it, tried only when v2 is not there at all.
+    const v2 = `/wiki/api/v2/pages/${pageId}?body-format=storage`;
+    const response = await this.call(v2);
+    if (response.status !== 404 && response.status !== 410) {
+      const page = await this.readJson<{ title?: string; body?: { storage?: { value?: string } } }>(response, v2);
+      return { title: page.title ?? `Confluence page ${pageId}`, storage: page.body?.storage?.value ?? "" };
+    }
+    const v1 = `/wiki/rest/api/content/${pageId}?expand=body.storage`;
+    const page = await this.get<{ title?: string; body?: { storage?: { value?: string } } }>(v1);
     return { title: page.title ?? `Confluence page ${pageId}`, storage: page.body?.storage?.value ?? "" };
   }
 

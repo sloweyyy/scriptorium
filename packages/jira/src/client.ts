@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import type { JiraSettings } from "@scriptorium/core";
+import { parseComments, parseIssue, parseIssues, parseMyself } from "./schemas";
 import type { JiraAttachment, JiraComment, JiraIssue, JiraRemoteLink, JiraTransition, JiraUser } from "./types";
 
 /** Entity-property key an op-keyed comment carries. */
@@ -87,7 +88,7 @@ export class JiraClient {
 
   /** The authenticated bot account — used to ignore the agent's own comments. */
   async myself(): Promise<JiraUser> {
-    return this.get<JiraUser>("/rest/api/2/myself");
+    return parseMyself(await this.get<unknown>("/rest/api/2/myself"));
   }
 
   /**
@@ -142,7 +143,7 @@ export class JiraClient {
       else if (page > 0) break;
       const endpoint = `${this.searchPath}?${query.toString()}`;
       const data = await this.readJson<{ issues?: JiraIssue[]; nextPageToken?: string; isLast?: boolean; total?: number }>(await this.call(endpoint), this.searchPath as string);
-      const issues = data.issues ?? [];
+      const issues = parseIssues(data.issues);
       all.push(...issues);
       nextPageToken = data.nextPageToken;
       const done = legacy ? issues.length < pageSize || (data.total !== undefined && all.length >= data.total) : data.isLast !== false || !nextPageToken;
@@ -169,13 +170,13 @@ export class JiraClient {
       }
       const data = await this.readJson<{ issues?: JiraIssue[] }>(response, path);
       this.searchPath = path;
-      return data.issues ?? [];
+      return parseIssues(data.issues);
     }
     throw lastError ?? new JiraError(404, "/rest/api/2/search", "no usable search endpoint");
   }
 
   async getIssue(key: string): Promise<JiraIssue> {
-    return this.get<JiraIssue>(`/rest/api/2/issue/${encodeURIComponent(key)}?fields=${ISSUE_FIELDS.join(",")}`);
+    return parseIssue(await this.get<unknown>(`/rest/api/2/issue/${encodeURIComponent(key)}?fields=${ISSUE_FIELDS.join(",")}`));
   }
 
   /** Who last moved the issue into `statusName` — the approver of record for the audit log. */
@@ -211,7 +212,7 @@ export class JiraClient {
     const data = await this.get<{ comments?: JiraComment[] }>(
       `/rest/api/2/issue/${encodeURIComponent(key)}/comment?orderBy=created&maxResults=${maxResults}${expand}`,
     );
-    return data.comments ?? [];
+    return parseComments(data.comments);
   }
 
   /**

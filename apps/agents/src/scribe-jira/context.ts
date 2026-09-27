@@ -15,6 +15,8 @@ export interface Ctx {
   client: JiraClient;
   state: JiraState;
   botAccountId: string;
+  /** Other agents' Jira accounts (the Teammate): never feedback, never a command. */
+  otherAgentIds: string[];
   /** Per-issue serialisation — see withIssueLock. */
   locks: Map<string, Promise<unknown>>;
   /** Exactly-once record of the agent's own comments (op-keyed; see `say`). */

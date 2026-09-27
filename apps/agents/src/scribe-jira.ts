@@ -44,7 +44,7 @@ export interface ScribeJiraHandle {
   approve(issueKey: string, approvedBy: string, draft?: string): Promise<void>;
 }
 
-export async function startScribeJira(config: AppConfig, vault: Vault): Promise<ScribeJiraHandle> {
+export async function startScribeJira(config: AppConfig, vault: Vault, options: { otherAgentIds?: string[] } = {}): Promise<ScribeJiraHandle> {
   const client = jiraClient(config.jira);
   const me = await client.myself();
   const state = await JiraState.open(config.jira.stateDir);
@@ -54,6 +54,7 @@ export async function startScribeJira(config: AppConfig, vault: Vault): Promise<
     client,
     state,
     botAccountId: me.accountId,
+    otherAgentIds: options.otherAgentIds ?? [],
     locks: new Map(),
     effects: new FileEffectLedger(path.join(config.jira.stateDir, "effects.json")),
     triggers: new Map(),

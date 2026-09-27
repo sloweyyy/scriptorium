@@ -22,12 +22,19 @@ export type JiraCommand =
    * never made in either direction: not published, not rewritten — asked.
    */
   | { kind: "unclear"; suggestion: string }
-  | { kind: "ignore"; reason: "own-comment" | "empty" };
+  | { kind: "ignore"; reason: "own-comment" | "empty" | "other-agent" | "addressed-to-another-agent" };
 
 /** What the parser needs to know about the ticket to resolve a mention. */
 export interface CommandContext {
   /** True once the agent has posted a draft here — makes a mention with text feedback. */
   hasDraft: boolean;
+  /**
+   * Account ids of the OTHER agents on this Jira site (e.g. the Teammate). Their comments,
+   * and comments addressed only to them, are not this agent's to act on — without this,
+   * a question to the Teammate and the Teammate's answer each read as feedback on the
+   * draft, and every answer could trigger another revise.
+   */
+  otherAgents?: readonly string[];
 }
 
 /** Strip wiki decoration and Jira mentions so command matching sees plain words. */
@@ -133,9 +140,13 @@ export function parseCommand(comment: JiraComment, botAccountId?: string, contex
     return { kind: "ignore", reason: "own-comment" };
   }
 
+  const others = context?.otherAgents ?? [];
+  if (comment.author?.accountId && others.includes(comment.author.accountId)) return { kind: "ignore", reason: "other-agent" };
+
   const body = comment.body ?? "";
   // Read the mention off the raw body — `plainText` below deletes the marker.
   const mentioned = mentionsAccount(body, botAccountId);
+  if (!mentioned && others.some((other) => mentionsAccount(body, other))) return { kind: "ignore", reason: "addressed-to-another-agent" };
 
   // Feedback keeps the whole comment, quotes included — "{quote}step 2{quote} is wrong"
   // needs its quote to make sense. Commands are read only from the reviewer's own words.

@@ -72,6 +72,11 @@ const slack = {
   },
   conversations: {
     replies: async () => ({ messages: threadReplies }),
+    // D1 is U1's DM with the bot; D_PEOPLE is a DM between two people the bot isn't in.
+    info: async (args: { channel: string }) => {
+      if (args.channel === "D1") return { ok: true, channel: { id: "D1", is_im: true, user: "U1" } };
+      throw new Error("channel_not_found");
+    },
     history: async (args: { channel: string }) => ({ messages: posted.filter((message) => message.channel === args.channel).map((message, index) => ({ ...message, ts: `9.${index + 1}` })) }),
   },
 };
@@ -433,6 +438,13 @@ describe("slash command and shortcut", () => {
     expect(root).toMatchObject({ channel: "C1", text: "<@U1> asked: when are digests sent? &lt;!channel&gt;" });
     expect(answer).toMatchObject({ channel: "C1", thread_ts: "9.1" });
     expect(answer?.text).toContain("docs/digest-emails");
+  });
+
+  it("in DMs, only the invoker's own DM with the Teammate counts", async () => {
+    const core = await createTeammate({ ...config(), teammate: { ...config().teammate, allowDms: true } } as AppConfig, vault, slack as never, "UBOT");
+    expect(await core.onFileAsTicket({ channel: "D_PEOPLE", user: "U1", messageTs: "5.0", shortcutId: "s9" })).toMatch(/^I don't work/);
+    expect(await core.onSlashCommand({ channel: "D1", user: "U2", text: "hi", commandId: "t9" })).toMatch(/^I don't work/);
+    expect(await core.onSlashCommand({ channel: "D1", user: "U1", text: "help", commandId: "t10" })).toContain("I'm the Teammate");
   });
 
   it("'File as a ticket' reads the thread including the message it was used on", async () => {

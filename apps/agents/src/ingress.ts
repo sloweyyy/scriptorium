@@ -52,6 +52,20 @@ export interface IngressHooks {
   nudge?: (issueKey: string) => Promise<void>;
   /** A push landed on the docs repo's base branch; these repo-relative paths changed. */
   docsChanged?: (input: { paths: string[]; commit?: string; commitUrl?: string }) => Promise<void>;
+  /** A pull request opened (or became ready for review) on a source repo. */
+  pullRequest?: (input: { repo: string; number: number; author?: string; deliveryId?: string }) => Promise<void>;
+}
+
+/** The pull-request events worth a review: opened, reopened, or taken out of draft. */
+export function pullRequestFrom(event: string | undefined, payload: unknown): { repo: string; number: number; author?: string } | undefined {
+  if (event !== "pull_request") return undefined;
+  const body = payload as { action?: string; pull_request?: { number?: number; draft?: boolean; user?: { login?: string } }; repository?: { full_name?: string } };
+  if (!["opened", "reopened", "ready_for_review"].includes(body.action ?? "")) return undefined;
+  if (body.pull_request?.draft) return undefined;
+  const repo = body.repository?.full_name?.toLowerCase();
+  const number = body.pull_request?.number;
+  if (!repo || !Number.isInteger(number)) return undefined;
+  return { repo, number: number as number, author: body.pull_request?.user?.login };
 }
 
 function readBody(request: IncomingMessage, limitBytes = 1_000_000): Promise<Buffer> {
@@ -274,6 +288,18 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
         }
         if (!deliveries.firstTime(headerValue(request.headers["x-github-delivery"]))) {
           send(response, 202, { accepted: false, reason: "duplicate delivery" });
+          return;
+        }
+        const pull = pullRequestFrom(headerValue(request.headers["x-github-event"]), payload);
+        if (pull) {
+          send(response, 202, { accepted: Boolean(hooks.pullRequest), pullRequest: `${pull.repo}#${pull.number}` });
+          if (hooks.pullRequest) {
+            try {
+              await hooks.pullRequest({ ...pull, deliveryId: headerValue(request.headers["x-github-delivery"]) });
+            } catch (error) {
+              console.warn(`[ingress] pull request ${pull.repo}#${pull.number} failed: ${error instanceof Error ? error.message : error}`);
+            }
+          }
           return;
         }
         const { paths, ref, commit, commitUrl } = docsPathsFrom(payload);

@@ -8,7 +8,7 @@ import { startCuratorBot } from "./curator-bot";
 import { startScribeBot } from "./scribe-bot";
 import { startScribeJira, type ScribeJiraHandle } from "./scribe-jira";
 import { reportStaleDocs } from "./staleness-watch";
-import { startTeammateBot } from "./teammate-bot";
+import { startTeammateBot, type TeammateCore } from "./teammate-bot";
 
 /**
  * One process, one vault, one audit log — two agents with separate identities and
@@ -107,9 +107,12 @@ if (scribe) {
 
 // The general Teammate (ADR-001). Its own Slack identity, its own envelope; answers only in
 // TEAMMATE_SLACK_CHANNELS, and every write waits for a TEAMMATE_APPROVERS click.
+let teammate: TeammateCore | undefined;
 if (config.teammate.botToken && config.teammate.appToken) {
   try {
-    stops.push(await startTeammateBot(config, vault));
+    const started = await startTeammateBot(config, vault);
+    teammate = started.core;
+    stops.push(started.stop);
   } catch (error) {
     console.error(`[teammate] failed to start: ${error instanceof Error ? error.message : error}`);
   }
@@ -122,6 +125,7 @@ const ingress = startIngress({
   config,
   hooks: {
     nudge: scribe ? (issueKey) => scribe!.nudge(issueKey) : undefined,
+    pullRequest: (input) => teammate?.onPullRequest(input) ?? Promise.resolve(),
     docsChanged: docsRepoReady(config.docsRepo)
       ? async ({ paths, commitUrl }) => {
           const change = await syncFromDocsRepo(config, vault, paths);

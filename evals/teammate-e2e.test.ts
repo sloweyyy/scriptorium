@@ -135,3 +135,19 @@ describe("teammate, end to end", () => {
     expect(posted.at(-1)?.text).toContain("docs/digest-emails");
   });
 });
+
+describe("automatic PR checks", () => {
+  it("a PR from an allowed repo is checked, its comment waits on a card in the PR channel, and nothing reaches GitHub", async () => {
+    const prConfig = () => ({ ...config(), teammate: { ...config().teammate, githubRepos: ["org/app"], prChannel: "CPR" } }) as AppConfig;
+    const core = await createTeammate(prConfig(), vault, slack as never, "UBOT");
+    script = { calls: [], reply: "No Jira key is linked to this PR, so I can't check acceptance criteria." };
+    await core.onPullRequest({ repo: "org/app", number: 12, author: "dev", deliveryId: "d-1" });
+    await core.onPullRequest({ repo: "org/secret", number: 1, author: "dev", deliveryId: "d-2" });
+    await settle(core);
+    const summaries = posted.filter((message) => message.channel === "CPR");
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.text).toContain("github:org/app/pull/12");
+    const audit = await fs.readFile(path.join(tmpRoot, "audit.jsonl"), "utf8");
+    expect(audit).toContain("PR checks are not configured for this repo");
+  });
+});

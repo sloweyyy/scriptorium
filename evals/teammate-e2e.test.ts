@@ -305,6 +305,45 @@ describe("first contact", () => {
   });
 });
 
+describe("restricted Jira comments", () => {
+  it("an internal or role-restricted question is answered at the same visibility, never in public", async () => {
+    const comments: Array<{ issue: string; body: string; options: Record<string, unknown> }> = [];
+    const jira = {
+      accountId: "tm-1",
+      client: {
+        addComment: async (issue: string, body: string, options: Record<string, unknown> = {}) => (comments.push({ issue, body, options }), { id: String(comments.length), body, created: "now" }),
+        findCommentByOp: async () => undefined,
+      } as never,
+    };
+    const core = await createTeammate({ ...config(), teammate: { ...config().teammate, jiraProjects: ["DOC"] } } as AppConfig, vault, slack as never, "UBOT", jira);
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]." };
+    const role = { visibility: { type: "role" as const, value: "Developers" } };
+    await core.onJiraComment({ issueKey: "DOC-7", commentId: "c1", body: "[~accountid:tm-1] when do digests go out?", authorId: "h1", restriction: role });
+    await core.onJiraComment({ issueKey: "DOC-8", commentId: "c2", body: "[~accountid:tm-1] when do digests go out?", authorId: "h1", restriction: { internal: true } });
+    await settle(core);
+    expect(comments.find((comment) => comment.issue === "DOC-7")?.options.restriction).toEqual(role);
+    expect(comments.find((comment) => comment.issue === "DOC-8")?.options.restriction).toEqual({ internal: true });
+  });
+
+  it("the client sends the restriction Jira reads", async () => {
+    const { jiraClient } = await import("@scriptorium/jira");
+    const sent: unknown[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => (sent.push(JSON.parse(String(init?.body))), new Response(JSON.stringify({ id: "1", body: "x", created: "now" }), { status: 201 }))) as typeof fetch;
+    try {
+      const client = jiraClient({ baseUrl: "https://x.atlassian.net", email: "a@x", apiToken: "t", projectKey: "DOC" } as never);
+      await client.addComment("SD-1", "hi", { op: "o1", restriction: { internal: true, visibility: { type: "group", value: "staff" } } });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    expect(sent[0]).toMatchObject({
+      body: "hi",
+      visibility: { type: "group", value: "staff" },
+      properties: [{ key: "scriptorium.op", value: { op: "o1" } }, { key: "sd.public.comment", value: { internal: true } }],
+    });
+  });
+});
+
 describe("spend caps", () => {
   it("a channel over today's budget gets a fixed notice and no model call — even after a restart", async () => {
     const auditFile = path.join(tmpRoot, "audit.jsonl");

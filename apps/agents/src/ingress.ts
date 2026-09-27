@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { docsRepoReady, jiraReady, linesForRun, parseAudit, runPage, type AppConfig } from "@scriptorium/core";
+import type { CommentRestriction } from "@scriptorium/jira";
 import { z } from "zod";
 
 /**
@@ -74,6 +75,28 @@ export interface JiraCommentEvent {
   commentId: string;
   body: string;
   authorId?: string;
+  /** Who may see the comment: a reply must be restricted the same way. */
+  restriction: CommentRestriction;
+}
+
+/**
+ * A comment's restriction from its webhook JSON: a role/group `visibility`, or JSM's
+ * internal flag (`jsdPublic: false`, or the `sd.public.comment` property). A visibility we
+ * cannot read is "unreadable": the comment is not answered, since a reply can't match it.
+ */
+export function commentRestriction(comment: unknown): CommentRestriction | "unreadable" {
+  const c = (comment ?? {}) as { visibility?: unknown; jsdPublic?: unknown; properties?: unknown };
+  const restriction: CommentRestriction = {};
+  if (c.visibility !== undefined && c.visibility !== null) {
+    const v = c.visibility as { type?: unknown; value?: unknown; identifier?: unknown };
+    if ((v.type !== "role" && v.type !== "group") || typeof v.value !== "string") return "unreadable";
+    restriction.visibility = { type: v.type, value: v.value, ...(typeof v.identifier === "string" ? { identifier: v.identifier } : {}) };
+  }
+  const internalProperty = Array.isArray(c.properties)
+    ? (c.properties as Array<{ key?: unknown; value?: { internal?: unknown } }>).some((property) => property.key === "sd.public.comment" && property.value?.internal === true)
+    : false;
+  if (c.jsdPublic === false || internalProperty) restriction.internal = true;
+  return restriction;
 }
 
 /**
@@ -102,7 +125,10 @@ export function jiraCommentFrom(payload: unknown): JiraCommentEvent | undefined 
   const raw = body.comment?.body;
   const text = typeof raw === "string" ? raw : raw && typeof raw === "object" ? adfToText(raw).trim() : undefined;
   if (typeof issueKey !== "string" || commentId === undefined || !text) return undefined;
-  return { issueKey, commentId: String(commentId), body: text, authorId: body.comment?.author?.accountId };
+  // A restriction we can't read: not answered at all, rather than answered in public.
+  const restriction = commentRestriction(body.comment);
+  if (restriction === "unreadable") return undefined;
+  return { issueKey, commentId: String(commentId), body: text, authorId: body.comment?.author?.accountId, restriction };
 }
 
 /** The pull-request events worth a review: opened, reopened, or taken out of draft. */

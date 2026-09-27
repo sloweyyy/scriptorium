@@ -163,3 +163,14 @@ describe("citations in the rendered answer", () => {
     expect(body).toContain("<https://example.com/a-longer|docs/a-longer>");
   });
 });
+
+describe("records outside the vault", () => {
+  it("resolve to where they live: Jira, Confluence, GitHub", async () => {
+    const { externalRecordUrl } = await import("@scriptorium/agents");
+    const cfg = { jira: { baseUrl: "https://acme.atlassian.net/" } } as never;
+    expect(externalRecordUrl(cfg, "jira:DOC-7")).toBe("https://acme.atlassian.net/browse/DOC-7");
+    expect(externalRecordUrl(cfg, "confluence:123")).toBe("https://acme.atlassian.net/wiki/pages/viewpage.action?pageId=123");
+    expect(externalRecordUrl(cfg, "github:org/app/pull/12")).toBe("https://github.com/org/app/pull/12");
+    expect(externalRecordUrl(cfg, "docs/digest")).toBeNull();
+  });
+});

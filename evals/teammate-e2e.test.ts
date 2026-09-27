@@ -60,6 +60,7 @@ function config(): AppConfig {
     repoRoot: path.resolve("."),
     auditFile: path.join(tmpRoot, "audit.jsonl"),
     slack: {},
+    sites: { external: "https://docs.example" },
     jira: { stateDir: path.join(tmpRoot, "state"), projectKey: "DOC" },
     teammate: { channels: ["C1"], approvers: ["UPM"], jiraProjects: [], confluenceSpaces: [], githubRepos: [], allowDms: false, digestWeekday: 1, digestHour: 9 },
   } as unknown as AppConfig;
@@ -91,6 +92,8 @@ describe("teammate, end to end", () => {
     expect(posted[0]).toMatchObject({ channel: "C1", thread_ts: "1.0" });
     expect(posted[0]?.text).toContain("docs/digest-emails");
     expect(posted[0]?.text).toContain("AI-generated — verify before acting");
+    // The sources are rendered, not just implied: a link to the doc on its site.
+    expect(JSON.stringify(posted[0]?.blocks)).toContain("https://docs.example/digest-emails");
     // The "looking into it" acknowledgement became the answer; none is left behind.
     expect(posted.some((message) => message.text.includes("Looking into it"))).toBe(false);
     const audit = await fs.readFile(path.join(tmpRoot, "audit.jsonl"), "utf8");

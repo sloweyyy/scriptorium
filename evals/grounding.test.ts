@@ -89,6 +89,16 @@ describe("enforceGrounding", () => {
     expect(answer.ungrounded).toBe(true);
   });
 
+  it("accepts a Confluence or Jira citation only when a tool returned that record", async () => {
+    const retrieved = ["confluence:101 — Maintenance windows (space BEACON)", '[{"key":"DOC-7"}] jira:DOC-7'];
+    expect((await judge("Windows are 4h [[confluence:101]].", false, retrieved)).ungrounded).toBeUndefined();
+    expect((await judge("Tracked in [[jira:DOC-7]].", false, retrieved)).ungrounded).toBeUndefined();
+    // Well-formed, never retrieved: invented.
+    expect((await judge("Windows are 4h [[confluence:999]].", false, retrieved)).ungrounded).toBe(true);
+    // Not the id shape: never an external record.
+    expect((await judge("See [[confluence:../x]].", false, ["confluence:../x"])).ungrounded).toBe(true);
+  });
+
   it("never counts a citation that escapes the vault", async () => {
     const answer = await judge("See [[../../etc/passwd]].", false, ["../../etc/passwd"]);
     expect(answer.ungrounded).toBe(true);

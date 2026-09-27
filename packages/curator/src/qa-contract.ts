@@ -200,6 +200,9 @@ export interface QaEvidence {
   retrieved: readonly string[];
 }
 
+/** `confluence:<page id>`, `jira:<ISSUE-1>` — records outside the vault, cited by source. */
+const EXTERNAL_CITATION = /^(confluence:\d+|jira:[A-Z][A-Z0-9_]*-\d+)$/;
+
 /** Queues and drafts, not knowledge: never evidence for a claim about the product. */
 const NOT_CITABLE = ["_gaps/", "_inbox/"];
 
@@ -222,7 +225,10 @@ export async function enforceGrounding(vault: Vault, answer: QaAnswer, evidence:
     const relPath = citation.replace(/#.*$/, "").replace(/\.md$/, "");
     if (NOT_CITABLE.some((prefix) => relPath.startsWith(prefix))) continue;
     if (!evidence.retrieved.some((result) => result.includes(relPath))) continue;
-    if (await noteExists(vault, relPath)) citations.push(citation);
+    // A source-qualified citation (`confluence:123`, `jira:DOC-7`) names a record in another
+    // system: it counts when a tool returned it in this conversation, which is the only
+    // evidence there is — the vault cannot vouch for a Confluence page.
+    if (EXTERNAL_CITATION.test(relPath) || (await noteExists(vault, relPath))) citations.push(citation);
   }
   if (citations.length || evidence.usedOverview) return { ...answer, citations };
   return { ...answer, citations: [], ungrounded: true };

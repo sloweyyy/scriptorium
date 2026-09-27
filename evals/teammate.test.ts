@@ -49,7 +49,7 @@ const confluenceRead: ToolSpec = {
   run: async () => "confluence:101 — Digest schedule (space BEACON)\n\nDigests go out at 09:00 local time.",
   records: (input) => [`confluence:${(input as { id: string }).id}`],
 };
-const others = ["confluence_search", "jira_search", "jira_recent", "jira_get_issue", "slack_read_thread", "jira_comment", "confluence_create_page", "confluence_update_page"].map(
+const others = ["confluence_search", "jira_search", "jira_recent", "jira_get_issue", "slack_read_thread", "jira_comment", "confluence_create_page", "confluence_update_page", "github_get_pull", "github_pr_comment"].map(
   (name): ToolSpec => ({ name, description: name, inputSchema: z.object({}), run: async () => "[]" }),
 );
 

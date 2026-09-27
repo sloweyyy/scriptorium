@@ -61,7 +61,7 @@ function config(): AppConfig {
     auditFile: path.join(tmpRoot, "audit.jsonl"),
     slack: {},
     jira: { stateDir: path.join(tmpRoot, "state") },
-    teammate: { channels: ["C1"], approvers: ["UPM"], jiraProjects: [], confluenceSpaces: [], digestWeekday: 1, digestHour: 9 },
+    teammate: { channels: ["C1"], approvers: ["UPM"], jiraProjects: [], confluenceSpaces: [], githubRepos: [], digestWeekday: 1, digestHour: 9 },
   } as unknown as AppConfig;
 }
 

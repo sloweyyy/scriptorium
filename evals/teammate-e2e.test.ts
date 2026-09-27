@@ -327,6 +327,18 @@ describe("the Teammate on Jira", () => {
     return { comments, jira: { client: client as never, accountId: "tm-1" } };
   }
 
+  it("a comment edited to add the mention is answered — once, however often it is edited again", async () => {
+    const { comments, jira } = fakeJira();
+    const core = await createTeammate(config(), vault, slack as never, "UBOT", jira);
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]." };
+    const first = { issueKey: "DOC-7", commentId: "c9", body: "when do digests go out?", authorId: "human-1" };
+    await core.onJiraComment(first); // no mention yet: not for the Teammate
+    await core.onJiraComment({ ...first, body: "[~accountid:tm-1] when do digests go out?" }); // the edit
+    await core.onJiraComment({ ...first, body: "[~accountid:tm-1] when do digest emails go out?" }); // a typo fix
+    await settle(core);
+    expect(comments).toHaveLength(1);
+  });
+
   it("answers a mention of its own account on the ticket, once, as itself — and nothing else", async () => {
     const { comments, jira } = fakeJira();
     const core = await createTeammate(config(), vault, slack as never, "UBOT", jira);

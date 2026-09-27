@@ -116,10 +116,12 @@ export function adfToText(node: unknown): string {
   return n.type === "paragraph" || n.type === "heading" || n.type === "listItem" ? `${inner}\n` : inner;
 }
 
-/** A `comment_created` webhook as the fields the Teammate needs; anything else is not one. */
+/** A `comment_created` or `comment_updated` webhook as the fields the Teammate needs; anything else is not one. */
 export function jiraCommentFrom(payload: unknown): JiraCommentEvent | undefined {
   const body = payload as { webhookEvent?: string; issue?: { key?: string }; comment?: { id?: string | number; body?: unknown; author?: { accountId?: string } } };
-  if (body.webhookEvent !== "comment_created") return undefined;
+  // An edit counts too: adding the forgotten @mention is how people fix a question. The
+  // reply is op-keyed per comment, so an edit to a comment already answered stays answered once.
+  if (body.webhookEvent !== "comment_created" && body.webhookEvent !== "comment_updated") return undefined;
   const issueKey = body.issue?.key;
   const commentId = body.comment?.id;
   const raw = body.comment?.body;

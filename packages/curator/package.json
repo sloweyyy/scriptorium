@@ -10,9 +10,9 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",
     "@scriptorium/core": "workspace:*",
+    "@scriptorium/runtime": "workspace:*",
     "chokidar": "^5.0.0",
     "minisearch": "^7.2.0",
-    "zod": "^4.4.3",
-    "@scriptorium/runtime": "workspace:*"
+    "zod": "^4.6.5"
   }
 }

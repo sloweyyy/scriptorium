@@ -11,8 +11,8 @@
     "@anthropic-ai/sdk": "^0.128.0",
     "@anthropic-ai/vertex-sdk": "^0.19.11",
     "dotenv": "^17.4.2",
-    "google-auth-library": "^11.0.2",
+    "google-auth-library": "^11.1.0",
     "gray-matter": "^4.0.3",
-    "zod": "^4.4.3"
+    "zod": "^4.6.5"
   }
 }

@@ -162,3 +162,30 @@ describe("deciding a lesson", () => {
     expect(lessonDecisionCheck({ ...lesson, status: "approved" }, "reject", "https://x/browse/DOC-1").ok).toBe(true);
   });
 });
+
+describe("revoking a lesson", () => {
+  it("only a rule in force can be revoked, from any ticket; a revoked rule is not revived by approve", async () => {
+    const { lessonDecisionCheck } = await import("@scriptorium/scribe");
+    const base = { id: "L-004", scope: "global", text: "x", relPath: "_lessons/L-004.md", sourceThread: "https://x/browse/DOC-1" };
+    expect(lessonDecisionCheck({ ...base, status: "approved" }, "revoke", "https://x/browse/DOC-9")).toEqual({ ok: true });
+    expect(lessonDecisionCheck({ ...base, status: "proposed" }, "revoke", "https://x/browse/DOC-1").ok).toBe(false);
+    expect(lessonDecisionCheck({ ...base, status: "revoked" }, "approve", "https://x/browse/DOC-1").ok).toBe(false);
+  });
+
+  it("a revoked rule stops shaping drafts, and its note stays as the record", async () => {
+    const { revokeLesson } = await import("@scriptorium/scribe");
+    const saved = await saveLesson(vault, { text: "Always mention the beta flag.", author: "PM", sourceThread: "DOC-9" });
+    await approveLesson(vault, saved.id, "PM");
+    await revokeLesson(vault, saved.id, "Alex Kim");
+    expect(await listLessons(vault, { status: "approved" })).toHaveLength(0);
+    const note = await vault.readNote(saved.relPath);
+    expect(note.frontmatter).toMatchObject({ status: "revoked", revoked_by: "Alex Kim" });
+  });
+
+  it("parses the command", async () => {
+    const { parseCommand } = await import("@scriptorium/jira");
+    const comment = (body: string) => ({ id: "1", body, created: "now", author: { accountId: "h", displayName: "H" } });
+    expect(parseCommand(comment("revoke lesson L-3"), "bot")).toEqual({ kind: "revoke-lesson", id: "L-003" });
+    expect(parseCommand(comment("withdraw lesson L-12"), "bot")).toEqual({ kind: "revoke-lesson", id: "L-012" });
+  });
+});

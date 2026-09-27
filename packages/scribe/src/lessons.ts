@@ -12,7 +12,7 @@ const LESSONS_DIR = "_lessons";
  * circulation (see `nextLessonId`), so the next proposal wore a number a human had already
  * ruled on.
  */
-export type LessonStatus = "proposed" | "approved" | "rejected";
+export type LessonStatus = "proposed" | "approved" | "rejected" | "revoked";
 
 /**
  * A lesson is what "learning" means here: a reviewed, versioned markdown rule with
@@ -55,7 +55,7 @@ export async function findLessonByText(vault: Vault, text: string): Promise<Less
  * direction: `proposed` never shapes a draft.
  */
 function readStatus(raw: unknown): LessonStatus {
-  return raw === "approved" ? "approved" : raw === "rejected" ? "rejected" : "proposed";
+  return raw === "approved" ? "approved" : raw === "rejected" ? "rejected" : raw === "revoked" ? "revoked" : "proposed";
 }
 
 export async function listLessons(vault: Vault, options: { status?: LessonStatus } = {}): Promise<Lesson[]> {
@@ -168,9 +168,15 @@ export async function rejectLesson(vault: Vault, id: string, rejectedBy: string)
  */
 export function lessonDecisionCheck(
   lesson: Lesson,
-  decision: "approve" | "reject",
+  decision: "approve" | "reject" | "revoke",
   whereDecided: string,
 ): { ok: true } | { ok: false; reason: string } {
+  // Withdrawing a rule in force is always safe, so it can be done from wherever the rule
+  // is noticed misbehaving — but only a rule in force can be withdrawn.
+  if (decision === "revoke") {
+    return lesson.status === "approved" ? { ok: true } : { ok: false, reason: `Lesson ${lesson.id} is ${lesson.status}, not in force, so there is nothing to revoke.` };
+  }
+  if (lesson.status === "revoked") return { ok: false, reason: `Lesson ${lesson.id} was revoked. If it should apply again, give the feedback again and it will be proposed fresh.` };
   if (lesson.sourceThread && lesson.sourceThread !== whereDecided) {
     return { ok: false, reason: `Lesson ${lesson.id} was proposed on ${lesson.sourceThread}. Decide it there.` };
   }
@@ -180,4 +186,17 @@ export function lessonDecisionCheck(
   if (decision === "approve" && lesson.status === "approved") return { ok: false, reason: `Lesson ${lesson.id} is already approved.` };
   if (decision === "reject" && lesson.status === "rejected") return { ok: false, reason: `Lesson ${lesson.id} is already rejected.` };
   return { ok: true };
+}
+
+/**
+ * Withdraw a rule that is in force. The note stays, marked `revoked` with who and when —
+ * the record of what the system once followed is part of the audit, and deleting the file
+ * would erase it.
+ */
+export async function revokeLesson(vault: Vault, id: string, revokedBy: string): Promise<Lesson | undefined> {
+  const lesson = (await listLessons(vault)).find((candidate) => candidate.id === id);
+  if (!lesson) return undefined;
+  const note = await vault.readNote(lesson.relPath);
+  await vault.writeNote(lesson.relPath, note.body, { ...note.frontmatter, status: "revoked", revoked_by: revokedBy, revoked_at: new Date().toISOString() });
+  return { ...lesson, status: "revoked" };
 }

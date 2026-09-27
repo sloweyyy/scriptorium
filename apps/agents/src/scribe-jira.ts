@@ -45,6 +45,7 @@ import {
   lintOk,
   listLessons,
   rejectLesson,
+  revokeLesson,
   publishDoc,
   reviseDoc,
   saveLesson,
@@ -138,6 +139,7 @@ const HELP = [
   "- `approve` — publish the current draft to the knowledge vault (or move this issue to the approved status)",
   "- `approve lesson L-001` — turn feedback into a house rule that shapes every future draft",
   "- `reject lesson L-001` — discard the proposed rule",
+  "- `revoke lesson L-001` — withdraw a rule that is in force, from any ticket",
   "- `draft` — start over from the PRD",
   "- **@ me** — mention me on any ticket in this project and I'll answer, drafted or not",
   "- `help` — this message",
@@ -1077,7 +1079,7 @@ async function runPublish(
 async function runLessonDecision(
   ctx: Ctx,
   key: string,
-  decision: "approve" | "reject",
+  decision: "approve" | "reject" | "revoke",
   explicitId: string | undefined,
   actor: string,
   actorAccountId?: string,
@@ -1121,9 +1123,22 @@ async function runLessonDecision(
       [
         `**Lesson ${id} approved** by ${actor} — it now applies to every future draft.`,
         "",
-        `It is a file (\`${lesson.relPath}\`) with provenance, not a weight: readable, revocable by deleting it, and versioned in git.`,
+        `It is a file (\`${lesson.relPath}\`) with provenance, not a weight: readable, versioned in git, and revocable — comment \`revoke lesson ${id}\` on any ticket to withdraw it.`,
       ].join("\n"),
     );
+    return;
+  }
+
+  if (decision === "revoke") {
+    const revoked = await revokeLesson(ctx.vault, id, actor);
+    if (!revoked) {
+      await say(ctx, key, `I can't find lesson \`${id}\` in the vault.`);
+      return;
+    }
+    await audit(ctx.config.auditFile, { type: "lesson.revoked", actor, issue: key, id, relPath: revoked.relPath });
+    await commitVault(ctx.config.repoRoot, `lessons: revoke ${id} (revoked by ${actor})`);
+    await pushInternalPlane(ctx.config, ctx.vault, `lessons: revoke ${id} (revoked by ${actor})`);
+    await say(ctx, key, `**Lesson ${id} revoked** by ${actor} — no future draft will follow it. The note stays, marked \`revoked\`, as the record of what drafts once followed.`);
     return;
   }
 
@@ -1374,6 +1389,9 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
           break;
         case "reject-lesson":
           await runLessonDecision(ctx, key, "reject", command.id, authorName(comment), comment.author?.accountId);
+          break;
+        case "revoke-lesson":
+          await runLessonDecision(ctx, key, "revoke", command.id, authorName(comment), comment.author?.accountId);
           break;
       }
       await ctx.state.markProcessed(key, [comment.id]);

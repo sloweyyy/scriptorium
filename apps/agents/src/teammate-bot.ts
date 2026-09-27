@@ -41,7 +41,7 @@ export interface SlackMention {
 }
 
 /** A Slack `app_mention` as the platform's event. Pure, so the mapping is pinned by evals. */
-export function mentionToEvent(mention: SlackMention): AgentEvent<{ channel: string; threadTs: string; text: string }> {
+export function mentionToEvent(mention: SlackMention): AgentEvent<{ channel: string; threadTs: string; text: string; ts: string }> {
   const threadTs = mention.thread_ts ?? mention.ts;
   return {
     id: mention.client_msg_id ?? `${mention.channel}:${mention.event_ts ?? mention.ts}`,
@@ -49,7 +49,7 @@ export function mentionToEvent(mention: SlackMention): AgentEvent<{ channel: str
     key: keys.slackThread(mention.channel, threadTs),
     kind: "slack.mention",
     actor: { id: `slack:${mention.user ?? mention.bot_id ?? "unknown"}`, isBot: Boolean(mention.bot_id) },
-    payload: { channel: mention.channel, threadTs, text: stripMentions(mention.text) },
+    payload: { channel: mention.channel, threadTs, text: stripMentions(mention.text), ts: mention.ts },
     receivedAt: new Date().toISOString(),
   };
 }
@@ -77,6 +77,21 @@ export function teammateConnectorTools(config: AppConfig, slack: SlackClient, le
  * The reply as posted. Every agent-written message says so and names its run: the footer is
  * the thread a reader pulls to find the trigger, tool calls and approvals behind it.
  */
+/**
+ * The thread so far, for context: "make a ticket for this" is meaningless without it. Only
+ * the thread the agent was mentioned in (Slack's terms: no bulk reads), capped, oldest
+ * first, the triggering message left out. It is handed to the model as data.
+ */
+export async function threadContext(slack: SlackClient, channel: string, threadTs: string, triggerTs: string, limit = 20): Promise<string | undefined> {
+  if (threadTs === triggerTs) return undefined;
+  const replies = await slack.conversations.replies({ channel, ts: threadTs, limit: 50 });
+  const lines = (replies.messages ?? [])
+    .filter((message) => message.ts !== triggerTs && message.text)
+    .slice(-limit)
+    .map((message) => `${message.user ? `<@${message.user}>` : "bot"}: ${(message.text ?? "").slice(0, 1_000)}`);
+  return lines.length ? lines.join("\n") : undefined;
+}
+
 export function formatReply(reply: TeammateReply, runId?: string): string {
   const body = toSlackMrkdwn(reply.text);
   const ticket = reply.kind === "gap" && reply.ticket ? `\n🎫 <${reply.ticket.url}|${reply.ticket.key}>` : "";
@@ -112,10 +127,11 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
   const queue = new KeyedQueue(
     async (key, events) => {
       for (const event of events) await withRun(async () => {
-        const { channel, threadTs, text } = event.payload as { channel: string; threadTs: string; text: string };
+        const { channel, threadTs, text, ts } = event.payload as { channel: string; threadTs: string; text: string; ts: string };
+        const context = text ? await threadContext(app.client, channel, threadTs, ts).catch(() => undefined) : undefined;
         const reply = text
           ? await runTeammateTurn(
-              { question: text, askedBy: event.actor.id, channel },
+              { question: text, askedBy: event.actor.id, channel, context },
               { vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config) },
             )
           : ({ kind: "action", text: "Hi — ask me about the product, a page or a ticket, or ask me to file one." } as const);

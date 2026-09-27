@@ -45,3 +45,23 @@ describe("teammate slack surface", () => {
     expect(formatReply({ kind: "gap", text: "Not in the KB.", gapPath: "_gaps/G-1.md", ticket: { key: "DOC-9", url: "https://x/DOC-9" } })).toContain("<https://x/DOC-9|DOC-9>");
   });
 });
+
+describe("thread context", () => {
+  it("reads the thread it was asked in, oldest first, without the triggering message", async () => {
+    const { threadContext } = await import("@scriptorium/agents");
+    const client = {
+      conversations: {
+        replies: async () => ({ messages: [
+          { ts: "1.0", user: "U1", text: "The digest time should follow the subscriber's timezone" },
+          { ts: "1.1", user: "U2", text: "Agreed, and it should be configurable per workspace" },
+          { ts: "1.2", user: "U1", text: "<@UBOT> make a ticket for this" },
+        ] }),
+      },
+      chat: {},
+    } as unknown as SlackClient;
+    const context = await threadContext(client, "C1", "1.0", "1.2");
+    expect(context).toBe("<@U1>: The digest time should follow the subscriber's timezone\n<@U2>: Agreed, and it should be configurable per workspace");
+    // A top-level mention has no thread yet.
+    expect(await threadContext(client, "C1", "1.2", "1.2")).toBeUndefined();
+  });
+});

@@ -10,6 +10,7 @@ export type JiraCommand =
   | { kind: "approve-doc" }
   | { kind: "approve-lesson"; id?: string }
   | { kind: "reject-lesson"; id?: string }
+  | { kind: "revoke-lesson"; id?: string }
   | { kind: "draft" }
   | { kind: "help" }
   /** Someone said the agent's name and nothing more useful — answer, whatever the state. */
@@ -146,6 +147,7 @@ export function parseCommand(comment: JiraComment, botAccountId?: string, contex
 
   if (/^(approve|accept)\s+lesson\b/.test(head)) return { kind: "approve-lesson", id: lessonId(head) };
   if (/^(reject|decline|discard)\s+lesson\b/.test(head)) return { kind: "reject-lesson", id: lessonId(head) };
+  if (/^(revoke|withdraw|retire)\s+lesson\b/.test(head)) return { kind: "revoke-lesson", id: lessonId(head) };
   if (/^(approve|approved|publish)(\s+(the\s+)?(doc|document|draft))?[.!]?$/.test(head)) return { kind: "approve-doc" };
   if (/^(draft|redraft|retry|start)[.!]?$/.test(head)) return { kind: "draft" };
   if (/^(help|\?|commands)[.!]?$/.test(head)) return { kind: "help" };

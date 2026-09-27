@@ -34,6 +34,20 @@ describe("teammate slack surface", () => {
     expect(scoped.check(mentionToEvent({ channel: "C1", ts: "1.2", user: "UBOT" })).accepted).toBe(false);
   });
 
+  it("an approved action's outcome: done, refused (not 'Done'), or failed without its error text", async () => {
+    const { outcomeMessages } = await import("@scriptorium/agents");
+    const who = { asker: "<@U1> ", approver: "priya", approverMention: "<@UPM>" };
+    const done = outcomeMessages({ kind: "ran", result: "Created jira:DOC-9\nmore" }, who);
+    expect(done).toEqual({ text: "<@U1> ✅ Done, approved by <@UPM>: Created jira:DOC-9", origin: "✅ Done, approved by priya: Created jira:DOC-9" });
+    const refused = outcomeMessages({ kind: "ran", result: "NOT_ALLOWED: HR is outside the Jira projects this agent may use." }, who);
+    expect(refused.notRun).toBe("refused");
+    expect(refused.text).not.toContain("Done");
+    expect(refused.text).toContain("HR is outside the Jira projects");
+    const failed = outcomeMessages({ kind: "failed", reason: "ECONNRESET at socket.ts:88" }, who);
+    expect(failed.notRun).toBe("failed");
+    expect(failed.text + failed.origin).not.toContain("ECONNRESET");
+  });
+
   it("caps a question's length, and says it was cut", () => {
     const long = mentionToEvent({ channel: "C1", ts: "1.0", user: "U9", text: `<@UBOT> ${"x".repeat(10_000)}` });
     expect(long.payload.text.length).toBeLessThan(4_200);

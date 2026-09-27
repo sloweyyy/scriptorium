@@ -21,9 +21,11 @@ import { digestDue, postDigestOnce } from "./digest";
 import { runTeammateTurn } from "./teammate";
 import { ASKING_SUBTYPES, capQuestion, formatReply, helpText, isHelpRequest, mentionToEvent, progressText, threadContext, type SlackMention } from "./teammate-bot/messages";
 import { sharesScribeAccount, teammateConnectorTools } from "./teammate-bot/tools";
+import { outcomeMessages } from "./teammate-bot/outcome";
 
 export * from "./teammate-bot/messages";
 export * from "./teammate-bot/tools";
+export * from "./teammate-bot/outcome";
 
 /**
  * The Teammate in Slack: the whole engine behind one surface.
@@ -318,23 +320,10 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     const outcome = await executeApproved(envelope, [...connectorTools, ...memoryTools(vault, config.signingKey)], request.id, guardDepsFor(request.key)).catch(
       (error: unknown) => ({ kind: "failed" as const, reason: error instanceof Error ? error.message : String(error) }),
     );
-    const refused = outcome.kind === "ran" && /^NOT_ALLOWED\b/.test(outcome.result);
     const asker = request.requestedBy?.startsWith("slack:") ? `<@${request.requestedBy.slice("slack:".length)}> ` : "";
-    let text: string;
-    let origin: string;
-    if (outcome.kind === "ran" && !refused) {
-      text = `${asker}✅ Done, approved by ${userId ? `<@${userId}>` : approver}: ${outcome.result.split("\n")[0]}`;
-      origin = `✅ Done, approved by ${approver}: ${outcome.result.split("\n")[0]}`;
-    } else if (refused) {
-      const reason = (outcome as { result: string }).result.replace(/^NOT_ALLOWED:\s*/, "").split("\n")[0];
-      text = `${asker}⚠️ Approved, but it isn't allowed here, so nothing was done: ${reason}`;
-      origin = `⚠️ ${approver} approved this, but it isn't allowed here, so nothing was done: ${reason}`;
-    } else {
-      text = `${asker}⚠️ Approved, but I couldn't carry it out — nothing was changed. The approval is kept: an approver can retry.`;
-      origin = `⚠️ ${approver} approved this, but I couldn't carry it out yet — nothing was changed.`;
-    }
-    if (outcome.kind !== "ran" || refused) {
-      await audit(config.auditFile, { type: "teammate.approval.not_run", actor: "teammate", request: request.id, outcome: refused ? "refused" : outcome.kind, reason: "reason" in outcome ? outcome.reason : undefined }).catch(() => undefined);
+    const { text, origin, notRun } = outcomeMessages(outcome, { asker, approver, approverMention: userId ? `<@${userId}>` : approver });
+    if (notRun) {
+      await audit(config.auditFile, { type: "teammate.approval.not_run", actor: "teammate", request: request.id, outcome: notRun, reason: "reason" in outcome ? outcome.reason : undefined }).catch(() => undefined);
     }
     const retryable = (await store.all()).find((candidate) => candidate.id === request.id)?.status === "approved";
     if (where.channel) {

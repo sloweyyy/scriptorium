@@ -1,0 +1,5 @@
+{
+  "lexical": { "recallAt5": 1, "mrr": 1, "n": 13 },
+  "paraphrase": { "recallAt5": 0.889, "mrr": 0.722, "n": 9 },
+  "multi-hop": { "recallAt5": 1, "mrr": 1, "n": 2 }
+}

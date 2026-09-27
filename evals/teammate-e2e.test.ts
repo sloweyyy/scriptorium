@@ -30,7 +30,7 @@ vi.mock("@scriptorium/core", async (importOriginal) => ({
   }),
 }));
 
-const { createTeammate, APPROVE_ACTION } = await import("@scriptorium/agents").then(async (agents) => ({ ...agents, ...(await import("@scriptorium/connectors")) }));
+const { createTeammate, APPROVE_ACTION, REJECT_ACTION } = await import("@scriptorium/agents").then(async (agents) => ({ ...agents, ...(await import("@scriptorium/connectors")) }));
 
 interface Posted { channel: string; thread_ts?: string; text: string; blocks?: unknown[] }
 let tmpRoot: string;
@@ -147,6 +147,44 @@ describe("teammate, end to end", () => {
     // A decided card cannot decide again.
     expect(await core.onApprovalClick(APPROVE_ACTION, payload("UPM"))).toMatch(/^Not recorded/);
     expect(await vault.listNotes("_memory")).toHaveLength(1);
+  });
+
+  it("a DM or a ticket that asked hears the outcome there — the card was elsewhere", async () => {
+    const comments: Array<{ issue: string; body: string; op?: string }> = [];
+    const jira = {
+      accountId: "tm-1",
+      client: {
+        addComment: async (issue: string, body: string, options: { op?: string } = {}) => (comments.push({ issue, body, op: options.op }), { id: String(comments.length), body, created: "now" }),
+        findCommentByOp: async (_key: string, op: string) => comments.find((comment) => comment.op === op),
+      } as never,
+    };
+    const dmConfig = { ...config(), slack: { notifyChannel: "CN" }, teammate: { ...config().teammate, allowDms: true, jiraProjects: ["DOC"] } } as AppConfig;
+    const core = await createTeammate(dmConfig, vault, slack as never, "UBOT", jira);
+    const cardIds = () => posted.filter((message) => message.channel === "CN" && message.blocks).map((message) => JSON.stringify(message.blocks).match(/"value":"([0-9a-f-]{36})"/)?.[1] as string);
+    const click = (action: string, id: string) => core.onApprovalClick(action, { actions: [{ value: id }], user: { id: "UPM", username: "priya" }, channel: { id: "CN" }, message: { ts: "9.9" } });
+
+    // One scripted call per turn: the DM asks for a person memory, the ticket for a global one.
+    const scripts = [
+      { calls: [{ name: "memory_save", input: { text: "I prefer short answers.", scope: "person:slack:U1" } }], reply: "Asked." },
+      { calls: [{ name: "memory_save", input: { text: "DOC tickets need a design link.", scope: "global" } }], reply: "Asked." },
+    ];
+    script = scripts[0]!;
+    await core.onDirectMessage({ channel: "D1", channel_type: "im", ts: "2.0", user: "U1", text: "remember I prefer short answers" });
+    await settle(core);
+    const [dmCard] = cardIds();
+    await click(APPROVE_ACTION, dmCard!);
+    expect(posted.find((message) => message.channel === "D1" && message.text.startsWith("✅ Done, approved by priya"))).toMatchObject({ thread_ts: "2.0" });
+
+    // A drained core takes no more work: the ticket's turn runs on a fresh one (same stores).
+    const again = await createTeammate(dmConfig, vault, slack as never, "UBOT", jira);
+    script = scripts[1]!;
+    await again.onJiraComment({ issueKey: "DOC-7", commentId: "c1", body: "[~accountid:tm-1] remember DOC tickets need a design link", authorId: "human-1" });
+    await settle(again);
+    const jiraCard = cardIds().at(-1)!;
+    expect(jiraCard).not.toBe(dmCard);
+    await again.onApprovalClick(REJECT_ACTION, { actions: [{ value: jiraCard }], user: { id: "UPM", username: "priya" }, channel: { id: "CN" }, message: { ts: "9.9" } });
+    expect(comments.filter((comment) => comment.body.includes("Rejected by priya"))).toHaveLength(1);
+    expect(comments.at(-1)?.issue).toBe("DOC-7");
   });
 
   it("a turn that fails is answered with a notice, and the next mention in the batch still gets its answer", async () => {

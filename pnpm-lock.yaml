@@ -89,6 +89,9 @@ importers:
       '@scriptorium/jira':
         specifier: workspace:*
         version: link:../jira
+      '@scriptorium/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       zod:
         specifier: ^4.4.3
         version: 4.4.3

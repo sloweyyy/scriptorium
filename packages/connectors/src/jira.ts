@@ -104,8 +104,8 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
           // Jira Software's openSprints(): no board id to guess, and nothing the model wrote in the JQL.
           const issues = await settings.client.searchIssues(`project = ${jqlString(project)} AND sprint in openSprints() ORDER BY status ASC, updated DESC`, 100);
           if (!issues.length) return `No issues in an open sprint in ${project} (no active sprint, or the project isn't on a Scrum board).`;
-          return JSON.stringify(
-            issues.map((issue) => ({
+          return JSON.stringify([
+            ...issues.map((issue) => ({
               cite: `jira:${issue.key}`,
               key: issue.key,
               summary: issue.fields.summary,
@@ -113,7 +113,9 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
               assignee: issue.fields.assignee?.displayName ?? "unassigned",
               updated: issue.fields.updated,
             })),
-          );
+            // A report on the first 100 that says nothing of the rest would read as the whole sprint.
+            ...(issues.length >= 100 ? [{ note: "Showing the first 100 issues in the sprint; there may be more. Say so in the report." }] : []),
+          ]);
         }),
       records: citeRecords,
     },

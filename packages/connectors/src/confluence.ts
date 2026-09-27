@@ -51,6 +51,7 @@ const Page = z.object({
 });
 const PageSpace = z.object({ id: z.union([z.string(), z.number()]).transform(String), spaceId: z.union([z.string(), z.number()]).transform(String) });
 const ChildList = z.object({
+  _links: z.object({ next: z.string().optional() }).optional(),
   results: z.array(z.object({ id: z.union([z.string(), z.number()]).transform(String), title: z.string(), spaceId: z.union([z.string(), z.number()]).transform(String).optional() })),
 });
 const PageMeta = z.object({
@@ -134,15 +135,16 @@ export class ConfluenceConnector {
    * an allowed space, and so must every child listed: a child moved into another space is
    * left out, title and all.
    */
-  async listChildren(pageId: string): Promise<Array<{ id: string; title: string }>> {
+  async listChildren(pageId: string): Promise<{ children: Array<{ id: string; title: string }>; more: boolean }> {
     if (!/^\d+$/.test(pageId)) throw new ConfluenceAccessError("A Confluence page id is digits only.");
     const allowed = await this.allowedSpaces();
     const parent = await this.get(`/api/v2/pages/${pageId}`, PageSpace);
     if (!allowed.has(parent.spaceId)) throw new ConfluenceAccessError(`Page ${pageId} is outside the Confluence spaces this agent may read.`);
     const children = await this.get(`/api/v2/pages/${pageId}/children?limit=100`, ChildList);
-    return children.results
+    const listed = children.results
       .filter((child) => allowed.has(child.spaceId ?? parent.spaceId))
       .map((child) => ({ id: child.id, title: child.title }));
+    return { children: listed, more: Boolean(children._links?.next) };
   }
 
   private async send<T>(method: "POST" | "PUT", endpoint: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
@@ -275,7 +277,13 @@ export class ConfluenceConnector {
         inputSchema: z.object({ id: z.string().describe("The parent page id.") }),
         run: async (input) => {
           const { id } = z.object({ id: z.string() }).parse(input);
-          return refusalOr(async () => JSON.stringify((await this.listChildren(id)).map((child) => ({ cite: `confluence:${child.id}`, ...child }))));
+          return refusalOr(async () => {
+            const { children, more } = await this.listChildren(id);
+            return JSON.stringify([
+              ...children.map((child) => ({ cite: `confluence:${child.id}`, ...child })),
+              ...(more ? [{ note: "Showing the first 100 child pages; there are more." }] : []),
+            ]);
+          });
         },
         records: (_input: unknown, output: string) => ownIds(output, (hit) => (typeof hit.id === "string" ? `confluence:${hit.id}` : undefined)),
       },

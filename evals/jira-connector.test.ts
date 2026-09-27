@@ -160,3 +160,12 @@ describe("sprint report", () => {
     expect(await tools().jira_sprint!.run({ project: 'DOC" OR project = HR' })).toMatch(/^NOT_ALLOWED/);
   });
 });
+
+describe("a sprint bigger than one read", () => {
+  it("says it shows only the first 100", async () => {
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ issues: Array.from({ length: 100 }, (_, i) => ({ id: String(i), key: `DOC-${i + 1}`, fields: { summary: "s", status: { name: "To Do" } } })) }), { status: 200 }));
+    const out = JSON.parse(await tools().jira_sprint!.run({ project: "DOC" })) as Array<{ note?: string }>;
+    expect(out).toHaveLength(101);
+    expect(out.at(-1)?.note).toMatch(/first 100 issues/);
+  });
+});

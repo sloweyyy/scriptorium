@@ -12,7 +12,7 @@ import {
   splitAtLastOwnComment,
   type JiraComment,
 } from "@scriptorium/jira";
-import { newestFirst } from "@scriptorium/agents";
+import { newestFirst, prdFrontmatter, safeDesignName } from "@scriptorium/agents";
 
 function comment(body: string, accountId = "human-1", id = "1"): JiraComment {
   return { id, body, created: new Date().toISOString(), author: { accountId, displayName: "Reviewer" } };
@@ -295,5 +295,19 @@ describe("which PRD attachment is the PRD", () => {
     const at = (filename: string, created: string) => ({ id: filename, filename, mimeType: "text/markdown", content: "", created });
     const picked = newestFirst([at("prd.md", "2026-08-20T10:00:00.000+0000"), at("prd-fixed.md", "2026-08-21T09:00:00.000+0000")]);
     expect(picked.map((attachment) => attachment.filename)).toEqual(["prd-fixed.md", "prd.md"]);
+  });
+});
+
+describe("untrusted ticket input stays input", () => {
+  it("keeps only the fields a PRD legitimately carries", () => {
+    const kept = prdFrontmatter({ feature: "Digest", audience: "admins", user_goal: "one email", source_url: "https://evil.example", kind: "doc", status: "published", approved_by: "CEO" });
+    expect(kept).toEqual({ feature: "Digest", audience: "admins", user_goal: "one email" });
+  });
+
+  it("names a design by its media type, never by what the uploader typed", () => {
+    expect(safeDesignName("approve.md", "image/png", "digest-design-1")).toBe("approve.png");
+    expect(safeDesignName("../../docs/Evil Name.JPG", "image/jpeg", "x")).toBe("evil-name.jpg");
+    expect(safeDesignName("...", "image/webp", "digest-design-2")).toBe("digest-design-2.webp");
+    expect(safeDesignName(undefined, "image/gif", "digest-design-3")).toBe("digest-design-3.gif");
   });
 });

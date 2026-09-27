@@ -11,6 +11,7 @@ let requests: string[];
 /** Pages the stub serves, by id → space id. */
 const PAGES: Record<string, { spaceId: string; title: string }> = {
   "101": { spaceId: "1", title: "Maintenance windows" },
+  "104": { spaceId: "1", title: "Specs" },
   "202": { spaceId: "2", title: "Salaries 2026" },
 };
 
@@ -26,6 +27,7 @@ beforeEach(() => {
     }
     const parent = url.match(/\/api\/v2\/pages\/(\d+)\/children/)?.[1];
     if (parent === "101") return json({ results: [{ id: "103", title: "Maintenance runbook", spaceId: "1" }, { id: "202", title: "Salaries 2026", spaceId: "2" }] });
+    if (parent === "104") return json({ results: [{ id: "105", title: "Child", spaceId: "1" }], _links: { next: "/wiki/api/v2/pages/104/children?cursor=x" } });
     const page = url.match(/\/api\/v2\/pages\/(\d+)/)?.[1];
     if (page && PAGES[page]) {
       return json({ id: page, title: PAGES[page].title, spaceId: PAGES[page].spaceId, body: { storage: { value: "<h1>Hello</h1><p>World</p>" } }, _links: { webui: `/spaces/X/pages/${page}` } });
@@ -98,6 +100,12 @@ describe("confluence page trees", () => {
     const refused = await children.run({ id: "202" });
     expect(refused).toMatch(/^NOT_ALLOWED/);
     expect(refused).not.toContain("Salaries");
+  });
+
+  it("says when a page has more children than it lists", async () => {
+    const children = connector().tools().find((tool) => tool.name === "confluence_page_children")!;
+    const out = JSON.parse(await children.run({ id: "104" })) as Array<{ note?: string; cite?: string }>;
+    expect(out.map((hit) => hit.cite ?? hit.note)).toEqual(["confluence:105", "Showing the first 100 child pages; there are more."]);
   });
 });
 

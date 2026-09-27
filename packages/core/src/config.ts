@@ -132,6 +132,10 @@ export interface TeammateSettings extends SlackAppTokens {
    * `TEAMMATE_PEOPLE="slack:U1=jira:abc=github:dev; slack:U2=jira:def"`.
    */
   people?: string[][];
+  /** Projects whose new issues the Teammate triages (readiness + likely duplicates). Empty: none. */
+  triageProjects?: string[];
+  /** At most this many triages per project per hour — a bulk import must not flood the ticket feed. */
+  triagePerHour?: number;
   /** Model tokens per channel (or DM) per UTC day. Unset: unlimited. */
   dailyTokens?: number;
   /** Tokens per UTC day across everything, whatever the scope: many DMs can't add up past it. */
@@ -292,6 +296,8 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       prChannel: env("TEAMMATE_PR_CHANNEL"),
       allowDms: env("TEAMMATE_ALLOW_DMS") === "true",
       people: parsePeople(env("TEAMMATE_PEOPLE")),
+      triageProjects: list(env("TEAMMATE_TRIAGE_PROJECTS")),
+      triagePerHour: envNumber("TEAMMATE_TRIAGE_PER_HOUR", 20),
       dailyTokens: env("TEAMMATE_DAILY_TOKENS") ? Number(env("TEAMMATE_DAILY_TOKENS")) : undefined,
       dailyTokensTotal: env("TEAMMATE_DAILY_TOKENS_TOTAL") ? Number(env("TEAMMATE_DAILY_TOKENS_TOTAL")) : undefined,
       digestChannel: env("TEAMMATE_DIGEST_CHANNEL"),

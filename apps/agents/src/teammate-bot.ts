@@ -49,6 +49,8 @@ export interface TeammateCore {
   onJiraComment(input: { issueKey: string; commentId: string; body: string; authorId?: string; restriction?: CommentRestriction }): Promise<void>;
   /** A Jira issue assigned to the Teammate: it checks readiness and replies on the ticket. */
   onJiraAssigned(input: { issueKey: string; assigneeId: string; changeId: string }): Promise<void>;
+  /** A new Jira issue: triaged (readiness + likely duplicates) in projects that opted in. */
+  onJiraCreated(input: { issueKey: string; reporterId?: string }): Promise<void>;
   /** A pull request to check against its ticket (from the GitHub webhook). */
   onPullRequest(input: { repo: string; number: number; author?: string; deliveryId?: string }): Promise<void>;
   drain(deadlineMs: number): Promise<boolean>;
@@ -100,6 +102,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const hostConfig = { ...agentConfig, tools: Object.fromEntries(Object.entries(agentConfig.tools).filter(([name]) => available.has(name))) };
   const envelope = envelopeOf(hostConfig);
   // Cards follow the request: its channel thread; a PR → the PR channel; a DM or Jira → notify.
+  /** Triage is rate-capped per project per hour: a bulk import is not N model calls and N comments. */
+  const triageRate = new HourlyCap(settings.triagePerHour ?? 20);
   /** The visibility each Jira conversation was last asked at (public is `{}`), for replies. */
   const jiraRestrictions = new Map<string, CommentRestriction>();
   /** A running PR check's summary message, keyed by conversation: its card threads under it. */
@@ -480,6 +484,36 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       queue.push(event);
     },
 
+    async onJiraCreated({ issueKey, reporterId }) {
+      const project = issueKey.split("-")[0]?.toUpperCase() ?? "";
+      const allowed = (settings.jiraProjects.length ? settings.jiraProjects : [config.jira.projectKey ?? ""]).map((key) => key.toUpperCase());
+      const triaged = (settings.triageProjects ?? []).map((key) => key.toUpperCase());
+      // Opt-in per project, inside the Teammate's own projects, and never its own tickets.
+      if (!jira || !config.hasModelAccess || !triaged.includes(project) || !allowed.includes(project) || reporterId === jira.accountId) return;
+      const event: AgentEvent = {
+        id: `jira-created:${issueKey}`,
+        source: "jira",
+        key: keys.jiraIssue(issueKey),
+        kind: "jira.mention",
+        actor: { id: `jira:${reporterId ?? "unknown"}` },
+        // Answered like a mention, keyed on the issue: one triage reply per ticket, ever.
+        payload: {
+          issueKey,
+          commentId: `triage-${issueKey}`,
+          question: `A new ticket was just filed: jira:${issueKey}. Triage it with the triage skill: is it ready to be worked on, what is missing, and does it look like a duplicate of an existing issue? Reply once; change nothing on the ticket.`,
+        },
+        receivedAt: new Date().toISOString(),
+      };
+      // Redeliveries are dropped first, so they never use up the hour's triage budget.
+      const verdict = gate.check(event);
+      if (!verdict.accepted) return;
+      if (!triageRate.take(project)) {
+        await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: event.key, reason: `triage rate cap for ${project} reached` }).catch(() => undefined);
+        return;
+      }
+      queue.push(event);
+    },
+
     async onPullRequest({ repo, number, author, deliveryId }) {
       // Only allowed repos, and only with somewhere to put the result and the card.
       if (!config.hasModelAccess || !settings.prChannel || !settings.githubRepos.map((allowed) => allowed.toLowerCase()).includes(repo.toLowerCase())) {
@@ -555,4 +589,23 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
       await app.stop();
     },
   };
+}
+
+/** At most `limit` per key in any rolling hour. In memory: a restart resets it, which errs on one extra hour's worth. */
+export class HourlyCap {
+  private readonly seen = new Map<string, number[]>();
+  constructor(
+    private readonly limit: number,
+    private readonly now: () => number = () => Date.now(),
+  ) {}
+  take(key: string): boolean {
+    const cutoff = this.now() - 3_600_000;
+    const recent = (this.seen.get(key) ?? []).filter((at) => at > cutoff);
+    if (recent.length >= this.limit) {
+      this.seen.set(key, recent);
+      return false;
+    }
+    this.seen.set(key, [...recent, this.now()]);
+    return true;
+  }
 }

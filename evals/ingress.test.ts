@@ -305,6 +305,14 @@ describe("jira comment webhooks", () => {
   });
 });
 
+describe("new Jira issues", () => {
+  it("parses issue_created with its reporter, and nothing else", async () => {
+    const { jiraCreatedFrom } = await import("@scriptorium/agents");
+    expect(jiraCreatedFrom({ webhookEvent: "jira:issue_created", issue: { key: "BEA-1", fields: { reporter: { accountId: "h1" } } } })).toEqual({ issueKey: "BEA-1", reporterId: "h1" });
+    expect(jiraCreatedFrom({ webhookEvent: "jira:issue_updated", issue: { key: "BEA-1" } })).toBeUndefined();
+  });
+});
+
 describe("restricted Jira comments", () => {
   it("carry their visibility or JSM internal flag; a visibility we can't read is not answered", async () => {
     const { jiraCommentFrom } = await import("@scriptorium/agents");

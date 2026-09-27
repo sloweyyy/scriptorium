@@ -15,7 +15,7 @@ const ran: string[] = [];
 const fake = (name: string): ToolSpec => ({ name, description: name, inputSchema: z.object({}), run: async () => (ran.push(name), `${name} ran`) });
 const CONNECTORS = [
   "vault_overview", "search_vault", "read_note", "confluence_search", "confluence_read_page",
-  "jira_search", "jira_recent", "jira_get_issue", "slack_read_thread", "jira_comment", "jira_create_issue", "confluence_create_page", "confluence_update_page", "memory_save", "confluence_delete_space",
+  "jira_search", "jira_recent", "jira_get_issue", "slack_read_thread", "jira_comment", "jira_create_issue", "confluence_create_page", "confluence_update_page", "memory_save", "github_get_pull", "github_pr_comment", "confluence_delete_space",
 ].map(fake);
 
 const deps = () => ({ store: new MemoryApprovalStore(), channel: { post: async () => undefined }, auditFile: "/dev/null", key: "slack:thread:C1/1.0" });

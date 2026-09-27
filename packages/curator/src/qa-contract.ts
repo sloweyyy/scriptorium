@@ -237,7 +237,7 @@ export interface QaEvidence {
 }
 
 /** `confluence:<page id>`, `jira:<ISSUE-1>` — records outside the vault, cited by source. */
-const EXTERNAL_CITATION = /^(confluence:\d+|jira:[A-Z][A-Z0-9_]*-\d+)$/;
+const EXTERNAL_CITATION = /^(confluence:\d+|jira:[A-Z][A-Z0-9_]*-\d+|github:[a-z0-9_.-]+\/[a-z0-9_.-]+\/pull\/\d+)$/;
 
 /** Tool outputs that report an action NOT taken or a read refused — never evidence. */
 const REFUSAL = /^\s*(NOT_ALLOWED|DENIED|NOT_DONE|APPROVAL_PENDING|REFUSED)\b/;

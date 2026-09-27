@@ -14,7 +14,7 @@ export function teammateConfig(input: { selfAccountIds: string[]; approvers: str
     name: "Teammate",
     description: "a governed AI teammate for a product team, working in Slack, Jira and Confluence.",
     selfAccountIds: input.selfAccountIds,
-    skills: ["answer-with-citations", "thread-to-ticket", "readiness-check", "remember", "weekly-digest"],
+    skills: ["answer-with-citations", "thread-to-ticket", "readiness-check", "remember", "weekly-digest", "pr-check"],
     tools: {
       vault_overview: "allow",
       search_vault: "allow",
@@ -25,10 +25,12 @@ export function teammateConfig(input: { selfAccountIds: string[]; approvers: str
       jira_recent: "allow",
       jira_get_issue: "allow",
       slack_read_thread: "allow",
+      github_get_pull: "allow",
       jira_comment: write,
       jira_create_issue: write,
       confluence_create_page: write,
       confluence_update_page: write,
+      github_pr_comment: write,
       // Remembering is a write about people and teams: a human approves every memory.
       memory_save: { ...write, separateDuties: false },
     },

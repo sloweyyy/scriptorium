@@ -6,11 +6,13 @@ import {
   REJECT_ACTION,
   SlackApprovalChannel,
   type SlackClient,
+  githubTools,
   handleApprovalClick,
   jiraTools,
   slackTools,
 } from "@scriptorium/connectors";
 import { jiraClient } from "@scriptorium/jira";
+import { installationToken } from "@scriptorium/publish";
 import { FileApprovalStore, executeApproved, type GuardDeps } from "@scriptorium/policy";
 import { FileEffectLedger, Gate, KeyedQueue, envelopeOf, keys, loadSkills, memoryTools, type AgentEvent, type EffectLedger } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
@@ -75,6 +77,12 @@ export function teammateConnectorTools(config: AppConfig, slack: SlackClient, le
     ];
     if (!ownIdentity) console.warn("[teammate] no TEAMMATE_ATLASSIAN_EMAIL/TOKEN — Jira and Confluence are read-only for the Teammate");
     tools.push(...(ownIdentity ? atlassian : atlassian.filter((tool) => !ATLASSIAN_WRITES.has(tool.name))));
+  }
+  // GitHub only under the Teammate's own App — never the docs repo's — and only for listed repos.
+  if (settings.githubAppId && settings.githubAppKey && settings.githubRepos?.length) {
+    const appId = settings.githubAppId;
+    const privateKey = settings.githubAppKey;
+    tools.push(...githubTools({ token: (repo) => installationToken({ appId, privateKey, repo }), allowedRepos: settings.githubRepos, ledger }));
   }
   return tools;
 }

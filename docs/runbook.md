@@ -27,6 +27,7 @@ Every one of these fails closed: unset means *less* is allowed, never more.
 | `TEAMMATE_DAILY_TOKENS` | no spend cap | tokens per UTC day for each channel, Jira project and PR repo; over it the Teammate answers with a notice and no model call |
 | `TEAMMATE_TRIAGE_PROJECTS` | no triage of new tickets | project keys (not Scribe's doc project); the Jira webhook must send *Issue created*. `TEAMMATE_TRIAGE_PER_HOUR` (20) caps each project |
 | `TEAMMATE_DAILY_TOKENS_TOTAL` | no overall cap: each DM is its own scope, so N people each get the full per-scope cap | tokens per UTC day across everything |
+| `DOCS_REPO_URL` / `VAULT_REPO_URL` | no publishing; without the vault repo, internal notes (PRDs, gaps, house rules) go nowhere and aren't restored on boot. They never fall back to the docs repo | the public docs repo and the **private** vault repo, each with its own deploy key (`DOCS_REPO_SSH_KEY`, `VAULT_REPO_SSH_KEY`) |
 | `SLACK_WORKSPACE_URL` | Slack messages an answer cites are shown as ids, not links | `https://<your-team>.slack.com` |
 | `TRACE_TOKEN` + `PUBLIC_BASE_URL` | no run viewer, so replies show a bare run id | a long random token and the service URL |
 

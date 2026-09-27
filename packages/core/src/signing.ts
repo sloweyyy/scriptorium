@@ -42,7 +42,7 @@ export function approvalSigningKey(): string | undefined {
 /** The terms a lesson or memory's signature covers, from its frontmatter. */
 export function approvalTerms(frontmatter: Record<string, unknown>): Record<string, string | undefined> {
   const pick = (key: string) => (typeof frontmatter[key] === "string" ? (frontmatter[key] as string) : undefined);
-  return { scope: pick("scope"), check_present: pick("check_present"), check_absent: pick("check_absent") };
+  return { scope: pick("scope"), check_present: pick("check_present"), check_absent: pick("check_absent"), expires_at: pick("expires_at") };
 }
 
 /** Does this approved note carry a signature that matches it, under the deployment key? */

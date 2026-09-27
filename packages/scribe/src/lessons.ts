@@ -1,5 +1,5 @@
 import path from "node:path";
-import { approvalSignature, docSlug, type Vault } from "@scriptorium/core";
+import { approvalSignature, approvalSigningKey, approvalTerms, approvalVerified, docSlug, type Vault } from "@scriptorium/core";
 
 const LESSONS_DIR = "_lessons";
 
@@ -73,7 +73,9 @@ export async function listLessons(vault: Vault, options: { status?: LessonStatus
     const lesson: Lesson = {
       id,
       scope: String(note.frontmatter.scope ?? "global"),
-      status: readStatus(note.frontmatter.status),
+      // Approved only if the approval verifies (when a key is configured): an unsigned or
+      // tampered "approved" rule is a proposal, whatever route it took into the vault.
+      status: readStatus(note.frontmatter.status) === "approved" && !approvalVerified(note.frontmatter, note.body) ? "proposed" : readStatus(note.frontmatter.status),
       text: note.body,
       relPath,
       author: typeof note.frontmatter.author === "string" ? note.frontmatter.author : undefined,
@@ -133,16 +135,17 @@ export async function saveLesson(vault: Vault, input: NewLesson): Promise<Lesson
 }
 
 /** Lessons are gated too — a human decides what the system is allowed to learn. */
-export async function approveLesson(vault: Vault, id: string, approvedBy: string, signingKey?: string): Promise<Lesson | undefined> {
+export async function approveLesson(vault: Vault, id: string, approvedBy: string, signingKey = approvalSigningKey()): Promise<Lesson | undefined> {
   const lesson = (await listLessons(vault)).find((candidate) => candidate.id === id);
   if (!lesson) return undefined;
   const note = await vault.readNote(lesson.relPath);
+  const terms = approvalTerms(note.frontmatter);
   await vault.writeNote(lesson.relPath, note.body, {
     ...note.frontmatter,
     status: "approved",
     approved_by: approvedBy,
     approved_at: new Date().toISOString(),
-    ...(signingKey ? { approval_sig: approvalSignature(signingKey, { id, status: "approved", body: note.body, approvedBy }) } : {}),
+    ...(signingKey ? { approval_sig: approvalSignature(signingKey, { id, status: "approved", body: note.body, approvedBy, terms }) } : {}),
   });
   return { ...lesson, status: "approved" };
 }

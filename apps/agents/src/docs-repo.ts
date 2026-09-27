@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { docsRepoReady, parseMarkdown, verifyApprovalSignature, type AppConfig, type Frontmatter, type Vault } from "@scriptorium/core";
+import { approvalVerified, docsRepoReady, parseMarkdown, type AppConfig, type Frontmatter, type Vault } from "@scriptorium/core";
 import { docBranchName, docPullRequestBody, installationToken, openPullRequest, publishVault, type PublishToRepoResult } from "@scriptorium/publish";
 
 const exec = promisify(execFile);
@@ -373,8 +373,11 @@ async function syncFromDocsRepoLocked(config: AppConfig, vault: Vault, paths: re
 
     if (isInternal) {
       const relPath = repoPath.slice("internal/".length);
-      const { frontmatter, body } = parseMarkdown(content);
-      await vault.writeNote(relPath, body, { ...frontmatter, edited_in_repo: new Date().toISOString() });
+      const parsed = parseMarkdown(content);
+      // The webhook path gets the same check as a restore: a push to the branch is not a
+      // human approving a house rule.
+      const frontmatter = untrustedApprovalsDowngraded(relPath, parsed.frontmatter, parsed.body, config.signingKey);
+      await vault.writeNote(relPath, parsed.body, { ...frontmatter, edited_in_repo: new Date().toISOString() });
       change.vaultUpdated.push(relPath);
       continue;
     }
@@ -439,9 +442,7 @@ async function syncFromDocsRepoLocked(config: AppConfig, vault: Vault, paths: re
  */
 export function untrustedApprovalsDowngraded(relPath: string, frontmatter: Frontmatter, body: string, signingKey: string | undefined): Frontmatter {
   if (!signingKey || frontmatter.status !== "approved" || !/^_(lessons|memory)\//.test(relPath)) return frontmatter;
-  const id = typeof frontmatter.id === "string" ? frontmatter.id : "";
-  const approvedBy = typeof frontmatter.approved_by === "string" ? frontmatter.approved_by : undefined;
-  if (verifyApprovalSignature(signingKey, { id, status: "approved", body, approvedBy }, frontmatter.approval_sig)) return frontmatter;
+  if (approvalVerified(frontmatter, body, signingKey)) return frontmatter;
   return { ...frontmatter, status: "proposed", restored_unverified: true };
 }
 

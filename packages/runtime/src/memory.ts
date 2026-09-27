@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { approvalSignature, type ToolSpec, type Vault } from "@scriptorium/core";
+import { approvalSignature, approvalSigningKey, approvalVerified, type ToolSpec, type Vault } from "@scriptorium/core";
 import { z } from "zod";
 
 /**
@@ -33,6 +33,9 @@ export async function listMemories(vault: Vault, scopes: readonly string[]): Pro
     const { id, scope, status, approved_by: approvedBy } = note.frontmatter as Record<string, unknown>;
     // Only an approved memory counts; anything hand-edited into another state is inert.
     if (status !== "approved" || typeof id !== "string" || typeof scope !== "string" || !scopes.includes(scope)) continue;
+    // Verified where it is used, whatever route it took into the vault (a restore, a docs-
+    // repo webhook, a hand edit): no valid signature, no memory — once a key is configured.
+    if (!approvalVerified(note.frontmatter, note.body)) continue;
     memories.push({ id, scope, text: note.body.trim(), approvedBy: typeof approvedBy === "string" ? approvedBy : undefined, relPath });
   }
   return memories.sort((a, b) => a.id.localeCompare(b.id));
@@ -55,7 +58,7 @@ export function scopesFor(turn: { channel?: string; askedBy: string }): string[]
  * `memory_save`. Held at the approve tier, so `run` only ever executes after a human said
  * yes — and it refuses to write without the approval the policy layer hands it.
  */
-export function memoryTools(vault: Vault, signingKey?: string): ToolSpec[] {
+export function memoryTools(vault: Vault, signingKey = approvalSigningKey()): ToolSpec[] {
   const input = z.object({
     text: z.string().min(3).max(500).describe("One self-contained sentence to remember."),
     scope: z.string().describe('"global", "channel:<channel id>" or "person:slack:<user id>" — as narrow as it can be.'),
@@ -78,7 +81,7 @@ export function memoryTools(vault: Vault, signingKey?: string): ToolSpec[] {
           approved_by: approvedBy,
           approval: context.approval.id,
           created: new Date().toISOString(),
-          ...(signingKey ? { approval_sig: approvalSignature(signingKey, { id, status: "approved", body: text, approvedBy }) } : {}),
+          ...(signingKey ? { approval_sig: approvalSignature(signingKey, { id, status: "approved", body: text, approvedBy, terms: { scope } }) } : {}),
         });
         return `Remembered (${scope}): ${text}`;
       },

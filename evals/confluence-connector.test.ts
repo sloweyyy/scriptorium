@@ -149,6 +149,14 @@ describe("confluence writes", () => {
     expect(pages[retry.id]?.body).toContain("h1. Digest");
   });
 
+  it("won't claim a page someone else already made with that title", async () => {
+    pages["777"] = { title: "Release notes", spaceId: "1", version: 3, body: "a human's page" };
+    const create = writer().tools().find((tool) => tool.name === "confluence_create_page")!;
+    const out = await create.run({ space: "BEACON", title: "Release notes", markdown: "# x" }, { approval: { id: "ap-1" } });
+    expect(out).toMatch(/^NOT_ALLOWED: A page titled "Release notes" already exists in BEACON \(confluence:777\)/);
+    expect(pages["777"]?.body).toBe("a human's page");
+  });
+
   it("refuses to write outside the allowed spaces", async () => {
     await expect(writer().createPage({ space: "HR", title: "x", markdown: "x" })).rejects.toThrow(/outside/);
     await expect(writer().updatePage({ id: "202", markdown: "x" })).rejects.toThrow(/outside/);

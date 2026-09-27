@@ -175,9 +175,16 @@ export class ConfluenceConnector {
       const found = await this.get(`/api/v2/pages?space-id=${spaceId}&title=${encodeURIComponent(input.title)}&limit=1`, PageList);
       return found.results[0]?.id;
     };
+    const op = opKey("confluence.create", spaceId, input.title, input.approvalId);
+    // First attempt only: a page that already has this title is someone else's, not an
+    // earlier attempt of ours — reporting it as "Already created" would claim their page.
+    if (!(await ledger.get(op))) {
+      const taken = await find();
+      if (taken) throw new ConfluenceAccessError(`A page titled "${input.title}" already exists in ${input.space} (confluence:${taken}). Update it with confluence_update_page, or choose another title.`);
+    }
     const { result, replayed } = await once(
       ledger,
-      opKey("confluence.create", spaceId, input.title),
+      op,
       async () =>
         (
           await this.send("POST", "/api/v2/pages", {
@@ -278,10 +285,10 @@ export class ConfluenceConnector {
               name: "confluence_create_page",
               description: "Create a Confluence page in an allowed space. Requires human approval; it is not done until approved.",
               inputSchema: z.object({ space: z.string(), title: z.string().min(1).max(255), markdown: z.string().min(1), parentId: z.string().optional() }),
-              run: async (input: unknown) => {
+              run: async (input: unknown, context?: ToolRunContext) => {
                 const parsed = z.object({ space: z.string(), title: z.string().min(1).max(255), markdown: z.string().min(1), parentId: z.string().optional() }).parse(input);
                 return refusalOr(async () => {
-                  const page = await this.createPage(parsed);
+                  const page = await this.createPage({ ...parsed, approvalId: context?.approval?.id });
                   return `${page.created ? "Created" : "Already created"} confluence:${page.id} — ${parsed.title}`;
                 });
               },

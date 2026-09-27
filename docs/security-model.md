@@ -133,7 +133,9 @@ The model is untrusted too. It proposes; the platform decides what runs.
 ## Known gaps
 
 - Low severity, found by review and not yet fixed:
-  - A Confluence create's retry check can adopt a same-titled page a human made in that window.
+  - A Confluence create's retry check can adopt a same-titled page a human made between the
+    lost response and the retry (seconds). A title already taken before the first attempt is
+    refused, not adopted.
   - `parentId` isn't validated.
   - The vault path guard doesn't resolve symlinks.
   - A card truncates long arguments; the approval is still bound to the full text by hash.

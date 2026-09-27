@@ -14,7 +14,7 @@ import {
 } from "@scriptorium/connectors";
 import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type JiraClient } from "@scriptorium/jira";
 import { installationToken } from "@scriptorium/publish";
-import { FileApprovalStore, executeApproved, type GuardDeps } from "@scriptorium/policy";
+import { FileApprovalStore, executeApproved, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
 import { DailyBudget, FileEffectLedger, Gate, KeyedQueue, envelopeOf, keys, loadSkills, memoryTools, once, opKey, type AgentEvent, type EffectLedger } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
@@ -377,6 +377,27 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     await audit(config.auditFile, { type: `teammate.pr.${reply.kind}`, actor: "teammate", key, repo, number }).catch(() => undefined);
   }
 
+  /**
+   * The card goes where an approver will see it, which is not where a DM or a ticket asked.
+   * Say the outcome at the origin too, once per request, or the requester never hears it.
+   */
+  async function tellOrigin(request: ApprovalRequest | undefined, text: string): Promise<void> {
+    if (!request) return;
+    const op = opKey("teammate.approval.outcome", request.id);
+    const dm = request.key.match(/^slack:thread:(D[^/]+)\/(.+)$/);
+    if (dm) {
+      await once(ledger, op, async () => (await slack.chat.postMessage({ channel: dm[1] as string, thread_ts: dm[2], text }), true));
+      return;
+    }
+    const issue = request.key.match(/^jira:issue:(.+)$/);
+    if (issue && jira) {
+      const issueKey = issue[1] as string;
+      await once(ledger, op, async () => (await jira.client.addComment(issueKey, markdownToJira(text), { op })).id, {
+        probe: async () => (await jira.client.findCommentByOp(issueKey, op))?.id,
+      });
+    }
+  }
+
   const digestChannel = settings.digestChannel && settings.channels.includes(settings.digestChannel) ? settings.digestChannel : undefined;
   if (settings.digestChannel && !digestChannel) console.warn(`[teammate] TEAMMATE_DIGEST_CHANNEL ${settings.digestChannel} is not in TEAMMATE_SLACK_CHANNELS — no digest`);
 
@@ -423,8 +444,13 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         messageTs: payload.message?.ts,
         threadTs: payload.message?.thread_ts,
       });
-      if (!decided.ok || action !== APPROVE_ACTION) return decided.message;
+      if (!decided.ok) return decided.message;
       const request = (await store.all()).find((candidate) => candidate.id === requestId);
+      const approver = payload.user?.username ?? payload.user?.id ?? "an approver";
+      if (action !== APPROVE_ACTION) {
+        await tellOrigin(request, `❌ Rejected by ${approver} — nothing was done.`).catch(() => undefined);
+        return decided.message;
+      }
       const outcome = await executeApproved(envelope, [...connectorTools, ...memoryTools(vault, config.signingKey)], requestId, guardDepsFor(request?.key ?? ""));
       const asker = request?.requestedBy?.startsWith("slack:") ? `<@${request.requestedBy.slice("slack:".length)}> ` : "";
       const text =
@@ -433,6 +459,12 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
           : `${asker}⚠️ Approved, but I couldn't carry it out. The approval is kept, so it can be retried.`;
       if (outcome.kind !== "ran") await audit(config.auditFile, { type: "teammate.approval.not_run", actor: "teammate", request: requestId, outcome: outcome.kind, reason: "reason" in outcome ? outcome.reason : undefined }).catch(() => undefined);
       if (payload.channel?.id) await slack.chat.postMessage({ channel: payload.channel.id, thread_ts: payload.message?.thread_ts ?? payload.message?.ts, text });
+      await tellOrigin(
+        request,
+        outcome.kind === "ran"
+          ? `✅ Done, approved by ${approver}: ${outcome.result.split("\n")[0]}`
+          : `⚠️ ${approver} approved this, but I couldn't carry it out. The approval is kept, so it can be retried.`,
+      ).catch(() => undefined);
       return undefined;
     },
 

@@ -18,7 +18,8 @@ import { FileEffectLedger, Gate, KeyedQueue, envelopeOf, keys, loadSkills, memor
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
 import { gapTicketOpener } from "./gap-ticket";
-import { toSlackMrkdwn } from "./slack-format";
+import { citationLinks, resolveCitations } from "./citations";
+import { answerBlocks, contextBlocks, toSlackMrkdwn } from "./slack-format";
 import { digestDue, postDigestOnce } from "./digest";
 import { runTeammateTurn, type TeammateReply } from "./teammate";
 import { stripMentions } from "./util";
@@ -192,19 +193,29 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         const placeholder = text
           ? await slack.chat.postMessage({ channel, thread_ts: threadTs, text: "🔎 Looking into it…" }).catch(() => undefined)
           : undefined;
-        const deliver = async (message: string): Promise<void> => {
+        const deliver = async (message: string, blocks?: unknown[]): Promise<void> => {
           if (placeholder?.ts) {
-            const updated = await slack.chat.update({ channel, ts: placeholder.ts, text: message }).catch(() => undefined);
+            const updated = await slack.chat.update({ channel, ts: placeholder.ts, text: message, ...(blocks ? { blocks: blocks as never } : {}) }).catch(() => undefined);
             if (updated?.ok) return;
           }
-          await slack.chat.postMessage({ channel, thread_ts: threadTs, text: message });
+          await slack.chat.postMessage({ channel, thread_ts: threadTs, text: message, ...(blocks ? { blocks: blocks as never } : {}) });
         };
         try {
           const context = text ? await threadContext(slack, channel, threadTs, ts).catch(() => undefined) : undefined;
           const reply = text
             ? await runTeammateTurn({ question: text, askedBy: event.actor.id, channel, threadTs, context }, turnDeps(key))
             : ({ kind: "action", text: "Hi — ask me about the product, a page or a ticket, or ask me to file one." } as const);
-          await deliver(formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken }));
+          const textOut = formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken });
+          // An answer's sources are the point of the product: render them as links, the way
+          // Curator does — vault notes to their site, Jira/Confluence/GitHub to their pages.
+          const blocks =
+            reply.kind === "answer"
+              ? [
+                  ...answerBlocks({ markdown: reply.text, citations: reply.citations, links: citationLinks(await resolveCitations(vault, config, reply.citations)) }),
+                  ...contextBlocks(textOut.slice(textOut.lastIndexOf("\n_AI-generated") + 1)),
+                ]
+              : undefined;
+          await deliver(textOut, blocks);
           await audit(config.auditFile, { type: `teammate.${reply.kind}`, actor: "teammate", key, askedBy: event.actor.id, event: event.id });
         } catch (error) {
           await audit(config.auditFile, { type: "teammate.error", actor: "teammate", key, event: event.id, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);

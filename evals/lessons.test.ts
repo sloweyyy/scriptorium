@@ -150,3 +150,15 @@ describe("a rule a human already ruled on", () => {
     expect(await findLessonByText(vault, "")).toBeUndefined();
   });
 });
+
+describe("deciding a lesson", () => {
+  it("only on the ticket it was proposed on, and never overturning a human's no", async () => {
+    const { lessonDecisionCheck } = await import("@scriptorium/scribe");
+    const lesson = { id: "L-004", scope: "global", status: "proposed" as const, text: "x", relPath: "_lessons/L-004.md", sourceThread: "https://x/browse/DOC-1" };
+    expect(lessonDecisionCheck(lesson, "approve", "https://x/browse/DOC-1")).toEqual({ ok: true });
+    expect(lessonDecisionCheck(lesson, "approve", "https://x/browse/DOC-2")).toMatchObject({ ok: false, reason: expect.stringContaining("Decide it there") });
+    expect(lessonDecisionCheck({ ...lesson, status: "rejected" }, "approve", "https://x/browse/DOC-1").ok).toBe(false);
+    // Withdrawing an approved rule is always allowed.
+    expect(lessonDecisionCheck({ ...lesson, status: "approved" }, "reject", "https://x/browse/DOC-1").ok).toBe(true);
+  });
+});

@@ -155,3 +155,29 @@ export async function rejectLesson(vault: Vault, id: string, rejectedBy: string)
   });
   return { ...lesson, status: "rejected" };
 }
+
+/**
+ * May this decision be taken on this lesson, from this place? Pure, so every surface asks
+ * the same question.
+ *
+ * - A lesson is decided where it was proposed. `approve lesson L-004` typed on any other
+ *   ticket used to work, so anyone who could comment anywhere could turn a proposal into a
+ *   house rule for every future draft.
+ * - A human's "no" is not overturned by a comment. Rejected stays rejected, and revisiting it
+ *   is a new proposal. Approved → rejected is allowed: withdrawing a rule is always safe.
+ */
+export function lessonDecisionCheck(
+  lesson: Lesson,
+  decision: "approve" | "reject",
+  whereDecided: string,
+): { ok: true } | { ok: false; reason: string } {
+  if (lesson.sourceThread && lesson.sourceThread !== whereDecided) {
+    return { ok: false, reason: `Lesson ${lesson.id} was proposed on ${lesson.sourceThread}. Decide it there.` };
+  }
+  if (decision === "approve" && lesson.status === "rejected") {
+    return { ok: false, reason: `Lesson ${lesson.id} was rejected by a human, and a comment won't overturn that. If it should apply after all, give the feedback again and it will be proposed fresh.` };
+  }
+  if (decision === "approve" && lesson.status === "approved") return { ok: false, reason: `Lesson ${lesson.id} is already approved.` };
+  if (decision === "reject" && lesson.status === "rejected") return { ok: false, reason: `Lesson ${lesson.id} is already rejected.` };
+  return { ok: true };
+}

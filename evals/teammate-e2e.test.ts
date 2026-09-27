@@ -617,6 +617,14 @@ describe("spend caps", () => {
     expect(await fs.readFile(auditFile, "utf8")).toContain('"scope":"*"');
   });
 
+  it("/teammate over the cap answers privately and posts nothing", async () => {
+    await fs.writeFile(path.join(tmpRoot, "audit.jsonl"), JSON.stringify({ ts: new Date().toISOString(), type: "llm.usage", scope: "C1", input: 5_000, output: 0 }) + "\n");
+    const capped = { ...config(), teammate: { ...config().teammate, dailyTokens: 1_000 } } as AppConfig;
+    const core = await createTeammate(capped, vault, slack as never, "UBOT");
+    expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: "when are digests sent?", commandId: "t1" })).toContain("today's usage limit");
+    expect(posted).toEqual([]);
+  });
+
   it("a Jira project and a PR repo are capped too — a ticket comment can't spend without limit", async () => {
     const auditFile = path.join(tmpRoot, "audit.jsonl");
     const today = new Date().toISOString();

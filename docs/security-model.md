@@ -124,6 +124,12 @@ The model is untrusted too. It proposes; the platform decides what runs.
   links), and only in the channel that asked; one more than a day overdue is dropped.
   (`apps/agents/src/teammate-bot/reminders.ts`; `evals/teammate-e2e.test.ts`, mutant)
 
+- Admins can pause the Teammate, make it read-only, or switch single tools off at runtime.
+  The controls only narrow what the deployment allows. They are signed, and a control file
+  that fails to read or verify means paused. Paused, or with a tool switched off, an
+  approval given earlier is not carried out. (`apps/agents/src/teammate-bot/control.ts`;
+  `evals/control.test.ts`, `evals/teammate-e2e.test.ts`, mutants)
+
 ### 8. Record: every action is attributable
 - The audit log is append-only JSONL, and every line inside a run carries the run's id.
   Every publish is a git commit naming its approver. Effects are exactly-once through

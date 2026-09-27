@@ -72,6 +72,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/plan.test.ts"],
   },
   {
+    control: "a control file that doesn't verify means paused",
+    file: "apps/agents/src/teammate-bot/control.ts",
+    find: "return { ...OPEN, paused: true, reason: \"the control file's signature does not match\" };",
+    replace: "return control;",
+    evals: ["evals/control.test.ts"],
+  },
+  {
+    control: "paused, the Teammate answers and carries out nothing",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "        if ((await refreshControl()).paused) {\n          await audit(",
+    replace: "        if (false) {\n          await audit(",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
     control: "approvals bind to the exact arguments",
     file: "packages/policy/src/approvals.ts",
     find: "request.argsHash === hash &&\n        request.status === \"approved\" &&",

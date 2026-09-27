@@ -132,7 +132,34 @@ export interface IngressOptions {
   hooks: IngressHooks;
 }
 
+/**
+ * Delivery ids already handled. Jira and GitHub both redeliver (timeouts, retries, a
+ * webhook replayed from their UI); neither signature carries a timestamp, so without this a
+ * captured, validly signed delivery could be replayed at will. Checked AFTER the signature:
+ * only authenticated deliveries are remembered.
+ */
+function headerValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export class RecentDeliveries {
+  private readonly seen = new Set<string>();
+  private readonly order: string[] = [];
+  constructor(private readonly capacity = 5_000) {}
+
+  /** True the first time an id is seen; false for a repeat. A missing id is never deduped. */
+  firstTime(id: string | undefined): boolean {
+    if (!id) return true;
+    if (this.seen.has(id)) return false;
+    this.seen.add(id);
+    this.order.push(id);
+    if (this.order.length > this.capacity) this.seen.delete(this.order.shift() as string);
+    return true;
+  }
+}
+
 export function startIngress({ config, hooks }: IngressOptions): Server {
+  const deliveries = new RecentDeliveries();
   const jiraSecret = config.webhook.jiraSecret;
   const githubSecret = config.webhook.githubSecret;
 
@@ -181,6 +208,10 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
           send(response, 400, { error: "invalid json" });
           return;
         }
+        if (!deliveries.firstTime(headerValue(request.headers["x-atlassian-webhook-identifier"]))) {
+          send(response, 202, { accepted: false, reason: "duplicate delivery" });
+          return;
+        }
         const { key, event, probe } = jiraIssueKeyFrom(payload);
         if (probe) {
           // Reachability probe: prove the route is live without touching any ticket.
@@ -214,6 +245,10 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
           payload = JSON.parse(raw.toString("utf8") || "{}");
         } catch {
           send(response, 400, { error: "invalid json" });
+          return;
+        }
+        if (!deliveries.firstTime(headerValue(request.headers["x-github-delivery"]))) {
+          send(response, 202, { accepted: false, reason: "duplicate delivery" });
           return;
         }
         const { paths, ref, commit, commitUrl } = docsPathsFrom(payload);

@@ -376,7 +376,14 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
   let jira: TeammateJira | undefined;
   if (jiraReady(config.jira) && settings.atlassianEmail && settings.atlassianToken) {
     const client = jiraClient({ ...config.jira, email: settings.atlassianEmail, apiToken: settings.atlassianToken });
-    jira = { client, accountId: (await client.myself()).accountId };
+    // A Jira problem at boot costs the Jira surface, never the whole Teammate: Slack keeps working.
+    jira = await client
+      .myself()
+      .then((me) => ({ client, accountId: me.accountId }))
+      .catch((error: unknown) => {
+        console.warn(`[teammate] its Jira account could not be verified, so Jira mentions are off: ${error instanceof Error ? error.message : error}`);
+        return undefined;
+      });
   }
   const core = await createTeammate(config, vault, app.client, String(identity.user_id), jira);
 

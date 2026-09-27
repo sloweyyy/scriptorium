@@ -172,3 +172,25 @@ describe("a failed space lookup", () => {
     expect(await c.search("x")).toEqual([]);
   });
 });
+
+describe("separately approved identical writes", () => {
+  it("a page reverted A→B→A under three approvals is updated three times", async () => {
+    const pages: Record<string, { version: number; message?: string }> = { "101": { version: 1 } };
+    vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+      const url = decodeURIComponent(String(input));
+      if (url.includes("/api/v2/spaces?keys=")) return new Response(JSON.stringify({ results: [{ id: 1, key: "BEACON" }] }));
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (init?.method === "PUT") {
+        pages["101"] = { version: body.version.number, message: body.version.message };
+        return new Response(JSON.stringify({ id: "101", title: "T", spaceId: "1", version: { number: body.version.number } }));
+      }
+      return new Response(JSON.stringify({ id: "101", title: "T", spaceId: "1", version: { number: pages["101"]!.version, message: pages["101"]!.message } }));
+    });
+    const ledger = new MemoryEffectLedger();
+    const c = new ConfluenceConnector({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", allowedSpaceKeys: ["BEACON"], ledger });
+    await c.updatePage({ id: "101", markdown: "A", approvalId: "ap-1" });
+    await c.updatePage({ id: "101", markdown: "B", approvalId: "ap-2" });
+    expect((await c.updatePage({ id: "101", markdown: "A", approvalId: "ap-3" })).updated).toBe(true);
+    expect(pages["101"]!.version).toBe(4);
+  });
+});

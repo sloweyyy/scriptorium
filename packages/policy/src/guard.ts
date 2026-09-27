@@ -75,7 +75,7 @@ export async function runUnderPolicy(envelope: Envelope, tool: ToolSpec, input: 
   if (approval) {
     let result: string;
     try {
-      result = await tool.run(input, { approval: { id: approval.id, approvedBy: approval.decidedBy?.name ?? approval.decidedBy?.accountId } });
+      result = await tool.run(input, { approval: { id: approval.id, approvedBy: approval.decidedBy?.name ?? approval.decidedBy?.accountId, approvedById: approval.decidedBy?.accountId } });
     } catch (error) {
       await restoreApproval(deps.store, approval.id);
       await audit(deps.auditFile, { type: "policy.run.failed", ...base, approval: approval.id, error: error instanceof Error ? error.message : String(error) });

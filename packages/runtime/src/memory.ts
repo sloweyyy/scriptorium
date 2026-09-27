@@ -79,6 +79,7 @@ export function memoryTools(vault: Vault, signingKey = approvalSigningKey()): To
           scope,
           status: "approved",
           approved_by: approvedBy,
+          approved_by_id: context.approval.approvedById,
           approval: context.approval.id,
           created: new Date().toISOString(),
           ...(signingKey ? { approval_sig: approvalSignature(signingKey, { id, status: "approved", body: text, approvedBy, terms: { scope } }) } : {}),

@@ -1,4 +1,4 @@
-import type { ToolSpec } from "@scriptorium/core";
+import type { ToolRunContext, ToolSpec } from "@scriptorium/core";
 import { confluenceStorageToMarkdown, markdownToJira } from "@scriptorium/jira";
 import { once, opKey, type EffectLedger } from "@scriptorium/runtime";
 import { z } from "zod";
@@ -147,7 +147,7 @@ export class ConfluenceConnector {
    * already in this space means an earlier attempt landed (Confluence titles are unique
    * per space), so a retry returns it instead of failing or duplicating.
    */
-  async createPage(input: { space: string; title: string; markdown: string; parentId?: string }): Promise<{ id: string; created: boolean }> {
+  async createPage(input: { space: string; title: string; markdown: string; parentId?: string; approvalId?: string }): Promise<{ id: string; created: boolean }> {
     const ledger = this.settings.ledger;
     if (!ledger) throw new ConfluenceAccessError("This connector is read-only.");
     const spaceId = await this.spaceIdFor(input.space);
@@ -178,13 +178,16 @@ export class ConfluenceConnector {
    * rides in the version message, so a retry that finds its own op on the current version
    * knows the update already landed.
    */
-  async updatePage(input: { id: string; markdown: string; title?: string }): Promise<{ version: number; updated: boolean }> {
+  async updatePage(input: { id: string; markdown: string; title?: string; approvalId?: string }): Promise<{ version: number; updated: boolean }> {
     const ledger = this.settings.ledger;
     if (!ledger) throw new ConfluenceAccessError("This connector is read-only.");
     if (!/^\d+$/.test(input.id)) throw new ConfluenceAccessError("A Confluence page id is digits only.");
     const current = await this.get(`/api/v2/pages/${input.id}`, PageMeta);
     if (!(await this.allowedSpaces()).has(current.spaceId)) throw new ConfluenceAccessError(`Page ${input.id} is outside the Confluence spaces this agent may write to.`);
-    const op = opKey("confluence.update", input.id, input.markdown, input.title);
+    // The approval is part of the cause: reverting a page A→B→A is a third, separately
+    // approved update, not a replay of the first. (Not the page version: a retry after a
+    // lost response sees the version it already bumped, and would update twice.)
+    const op = opKey("confluence.update", input.id, input.markdown, input.title, input.approvalId);
     const { result, replayed } = await once(
       ledger,
       op,
@@ -257,10 +260,10 @@ export class ConfluenceConnector {
               name: "confluence_update_page",
               description: "Replace the body of a Confluence page in an allowed space. Requires human approval; it is not done until approved.",
               inputSchema: z.object({ id: z.string(), markdown: z.string().min(1), title: z.string().optional() }),
-              run: async (input: unknown) => {
+              run: async (input: unknown, context?: ToolRunContext) => {
                 const parsed = z.object({ id: z.string(), markdown: z.string().min(1), title: z.string().optional() }).parse(input);
                 return refusalOr(async () => {
-                  const page = await this.updatePage(parsed);
+                  const page = await this.updatePage({ ...parsed, approvalId: context?.approval?.id });
                   return `${page.updated ? "Updated" : "Already updated"} confluence:${parsed.id} (version ${page.version})`;
                 });
               },

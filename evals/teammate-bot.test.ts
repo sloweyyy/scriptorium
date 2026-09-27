@@ -56,6 +56,12 @@ describe("teammate slack surface", () => {
     expect(failed.text + failed.origin).not.toContain("ECONNRESET");
   });
 
+  it("the inbox calls an expired request expired, not waiting", async () => {
+    const { homeBlocks } = await import("@scriptorium/agents");
+    const expired = { id: "r", agent: "Teammate", tool: "jira_comment", argsHash: "h", summary: "", key: "slack:thread:C1/1.0", requestedAt: "2020-01-01", expiresAt: "2020-01-08T00:00:00Z", status: "pending" as const, args: { key: "DOC-1" } };
+    expect(JSON.stringify(homeBlocks({ waiting: [], mine: [expired], help: "" }))).toContain("*expired*");
+  });
+
   it("caps a question's length, and says it was cut", () => {
     const long = mentionToEvent({ channel: "C1", ts: "1.0", user: "U9", text: `<@UBOT> ${"x".repeat(10_000)}` });
     expect(long.payload.text.length).toBeLessThan(4_200);

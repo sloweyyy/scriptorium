@@ -415,7 +415,9 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         waiting.slice(0, 20).map(async (request) => {
           const where = (await ledger.get(cardOp(request.id)))?.result as { channel?: string; ts?: string } | undefined;
           const link = where?.channel && where.ts ? await slack.chat.getPermalink({ channel: where.channel, message_ts: where.ts }).then((found) => found.permalink, () => undefined) : undefined;
-          return { request, link };
+          // Only a card in a public channel is described here: a private channel's or a DM's
+          // request stays with the people who can see it, approver or not.
+          return { request, link, hidden: !where?.channel?.startsWith("C") };
         }),
       );
       const mine = requests.filter((request) => request.requestedBy === me).sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));

@@ -12,7 +12,7 @@ import {
 } from "@scriptorium/connectors";
 import { jiraClient } from "@scriptorium/jira";
 import { FileApprovalStore, executeApproved, type GuardDeps } from "@scriptorium/policy";
-import { FileEffectLedger, Gate, KeyedQueue, envelopeOf, keys, loadSkills, type AgentEvent, type EffectLedger } from "@scriptorium/runtime";
+import { FileEffectLedger, Gate, KeyedQueue, envelopeOf, keys, loadSkills, memoryTools, type AgentEvent, type EffectLedger } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
 import { gapTicketOpener } from "./gap-ticket";
@@ -97,7 +97,7 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
   const skills = await loadSkills(path.join(config.repoRoot, "skills"));
   const agentConfig = teammateConfig({ selfAccountIds: [self], approvers: (settings.approvers ?? []).map((id) => `slack:${id}`) });
   // Restrict to the connectors actually configured here: a tool the host can't provide is not offered.
-  const available = new Set([...connectorTools.map((tool) => tool.name), "vault_overview", "search_vault", "read_note"]);
+  const available = new Set([...connectorTools.map((tool) => tool.name), "vault_overview", "search_vault", "read_note", "memory_save"]);
   const hostConfig = { ...agentConfig, tools: Object.fromEntries(Object.entries(agentConfig.tools).filter(([name]) => available.has(name))) };
   const envelope = envelopeOf(hostConfig);
   const approvalChannel = new SlackApprovalChannel(app.client, config.slack.notifyChannel);
@@ -115,7 +115,7 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
         const { channel, threadTs, text } = event.payload as { channel: string; threadTs: string; text: string };
         const reply = text
           ? await runTeammateTurn(
-              { question: text, askedBy: event.actor.id },
+              { question: text, askedBy: event.actor.id, channel },
               { vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config) },
             )
           : ({ kind: "action", text: "Hi — ask me about the product, a page or a ticket, or ask me to file one." } as const);
@@ -165,7 +165,7 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
         return;
       }
       const request = (await store.all()).find((candidate) => candidate.id === requestId);
-      const outcome = await executeApproved(envelope, connectorTools, requestId, guardDepsFor(request?.key ?? ""));
+      const outcome = await executeApproved(envelope, [...connectorTools, ...memoryTools(vault)], requestId, guardDepsFor(request?.key ?? ""));
       const text = outcome.kind === "ran" ? `Done: ${outcome.result}` : `Approved, but not carried out: ${"reason" in outcome ? outcome.reason : outcome.kind}`;
       if (payload.channel?.id) await app.client.chat.postMessage({ channel: payload.channel.id, thread_ts: payload.message?.thread_ts ?? payload.message?.ts, text });
     });

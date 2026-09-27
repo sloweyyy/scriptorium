@@ -10,6 +10,7 @@
   "dependencies": {
     "@scriptorium/core": "workspace:*",
     "@anthropic-ai/sdk": "^0.128.0",
-    "@scriptorium/policy": "workspace:*"
+    "@scriptorium/policy": "workspace:*",
+    "zod": "^4.4.3"
   }
 }

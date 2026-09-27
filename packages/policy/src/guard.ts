@@ -54,7 +54,7 @@ export async function runUnderPolicy(envelope: Envelope, tool: ToolSpec, input: 
 
   const approval = await consumeApproval(deps.store, { agent: envelope.agent, tool: tool.name, args: input });
   if (approval) {
-    const result = await tool.run(input);
+    const result = await tool.run(input, { approval: { id: approval.id, approvedBy: approval.decidedBy?.name ?? approval.decidedBy?.accountId } });
     await audit(deps.auditFile, { type: "policy.ran", ...base, tier: "approve", approval: approval.id, approvedBy: approval.decidedBy?.accountId });
     return { kind: "ran", result, approval };
   }

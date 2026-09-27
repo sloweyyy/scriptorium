@@ -405,6 +405,18 @@ describe("the approvals inbox (App Home)", () => {
     expect(asker).toContain("*waiting*");
     expect(JSON.stringify(await core.homeView("U_RANDOM"))).toContain("Waiting for your approval (0)");
   });
+
+  it("doesn't describe a request whose card is in a private channel", async () => {
+    const privateConfig = { ...config(), teammate: { ...config().teammate, channels: ["C1", "G1"] } } as AppConfig;
+    const core = await createTeammate(privateConfig, vault, slack as never, "UBOT");
+    script = { calls: [{ name: "memory_save", input: { text: "The reorg is announced Friday.", scope: "channel:G1" } }], reply: "Asked." };
+    await core.onMention({ channel: "G1", ts: "3.0", user: "U1", text: "<@UBOT> remember the reorg date" });
+    await settle(core);
+    const home = JSON.stringify(await core.homeView("UPM"));
+    expect(home).toContain("Waiting for your approval (1)");
+    expect(home).toContain("A request in a private conversation");
+    expect(home).not.toContain("reorg");
+  });
 });
 
 describe("slash command and shortcut", () => {

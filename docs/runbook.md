@@ -62,6 +62,22 @@ Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
 | The Home tab is empty or missing | the app's manifest | the app was installed before the Home tab was added: reinstall it from `slack-manifests/teammate.yaml` |
 | The same Jira comment twice | shouldn't happen: writes are op-keyed | check whether two instances are running (see below) |
 
+## Stop it now
+
+A tool misbehaving, answers going wrong, a cost spike: an admin (`TEAMMATE_ADMINS`) runs,
+from anywhere in Slack:
+
+- `/teammate admin pause <reason>`: it answers nothing and carries nothing out, including
+  approvals already given. They stay pending until `/teammate admin resume`.
+- `/teammate admin deny <tool>`: that one tool is off, even for approvals already given.
+  `allow <tool>` turns it back on.
+- `/teammate admin readonly on`: it answers, but proposes no changes.
+- `/teammate admin status`: what is switched off, by whom, and when.
+
+The controls are a signed file in the state dir, `control.json`. A control file that can't
+be read or doesn't verify counts as **paused**. Delete it (with the service running) to
+clear every control.
+
 ## Hard rules
 
 - **One instance.** Keep `--max-instances=1`. The ledgers, the per-conversation queue and

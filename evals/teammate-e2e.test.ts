@@ -308,6 +308,46 @@ describe("automatic PR checks", () => {
   });
 });
 
+describe("admin controls", () => {
+  it("an admin pauses it: nothing is answered or carried out until they resume; others can't", async () => {
+    const admins = { ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig;
+    const core = await createTeammate(admins, vault, slack as never, "UBOT");
+    script = { calls: [{ name: "memory_save", input: { text: "Release notes go out on Thursdays.", scope: "channel:C1" } }], reply: "Asked." };
+    await core.onMention({ channel: "C1", ts: "3.0", user: "U1", text: "<@UBOT> remember release notes go out on Thursdays" });
+    await settle(core);
+    const card = posted.find((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION))!;
+    const requestId = JSON.stringify(card.blocks).match(/"value":"([0-9a-f-]{36})"/)?.[1] as string;
+
+    expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: "admin pause", commandId: "a0" })).toMatch(/^Only Teammate admins/);
+    expect(await core.onSlashCommand({ channel: "C_ANY", user: "UADMIN", text: "admin pause investigating", commandId: "a1" })).toMatch(/^⏸️ Paused/);
+
+    const again = await createTeammate(admins, vault, slack as never, "UBOT");
+    posted.length = 0;
+    script = { calls: [], reply: "SHOULD NOT BE CALLED" };
+    await again.onMention({ channel: "C1", ts: "4.0", user: "U1", text: "<@UBOT> hello?" });
+    await settle(again);
+    expect(posted.map((message) => message.text)).toEqual(["⏸️ I've been paused by an admin, so I'm not answering or changing anything right now."]);
+    // A click while paused decides nothing: the request is still pending afterwards.
+    const core2 = await createTeammate(admins, vault, slack as never, "UBOT");
+    expect(await core2.onApprovalClick(APPROVE_ACTION, { actions: [{ value: requestId }], user: { id: "UPM", username: "priya" }, channel: { id: "C1" }, message: { ts: "9.1" } })).toContain("paused");
+    expect(await vault.listNotes("_memory")).toHaveLength(0);
+
+    expect(await core2.onSlashCommand({ channel: "C_ANY", user: "UADMIN", text: "admin resume", commandId: "a2" })).toBe("▶️ Resumed.");
+    expect(await core2.onApprovalClick(APPROVE_ACTION, { actions: [{ value: requestId }], user: { id: "UPM", username: "priya" }, channel: { id: "C1" }, message: { ts: "9.1" } })).toBeUndefined();
+    expect(await vault.listNotes("_memory")).toHaveLength(1);
+  });
+
+  it("a tool an admin switched off is not offered, and an approval for it isn't carried out", async () => {
+    const admins = { ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig;
+    const core = await createTeammate(admins, vault, slack as never, "UBOT");
+    expect(await core.onSlashCommand({ channel: "C1", user: "UADMIN", text: "admin deny memory_save", commandId: "a3" })).toBe("🚫 `memory_save` is off.");
+    script = { calls: [{ name: "memory_save", input: { text: "x is y.", scope: "channel:C1" } }], reply: "Asked." };
+    await core.onMention({ channel: "C1", ts: "5.0", user: "U1", text: "<@UBOT> remember x" });
+    await settle(core);
+    expect(posted.some((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION))).toBe(false);
+  });
+});
+
 describe("reminders", () => {
   it("a reminder is approved once, posted once when due, escaped, and only in the channel that asked", async () => {
     const core = await createTeammate(config(), vault, slack as never, "UBOT");

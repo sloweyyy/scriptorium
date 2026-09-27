@@ -3,6 +3,11 @@ import { config as loadDotenv } from "dotenv";
 
 loadDotenv({ quiet: true });
 
+/** Comma-separated env value → trimmed, non-empty items. */
+function list(value: string | undefined): string[] {
+  return (value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+}
+
 function env(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value ? value : undefined;
@@ -93,6 +98,16 @@ export interface DocsRepoSettings {
   commitEmail: string;
 }
 
+/** The general Teammate agent (ADR-001). Every list is an allow-list: empty means none. */
+export interface TeammateSettings extends SlackAppTokens {
+  /** Slack channel ids the Teammate may read and post in. Empty: it answers nowhere. */
+  channels: string[];
+  /** Jira project keys it may search and read (and, with approval, write). */
+  jiraProjects: string[];
+  /** Confluence space keys it may search and read. */
+  confluenceSpaces: string[];
+}
+
 export interface SlackSettings {
   /** Channel id for publish announcements and draft-approval buttons. Optional. */
   notifyChannel?: string;
@@ -137,6 +152,7 @@ export interface AppConfig {
   port: number;
   scribe: SlackAppTokens;
   curator: SlackAppTokens;
+  teammate: TeammateSettings;
   jira: JiraSettings;
   docsRepo: DocsRepoSettings;
   webhook: WebhookSettings;
@@ -209,6 +225,14 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
     curator: {
       botToken: env("CURATOR_SLACK_BOT_TOKEN"),
       appToken: env("CURATOR_SLACK_APP_TOKEN"),
+    },
+    teammate: {
+      botToken: env("TEAMMATE_SLACK_BOT_TOKEN"),
+      appToken: env("TEAMMATE_SLACK_APP_TOKEN"),
+      approvers: list(env("TEAMMATE_APPROVERS")),
+      channels: list(env("TEAMMATE_SLACK_CHANNELS")),
+      jiraProjects: list(env("TEAMMATE_JIRA_PROJECTS")),
+      confluenceSpaces: list(env("TEAMMATE_CONFLUENCE_SPACES")),
     },
     jira: {
       baseUrl: env("JIRA_BASE_URL"),

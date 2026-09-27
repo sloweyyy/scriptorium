@@ -9,3 +9,4 @@ export * from "./slack-format";
 export * from "./slack-approval";
 export * from "./teammate";
 export * from "./agents/teammate";
+export * from "./teammate-bot";

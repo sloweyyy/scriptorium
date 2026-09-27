@@ -5,6 +5,7 @@ import { hydrateVaultFromDocsRepo, syncFromDocsRepo } from "./docs-repo";
 import { startCuratorBot } from "./curator-bot";
 import { startScribeBot } from "./scribe-bot";
 import { startScribeJira, type ScribeJiraHandle } from "./scribe-jira";
+import { startTeammateBot } from "./teammate-bot";
 
 /**
  * One process, one vault, one audit log — two agents with separate identities and
@@ -86,6 +87,16 @@ if (config.curator.botToken && config.curator.appToken) {
   await startCuratorBot(config, vault);
 } else {
   console.log("[curator] Slack tokens not set — create the app from slack-manifests/curator.yaml, then fill .env");
+}
+
+// The general Teammate (ADR-001). Its own Slack identity, its own envelope; answers only in
+// TEAMMATE_SLACK_CHANNELS, and every write waits for a TEAMMATE_APPROVERS click.
+if (config.teammate.botToken && config.teammate.appToken) {
+  try {
+    stops.push(await startTeammateBot(config, vault));
+  } catch (error) {
+    console.error(`[teammate] failed to start: ${error instanceof Error ? error.message : error}`);
+  }
 }
 
 // One HTTP surface: health plus the two webhooks. The Jira webhook is a latency

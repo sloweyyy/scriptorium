@@ -35,6 +35,7 @@ function config(sites: { external?: string; internal?: string }): AppConfig {
     port: 8080,
     scribe: {},
     curator: {},
+    teammate: { channels: [], jiraProjects: [], confluenceSpaces: [] },
     slack: {},
     sites,
     webhook: {},

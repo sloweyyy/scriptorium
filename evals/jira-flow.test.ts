@@ -94,7 +94,7 @@ function stubJira(): void {
       return json(posted);
     }
     if (url.includes("/remotelink")) return json(remoteLinks);
-    if (url.includes("/wiki/rest/api/content/")) {
+    if (url.includes("/wiki/api/v2/pages/") || url.includes("/wiki/rest/api/content/")) {
       if (confluenceStorage === undefined) return new Response('{"message":"restricted"}', { status: 403 });
       return json({ title: "Beacon PRD", body: { storage: { value: confluenceStorage } } });
     }

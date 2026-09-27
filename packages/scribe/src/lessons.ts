@@ -26,6 +26,12 @@ export interface Lesson {
   relPath: string;
   author?: string;
   sourceThread?: string;
+  /**
+   * An optional deterministic test of the rule, so "applied" can mean "obeyed", not only
+   * "was in the prompt". `present`: the draft must match; `absent`: it must not. Regex,
+   * case-insensitive. A rule without one is reported `unchecked` — honestly.
+   */
+  check?: { pattern: string; expect: "present" | "absent" };
 }
 
 /**
@@ -72,6 +78,7 @@ export async function listLessons(vault: Vault, options: { status?: LessonStatus
       relPath,
       author: typeof note.frontmatter.author === "string" ? note.frontmatter.author : undefined,
       sourceThread: typeof note.frontmatter.source_thread === "string" ? note.frontmatter.source_thread : undefined,
+      check: readCheck(note.frontmatter),
     };
     if (!options.status || lesson.status === options.status) lessons.push(lesson);
   }
@@ -199,4 +206,32 @@ export async function revokeLesson(vault: Vault, id: string, revokedBy: string):
   const note = await vault.readNote(lesson.relPath);
   await vault.writeNote(lesson.relPath, note.body, { ...note.frontmatter, status: "revoked", revoked_by: revokedBy, revoked_at: new Date().toISOString() });
   return { ...lesson, status: "revoked" };
+}
+
+function readCheck(frontmatter: Record<string, unknown>): Lesson["check"] {
+  const present = frontmatter.check_present;
+  const absent = frontmatter.check_absent;
+  if (typeof present === "string" && present) return { pattern: present, expect: "present" };
+  if (typeof absent === "string" && absent) return { pattern: absent, expect: "absent" };
+  return undefined;
+}
+
+export type LessonVerdict = "honored" | "violated" | "unchecked";
+
+/**
+ * Did the draft obey each house rule? A check that is not a valid regex is `unchecked`,
+ * never a crash: a typo in a lesson file must not stop every draft.
+ */
+export function checkLessons(markdown: string, lessons: readonly Lesson[]): Array<{ id: string; verdict: LessonVerdict }> {
+  return lessons.map((lesson) => {
+    if (!lesson.check) return { id: lesson.id, verdict: "unchecked" as const };
+    let matched: boolean;
+    try {
+      matched = new RegExp(lesson.check.pattern, "i").test(markdown);
+    } catch {
+      return { id: lesson.id, verdict: "unchecked" as const };
+    }
+    const honored = lesson.check.expect === "present" ? matched : !matched;
+    return { id: lesson.id, verdict: honored ? ("honored" as const) : ("violated" as const) };
+  });
 }

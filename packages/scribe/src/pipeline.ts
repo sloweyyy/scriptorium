@@ -1,5 +1,5 @@
 import { generateText, type ImageInput, type Vault } from "@scriptorium/core";
-import { listLessons, renderLessonsForPrompt } from "./lessons";
+import { checkLessons, listLessons, renderLessonsForPrompt, type Lesson, type LessonVerdict } from "./lessons";
 import { lintDoc, type LintFinding } from "./lint";
 import {
   buildDistillPrompt,
@@ -13,6 +13,23 @@ export interface DraftResult {
   markdown: string;
   appliedLessons: string[];
   lint: LintFinding[];
+  /** Per approved rule: obeyed, broken, or not machine-checkable. */
+  lessonVerdicts: Array<{ id: string; verdict: LessonVerdict }>;
+}
+
+/**
+ * Lint plus the house rules' own checks. A broken rule is an ERROR finding, so the
+ * pipeline's one automatic revise round happens before a human is asked to read it.
+ */
+function judge(markdown: string, lessons: readonly Lesson[]): Pick<DraftResult, "lint" | "lessonVerdicts"> {
+  const lessonVerdicts = checkLessons(markdown, lessons);
+  const broken = lessonVerdicts
+    .filter((result) => result.verdict === "violated")
+    .map((result): LintFinding => {
+      const lesson = lessons.find((candidate) => candidate.id === result.id);
+      return { code: "house-rule", severity: "error", message: `Breaks ${result.id}: ${lesson?.text.split("\n")[0] ?? ""}` };
+    });
+  return { lint: [...lintDoc(markdown), ...broken], lessonVerdicts };
 }
 
 /** PRD (+ designs) -> first draft. Caller must have passed the input contract first. */
@@ -23,7 +40,7 @@ export async function draftDoc(vault: Vault, prdRaw: string, images: ImageInput[
     prompt: buildDraftPrompt({ prdRaw, lessonsBlock: renderLessonsForPrompt(lessons) }),
     images,
   });
-  return { markdown, appliedLessons: lessons.map((lesson) => lesson.id), lint: lintDoc(markdown) };
+  return { markdown, appliedLessons: lessons.map((lesson) => lesson.id), ...judge(markdown, lessons) };
 }
 
 /**
@@ -50,7 +67,7 @@ export async function reviseDoc(
     }),
     images,
   });
-  return { markdown, appliedLessons: lessons.map((lesson) => lesson.id), lint: lintDoc(markdown) };
+  return { markdown, appliedLessons: lessons.map((lesson) => lesson.id), ...judge(markdown, lessons) };
 }
 
 /**

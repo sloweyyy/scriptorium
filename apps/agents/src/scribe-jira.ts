@@ -589,10 +589,20 @@ function describeImages(names: string[]): string {
   return rest > 0 ? `${shown} +${rest} more` : shown;
 }
 
+/** "L-001 ✓, L-002 ✗, L-003 (unchecked)" — applied is not the same as obeyed, so say which. */
+export function houseRules(applied: readonly string[], verdicts: ReadonlyArray<{ id: string; verdict: string }> = []): string {
+  const mark = (id: string) => {
+    const verdict = verdicts.find((candidate) => candidate.id === id)?.verdict;
+    return verdict === "honored" ? `${id} ✓` : verdict === "violated" ? `${id} ✗` : `${id} (unchecked)`;
+  };
+  return applied.map(mark).join(", ");
+}
+
 function draftComment(input: {
   markdown: string;
   lintReport: string;
   appliedLessons: string[];
+  lessonVerdicts?: Array<{ id: string; verdict: "honored" | "violated" | "unchecked" }>;
   source: PrdSource;
   revision: boolean;
 }): string {
@@ -610,7 +620,7 @@ function draftComment(input: {
     "",
     `${provenance}.`,
     `Lint: ${input.lintReport.split("\n").join(" · ")}`,
-    `House rules applied: ${input.appliedLessons.join(", ") || "none yet"}`,
+    `House rules applied: ${houseRules(input.appliedLessons, input.lessonVerdicts) || "none yet"}`,
     input.source.skipped.length
       ? `Skipped attachments: ${input.source.skipped.join(", ")}`
       : "",
@@ -743,6 +753,7 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
       markdown: result.markdown,
       lintReport: formatLintFindings(result.lint),
       appliedLessons: result.appliedLessons,
+      lessonVerdicts: result.lessonVerdicts,
       source,
       revision: false,
     }),
@@ -813,6 +824,7 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
       markdown: result.markdown,
       lintReport: formatLintFindings(result.lint),
       appliedLessons: result.appliedLessons,
+      lessonVerdicts: result.lessonVerdicts,
       source: {
         images: designs.images,
         imageNames: designs.names,

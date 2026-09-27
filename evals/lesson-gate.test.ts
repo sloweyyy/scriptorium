@@ -75,3 +75,33 @@ describe("only approved lessons shape a draft", () => {
     expect(lastPrompt()).not.toContain("MARKER-NEW");
   });
 });
+
+describe("applied is not the same as obeyed", () => {
+  it("a rule with a check is judged on the draft; a broken rule is a lint error, so the revise round runs", async () => {
+    await vault.writeNote("_lessons/L-010-timezone.md", "Always state the timezone for any scheduled time.", {
+      id: "L-010", status: "approved", scope: "global", check_present: "\\b(UTC|timezone|local time)\\b",
+    });
+    vi.mocked(generateText).mockResolvedValueOnce("# Digest\n\n## Overview\n\nSent at 09:00.");
+    const broken = await draftDoc(vault, PRD);
+    expect(broken.lessonVerdicts).toContainEqual({ id: "L-010", verdict: "violated" });
+    expect(broken.lint).toContainEqual(expect.objectContaining({ code: "house-rule", severity: "error" }));
+
+    vi.mocked(generateText).mockResolvedValueOnce("# Digest\n\n## Overview\n\nSent at 09:00 in the subscriber's timezone.");
+    const kept = await draftDoc(vault, PRD);
+    expect(kept.lessonVerdicts).toContainEqual({ id: "L-010", verdict: "honored" });
+    expect(kept.lint.some((finding) => finding.code === "house-rule")).toBe(false);
+    // Rules with no check are reported as such, not as obeyed.
+    expect(kept.lessonVerdicts).toContainEqual({ id: "L-001", verdict: "unchecked" });
+  });
+
+  it("a typo'd check never stops a draft — it is unchecked", async () => {
+    const { checkLessons } = await import("@scriptorium/scribe");
+    const verdicts = checkLessons("text", [{ id: "L-9", scope: "global", status: "approved", text: "x", relPath: "x", check: { pattern: "([unclosed", expect: "present" } }]);
+    expect(verdicts).toEqual([{ id: "L-9", verdict: "unchecked" }]);
+  });
+
+  it("the ticket says which rules were obeyed", async () => {
+    const { houseRules } = await import("@scriptorium/agents");
+    expect(houseRules(["L-1", "L-2", "L-3"], [{ id: "L-1", verdict: "honored" }, { id: "L-2", verdict: "violated" }])).toBe("L-1 ✓, L-2 ✗, L-3 (unchecked)");
+  });
+});

@@ -65,7 +65,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpRoot, { recursive: true, force: true });
+  await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 function deps(store: ApprovalStore = new MemoryApprovalStore(), overrides: Partial<Parameters<typeof runUnderPolicy>[3]> = {}) {

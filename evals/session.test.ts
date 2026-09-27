@@ -85,7 +85,7 @@ describe("Curator on the platform loop", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(tmpRoot, { recursive: true, force: true });
+    await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
   });
 
   it("a Claude loop that runs out of rounds becomes NOT_IN_KB — the rescue used to be Gemini-only", async () => {

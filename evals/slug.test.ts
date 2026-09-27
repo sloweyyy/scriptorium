@@ -45,7 +45,7 @@ describe("pinned slug survives the organizer", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(tmpRoot, { recursive: true, force: true });
+    await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
   });
 
   it("files a sentence-named PRD under the doc's capped slug, not a re-slugified feature", async () => {
@@ -76,7 +76,7 @@ describe("gap and lesson filenames", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(tmpRoot, { recursive: true, force: true });
+    await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
   });
 
   it("names a gap note and a lesson with whole words, never a fragment", async () => {

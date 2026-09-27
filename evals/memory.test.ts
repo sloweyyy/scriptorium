@@ -22,7 +22,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpRoot, { recursive: true, force: true });
+  await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 const envelope: Envelope = { agent: "Teammate", selfAccountIds: ["slack:UBOT"], tools: { memory_save: { tier: "approve", approvers: ["slack:UPM"] } } };

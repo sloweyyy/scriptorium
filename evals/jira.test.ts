@@ -190,7 +190,7 @@ describe("poller state", () => {
   });
 
   afterEach(async () => {
-    await fs.rm(stateDir, { recursive: true, force: true });
+    await fs.rm(stateDir, { recursive: true, force: true, maxRetries: 5 });
   });
 
   it("seeds an issue's status on first sight instead of acting on it", async () => {

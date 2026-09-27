@@ -17,7 +17,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpRoot, { recursive: true, force: true });
+  await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 describe("cross-surface loop", () => {
@@ -141,6 +141,6 @@ describe("the same gap, asked twice", () => {
     // A different question is a different gap.
     await fileGapNote(vault, { question: "Can I export incidents as CSV?", missing: "export", askedBy: "U1", auditFile, openTicket });
     expect(await vault.listNotes("_gaps")).toHaveLength(2);
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5 });
   });
 });

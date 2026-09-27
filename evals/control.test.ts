@@ -10,7 +10,7 @@ let dir: string;
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "scriptorium-control-"));
 });
-afterEach(async () => fs.rm(dir, { recursive: true, force: true }));
+afterEach(async () => fs.rm(dir, { recursive: true, force: true, maxRetries: 5 }));
 
 describe("runtime controls", () => {
   it("never set is open; unreadable, corrupt or forged is paused", async () => {

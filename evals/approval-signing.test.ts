@@ -73,7 +73,7 @@ describe("verified where approvals are used, not only on restore", () => {
     } finally {
       if (previous === undefined) delete process.env.SCRIPTORIUM_SIGNING_KEY;
       else process.env.SCRIPTORIUM_SIGNING_KEY = previous;
-      await fs.rm(root, { recursive: true, force: true });
+      await fs.rm(root, { recursive: true, force: true, maxRetries: 5 });
     }
   });
 });

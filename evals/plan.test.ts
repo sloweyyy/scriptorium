@@ -51,7 +51,7 @@ beforeEach(async () => {
   failNext = false;
   auditFile = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "scriptorium-plan-")), "audit.jsonl");
 });
-afterEach(async () => fs.rm(path.dirname(auditFile), { recursive: true, force: true }));
+afterEach(async () => fs.rm(path.dirname(auditFile), { recursive: true, force: true, maxRetries: 5 }));
 
 const steps = (...summaries: string[]) => ({ title: "Meeting follow-ups", steps: summaries.map((summary) => ({ tool: "jira_create_issue", args: { summary } })) });
 

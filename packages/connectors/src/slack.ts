@@ -2,6 +2,13 @@ import type { ToolSpec } from "@scriptorium/core";
 import { decideApproval, type ApprovalChannel, type ApprovalRequest, type ApprovalStore, type Envelope } from "@scriptorium/policy";
 import { once, opKey, type EffectLedger } from "@scriptorium/runtime";
 import type { WebClient } from "@slack/web-api";
+
+/**
+ * The slice of the Slack client the connector uses. Narrowed on purpose: Bolt bundles its
+ * own `@slack/web-api` major, and the full class types differ between majors even where the
+ * two methods used here do not.
+ */
+export type SlackClient = Pick<WebClient, "chat" | "conversations">;
 import { z } from "zod";
 
 /**
@@ -21,7 +28,7 @@ export const APPROVE_ACTION = "policy_approve";
 export const REJECT_ACTION = "policy_reject";
 
 export interface SlackToolSettings {
-  client: WebClient;
+  client: SlackClient;
   /** Channel ids the agent may read and post in. Empty: none. */
   allowedChannels: readonly string[];
   ledger: EffectLedger;
@@ -76,7 +83,7 @@ export function slackTools(settings: SlackToolSettings): ToolSpec[] {
   ];
 }
 
-async function findReplyByOp(client: WebClient, channel: string, threadTs: string, op: string): Promise<string | undefined> {
+async function findReplyByOp(client: SlackClient, channel: string, threadTs: string, op: string): Promise<string | undefined> {
   const replies = await client.conversations.replies({ channel, ts: threadTs, include_all_metadata: true, limit: 200 });
   const match = (replies.messages ?? []).find(
     (message) => message.metadata?.event_type === OP_EVENT_TYPE && (message.metadata.event_payload as { op?: string } | undefined)?.op === op,
@@ -102,7 +109,7 @@ function cardTarget(request: ApprovalRequest, fallbackChannel?: string): { chann
 
 export class SlackApprovalChannel implements ApprovalChannel {
   constructor(
-    private readonly client: WebClient,
+    private readonly client: SlackClient,
     /** For requests that did not start in Slack (a Jira-triggered write, say). */
     private readonly fallbackChannel?: string,
   ) {}
@@ -146,7 +153,7 @@ export interface ApprovalClick {
  * card cannot decide twice (the store enforces that too; the card just stops inviting it).
  */
 export async function handleApprovalClick(
-  client: WebClient,
+  client: SlackClient,
   store: ApprovalStore,
   envelopeFor: (agent: string) => Envelope | undefined,
   click: ApprovalClick,

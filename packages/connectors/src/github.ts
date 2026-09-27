@@ -1,4 +1,4 @@
-import type { ToolRunContext, ToolSpec } from "@scriptorium/core";
+import { fetchWithBackoff, type ToolRunContext, type ToolSpec } from "@scriptorium/core";
 import { once, opKey, type EffectLedger } from "@scriptorium/runtime";
 import { z } from "zod";
 
@@ -62,7 +62,7 @@ export function githubTools(settings: GitHubToolSettings): ToolSpec[] {
   };
 
   const call = async <T>(repo: string, endpoint: string, schema: z.ZodType<T>, init: RequestInit = {}): Promise<T> => {
-    const response = await fetch(`${api}${endpoint}`, {
+    const response = await fetchWithBackoff(`${api}${endpoint}`, {
       ...init,
       headers: {
         Authorization: `Bearer ${await settings.token(repo)}`,

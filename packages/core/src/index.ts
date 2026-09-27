@@ -7,3 +7,4 @@ export * from "./run";
 export * from "./hash";
 export * from "./signing";
 export * from "./trace";
+export * from "./http";

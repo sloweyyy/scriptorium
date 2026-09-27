@@ -1,4 +1,4 @@
-import type { ToolRunContext, ToolSpec } from "@scriptorium/core";
+import { fetchWithBackoff, type ToolRunContext, type ToolSpec } from "@scriptorium/core";
 import { confluenceStorageToMarkdown, markdownToJira } from "@scriptorium/jira";
 import { once, opKey, type EffectLedger } from "@scriptorium/runtime";
 import { z } from "zod";
@@ -87,7 +87,7 @@ export class ConfluenceConnector {
   }
 
   private async get<T>(endpoint: string, schema: z.ZodType<T>): Promise<T> {
-    const response = await fetch(`${this.settings.baseUrl.replace(/\/$/, "")}/wiki${endpoint}`, {
+    const response = await fetchWithBackoff(`${this.settings.baseUrl.replace(/\/$/, "")}/wiki${endpoint}`, {
       headers: { Authorization: this.auth, Accept: "application/json" },
     });
     if (!response.ok) throw new Error(`Confluence ${endpoint.split("?")[0]} → HTTP ${response.status}`);
@@ -193,7 +193,7 @@ export class ConfluenceConnector {
   }
 
   private async send<T>(method: "POST" | "PUT", endpoint: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
-    const response = await fetch(`${this.settings.baseUrl.replace(/\/$/, "")}/wiki${endpoint}`, {
+    const response = await fetchWithBackoff(`${this.settings.baseUrl.replace(/\/$/, "")}/wiki${endpoint}`, {
       method,
       headers: { Authorization: this.auth, Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify(body),

@@ -23,7 +23,7 @@ export const INTERNAL_INCLUDE = ["docs/**", "prd/**", "_gaps/**", "_lessons/**",
 export const NEVER_PUBLISH = ["reference/", "_inbox/"] as const;
 
 /** Frontmatter keys that are internal provenance and are stripped from external output. */
-export const EXTERNAL_STRIP_KEYS = ["source", "applied_lessons", "approved_by"] as const;
+export const EXTERNAL_STRIP_KEYS = ["source", "applied_lessons", "approved_by", "source_hash"] as const;
 
 /**
  * The marker every retrieved `reference/**` note carries. The second staging gate keys on

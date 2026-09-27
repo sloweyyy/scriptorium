@@ -37,6 +37,7 @@ function config(): AppConfig {
     port: 0,
     scribe: {},
     curator: {},
+    teammate: { channels: [], jiraProjects: [], confluenceSpaces: [], digestWeekday: 1, digestHour: 9 },
     slack: {},
     sites: {},
     webhook: { jiraSecret: JIRA_SECRET, githubSecret: GITHUB_SECRET, jiraHmacSecret: JIRA_HMAC },
@@ -190,6 +191,31 @@ describe("ingress", () => {
 });
 
 describe("ingress primitives", () => {
+  it("works a redelivered Jira or GitHub webhook once, not twice", async () => {
+    const body = JSON.stringify({ webhookEvent: "comment_created", issue: { key: "DOC-7" }, comment: { id: "10001" } });
+    const headers = { ...jiraSigned(body), "x-atlassian-webhook-identifier": "delivery-1" };
+    expect((await fetch(`${base}/jira/webhook/${JIRA_SECRET}`, { method: "POST", headers, body })).status).toBe(202);
+    const replay = await fetch(`${base}/jira/webhook/${JIRA_SECRET}`, { method: "POST", headers, body });
+    expect(await replay.json()).toMatchObject({ accepted: false, reason: "duplicate delivery" });
+
+    const push = JSON.stringify({ ref: "refs/heads/main", commits: [{ modified: ["docs/a.md"] }], head_commit: { id: "abc", url: "https://x" } });
+    const pushHeaders = { ...signed(push), "x-github-delivery": "gh-1" };
+    await fetch(`${base}/github/webhook`, { method: "POST", headers: pushHeaders, body: push });
+    await fetch(`${base}/github/webhook`, { method: "POST", headers: pushHeaders, body: push });
+    await settle();
+    expect(nudged).toEqual(["DOC-7"]);
+    expect(docsChanges.length).toBeLessThanOrEqual(1);
+  });
+
+  it("only remembers authenticated deliveries", async () => {
+    const body = JSON.stringify({ webhookEvent: "comment_created", issue: { key: "DOC-8" } });
+    // A forged delivery with a real-looking id must not poison the genuine one.
+    await fetch(`${base}/jira/webhook/${JIRA_SECRET}`, { method: "POST", headers: { "Content-Type": "application/json", "x-atlassian-webhook-identifier": "delivery-2" }, body });
+    await fetch(`${base}/jira/webhook/${JIRA_SECRET}`, { method: "POST", headers: { ...jiraSigned(body), "x-atlassian-webhook-identifier": "delivery-2" }, body });
+    await settle();
+    expect(nudged).toEqual(["DOC-8"]);
+  });
+
   it("rejects a secret of the wrong length without throwing", () => {
     expect(secretMatches("short", "much-longer-secret")).toBe(false);
     expect(secretMatches("same", "same")).toBe(true);
@@ -203,5 +229,38 @@ describe("ingress primitives", () => {
     expect(verifyGitHubSignature(raw, undefined, GITHUB_SECRET)).toBe(false);
     // One byte different in the body must invalidate it.
     expect(verifyGitHubSignature(Buffer.from('{"ref":"refs/heads/mai"}'), good, GITHUB_SECRET)).toBe(false);
+  });
+});
+
+describe("run viewer", () => {
+  it("is closed without the token, and shows one run's events, escaped, with it", async () => {
+    const auditFile = path.join(tmpRoot, "audit.jsonl");
+    await fs.mkdir(path.dirname(auditFile), { recursive: true });
+    await fs.writeFile(
+      auditFile,
+      [
+        JSON.stringify({ ts: "2026-09-27T10:00:00Z", run: "3f2a9c1b-aaaa", type: "teammate.answer", question: "<script>alert(1)</script>" }),
+        JSON.stringify({ ts: "2026-09-27T10:01:00Z", run: "ffffffff-bbbb", type: "other.run" }),
+      ].join("\n"),
+    );
+    const viewer = startIngress({ config: { ...config(), auditFile, webhook: { ...config().webhook, traceToken: "tok-123" } } as AppConfig, hooks: {} });
+    await new Promise<void>((resolve) => viewer.once("listening", resolve));
+    const at = `http://127.0.0.1:${(viewer.address() as AddressInfo).port}`;
+    try {
+      expect((await fetch(`${at}/runs/3f2a9c1b`)).status).toBe(404);
+      expect((await fetch(`${at}/runs/3f2a9c1b?token=wrong`)).status).toBe(404);
+      const page = await fetch(`${at}/runs/3f2a9c1b?token=tok-123`);
+      expect(page.status).toBe(200);
+      expect(page.headers.get("content-security-policy")).toContain("default-src 'none'");
+      const html = await page.text();
+      expect(html).toContain("teammate.answer");
+      expect(html).not.toContain("<script>alert(1)</script>");
+      expect(html).toContain("&lt;script&gt;");
+      expect(html).not.toContain("other.run");
+      // A short prefix is not "show me everything".
+      expect((await fetch(`${at}/runs/f?token=tok-123`)).status).toBe(404);
+    } finally {
+      await new Promise<void>((resolve) => viewer.close(() => resolve()));
+    }
   });
 });

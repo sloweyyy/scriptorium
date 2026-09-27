@@ -34,6 +34,8 @@ export interface GapInput {
 export interface GapResult {
   relPath: string;
   ticket?: GapTicket;
+  /** True when this question already had an open gap: nothing new was filed. */
+  duplicate?: boolean;
 }
 
 /**
@@ -58,7 +60,45 @@ export async function nextGapId(vault: Vault): Promise<string> {
  * An unanswerable question becomes a gap note — Agent B's misses feed Agent A's queue.
  * The note is written first: if ticketing is down, the gap is still recorded.
  */
+/** The same question, however it was punctuated or capitalised. */
+export function questionKey(question: string): string {
+  return question.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * An open gap for this exact question, if there is one. Asking the same unanswerable
+ * question twice (two people, or one person rephrasing only the punctuation) used to file
+ * two notes and open two Jira tickets for one missing page.
+ */
+async function openGapFor(vault: Vault, key: string): Promise<{ relPath: string; frontmatter: Record<string, unknown>; body: string } | undefined> {
+  for (const relPath of await vault.listNotes("_gaps")) {
+    const note = await vault.readNote(relPath);
+    const status = note.frontmatter.status;
+    if (status !== "open" && status !== "queued") continue;
+    const recorded = typeof note.frontmatter.question_key === "string" ? note.frontmatter.question_key : questionKey(note.body.match(/^>\s*(.+)$/m)?.[1] ?? "");
+    if (recorded && recorded === key) return { relPath, frontmatter: note.frontmatter, body: note.body };
+  }
+  return undefined;
+}
+
 export async function fileGapNote(vault: Vault, input: GapInput): Promise<GapResult> {
+  const key = questionKey(input.question);
+  const existing = key ? await openGapFor(vault, key) : undefined;
+  if (existing) {
+    // Record that it was asked again — demand is signal for whoever writes the page — and
+    // point at the gap (and ticket) that already exists.
+    const askers = Array.isArray(existing.frontmatter.also_asked_by) ? (existing.frontmatter.also_asked_by as string[]) : [];
+    if (existing.frontmatter.asked_by !== input.askedBy && !askers.includes(input.askedBy)) {
+      await vault.writeNote(existing.relPath, existing.body, { ...existing.frontmatter, also_asked_by: [...askers, input.askedBy] });
+    }
+    await audit(input.auditFile, { type: "gap.repeated", actor: "curator", relPath: existing.relPath, question: input.question });
+    const ticket =
+      typeof existing.frontmatter.jira_key === "string" && typeof existing.frontmatter.jira_url === "string"
+        ? { key: existing.frontmatter.jira_key, url: existing.frontmatter.jira_url }
+        : undefined;
+    return { relPath: existing.relPath, ticket, duplicate: true };
+  }
+
   const id = await nextGapId(vault);
   const relPath = `_gaps/${id}-${docSlug(input.question, 8, 50)}.md`;
 
@@ -76,6 +116,7 @@ export async function fileGapNote(vault: Vault, input: GapInput): Promise<GapRes
     id,
     kind: "gap",
     status: "open",
+    question_key: key,
     asked_by: input.askedBy,
     created: new Date().toISOString(),
   });

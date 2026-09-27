@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { ToolSpec } from "@scriptorium/core";
 import {
   FileApprovalStore,
+  executeApproved,
   MemoryApprovalStore,
   argsHash,
   decideApproval,
@@ -168,5 +169,111 @@ describe("guard, as a model sees it", () => {
     expect(await guarded.run(DRAFT)).toMatch(/^APPROVAL_PENDING: .*NOT been done/);
     expect(await guard(envelope, drop, deps()).run({})).toMatch(/^DENIED:/);
     expect(runs).toHaveLength(0);
+  });
+});
+
+describe("carrying out an approval", () => {
+  it("runs the stored arguments once when approved, and nothing before or after", async () => {
+    const store = new MemoryApprovalStore();
+    const outcome = await runUnderPolicy(envelope, publish, DRAFT, deps(store));
+    if (outcome.kind !== "pending") throw new Error("expected pending");
+    expect((await executeApproved(envelope, [publish], outcome.request.id, deps(store))).kind).toBe("not-runnable");
+
+    await decideApproval(store, envelope, outcome.request.id, "approved", { accountId: "pm-1" });
+    expect((await executeApproved(envelope, [publish], outcome.request.id, deps(store))).kind).toBe("ran");
+    expect(runs).toEqual([DRAFT]);
+    expect((await executeApproved(envelope, [publish], outcome.request.id, deps(store))).kind).toBe("not-runnable");
+    expect(runs).toHaveLength(1);
+  });
+
+  it("will not carry out another agent's approval", async () => {
+    const store = new MemoryApprovalStore();
+    const outcome = await runUnderPolicy(envelope, publish, DRAFT, deps(store));
+    if (outcome.kind !== "pending") throw new Error("expected pending");
+    await decideApproval(store, envelope, outcome.request.id, "approved", { accountId: "pm-1" });
+    const other: Envelope = { ...envelope, agent: "curator" };
+    expect((await executeApproved(other, [publish], outcome.request.id, deps(store))).kind).toBe("not-runnable");
+  });
+});
+
+describe("what the approver reads", () => {
+  it("one readable, capped line per argument — the full arguments still bind the approval", async () => {
+    const { summarizeArgs } = await import("@scriptorium/policy");
+    const body = `# Digest\n\n${"x".repeat(5_000)}`;
+    const summary = summarizeArgs({ space: "BEACON", title: "Digest emails", markdown: body });
+    expect(summary).toContain("• space: BEACON");
+    expect(summary).toContain("• title: Digest emails");
+    expect(summary).toMatch(/• markdown: # Digest x+… \(\+\d+ chars\)/);
+    expect(summary.length).toBeLessThan(2_500);
+    // Truncation is display only: a different body is a different action.
+    expect(argsHash({ markdown: body })).not.toBe(argsHash({ markdown: `${body}y` }));
+  });
+});
+
+describe("concurrency", () => {
+  it("two approvers clicking at once decide once, and the tool runs once", async () => {
+    const store = new FileApprovalStore(path.join(tmpRoot, "race.json"));
+    const pending = await runUnderPolicy(envelope, publish, DRAFT, deps(store));
+    if (pending.kind !== "pending") throw new Error("expected pending");
+    const click = async (who: string) => {
+      const decided = await decideApproval(store, envelope, pending.request.id, "approved", { accountId: who });
+      if (decided.ok) await executeApproved(envelope, [publish], pending.request.id, deps(store));
+      return decided.ok;
+    };
+    const results = await Promise.all([click("pm-1"), click("pm-2")]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(runs).toHaveLength(1);
+  });
+
+  it("concurrent saves to the file store lose nothing", async () => {
+    const store = new FileApprovalStore(path.join(tmpRoot, "many.json"));
+    const base = { agent: "scribe", tool: "publish_doc", argsHash: "h", summary: "", key: "k", requestedAt: "", expiresAt: "2099-01-01", status: "pending" as const };
+    await Promise.all([1, 2, 3, 4, 5].map((n) => store.save({ ...base, id: `r${n}` })));
+    expect(await store.all()).toHaveLength(5);
+  });
+});
+
+describe("who may approve when no list is given", () => {
+  it("nobody — a channel's membership is not an approver list; `*` opts in to any human", async () => {
+    const { mayApprove } = await import("@scriptorium/policy");
+    const open: Envelope = { agent: "a", selfAccountIds: ["bot"], tools: {} };
+    expect(mayApprove(open, { tier: "approve" }, { accountId: "anyone" }).ok).toBe(false);
+    expect(mayApprove(open, { tier: "approve", approvers: [] }, { accountId: "anyone" }).ok).toBe(false);
+    expect(mayApprove(open, { tier: "approve", approvers: ["*"] }, { accountId: "anyone" }).ok).toBe(true);
+    expect(mayApprove(open, { tier: "approve", approvers: ["*"] }, { accountId: "bot" }).ok).toBe(false);
+  });
+});
+
+describe("approvals and failures", () => {
+  it("an action that fails gives its approval back, so a retry needs no second click", async () => {
+    const store = new MemoryApprovalStore();
+    let fail = true;
+    const flaky: ToolSpec = { ...publish, run: async (input) => { if (fail) throw new Error("HTTP 500"); runs.push(input); return "published"; } };
+    const pending = await runUnderPolicy(envelope, flaky, DRAFT, deps(store));
+    if (pending.kind !== "pending") throw new Error("expected pending");
+    await decideApproval(store, envelope, pending.request.id, "approved", { accountId: "pm-1" });
+    await expect(executeApproved(envelope, [flaky], pending.request.id, deps(store))).rejects.toThrow("HTTP 500");
+    fail = false;
+    expect((await executeApproved(envelope, [flaky], pending.request.id, deps(store))).kind).toBe("ran");
+    expect(runs).toHaveLength(1);
+  });
+
+  it("the same action asked in another conversation is its own request, with its own asker", async () => {
+    const store = new MemoryApprovalStore();
+    const a = await runUnderPolicy(envelope, publish, DRAFT, deps(store, { key: "slack:thread:C1/1.0", requestedBy: "u1" }));
+    const b = await runUnderPolicy(envelope, publish, DRAFT, deps(store, { key: "slack:thread:C2/2.0", requestedBy: "u2" }));
+    if (a.kind !== "pending" || b.kind !== "pending") throw new Error("expected pending");
+    expect(a.request.id).not.toBe(b.request.id);
+    expect(posted).toHaveLength(2);
+    expect(b.request.requestedBy).toBe("u2");
+  });
+
+  it("carrying out an approval never files a new request", async () => {
+    const store = new MemoryApprovalStore();
+    const pending = await runUnderPolicy(envelope, publish, DRAFT, deps(store));
+    if (pending.kind !== "pending") throw new Error("expected pending");
+    // Not approved yet: executing it is refused, and no second card appears.
+    expect((await executeApproved(envelope, [publish], pending.request.id, deps(store))).kind).toBe("not-runnable");
+    expect(posted).toHaveLength(1);
   });
 });

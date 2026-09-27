@@ -1,4 +1,11 @@
-import { audit, commitVault, parseMarkdown, slugify, type Vault } from "@scriptorium/core";
+import { audit, commitVault, parseMarkdown, slugify, sourceHash, type Vault } from "@scriptorium/core";
+
+async function prdHash(vault: Vault, sourcePrd: string | undefined): Promise<string | undefined> {
+  if (!sourcePrd) return undefined;
+  const relPath = `${sourcePrd.replace(/\.md$/, "")}.md`;
+  if (!(await vault.exists(relPath))) return undefined;
+  return sourceHash((await vault.readNote(relPath)).body);
+}
 
 export interface PublishInput {
   vault: Vault;
@@ -40,6 +47,8 @@ export async function publishDoc(input: PublishInput): Promise<string> {
     applied_lessons: input.appliedLessons?.length ? input.appliedLessons : undefined,
     approved_by: input.approvedBy,
     published_at: new Date().toISOString(),
+    // The baseline staleness is measured against. Stripped from the public site.
+    source_hash: await prdHash(input.vault, input.sourcePrd),
   });
 
   await audit(input.auditFile, {

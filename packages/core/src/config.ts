@@ -3,6 +3,11 @@ import { config as loadDotenv } from "dotenv";
 
 loadDotenv({ quiet: true });
 
+/** Comma-separated env value → trimmed, non-empty items. */
+function list(value: string | undefined): string[] {
+  return (value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+}
+
 function env(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value ? value : undefined;
@@ -45,6 +50,11 @@ export interface JiraSettings {
   inProgressStatus: string;
   inReviewStatus: string;
   approvedStatus: string;
+  /**
+   * Jira account ids whose `approve` (comment or board move) publishes. Empty: any human
+   * on the ticket, never the agent. Set it: a project's commenters are not its approvers.
+   */
+  approvers?: string[];
   pollMs: number;
   /** Resume state (processed comment ids, working drafts) — gitignored, not part of the record. */
   stateDir: string;
@@ -93,6 +103,21 @@ export interface DocsRepoSettings {
   commitEmail: string;
 }
 
+/** The general Teammate agent (ADR-001). Every list is an allow-list: empty means none. */
+export interface TeammateSettings extends SlackAppTokens {
+  /** Slack channel ids the Teammate may read and post in. Empty: it answers nowhere. */
+  channels: string[];
+  /** Jira project keys it may search and read (and, with approval, write). */
+  jiraProjects: string[];
+  /** Confluence space keys it may search and read. */
+  confluenceSpaces: string[];
+  /** Channel for the weekly digest. Unset: no digest. */
+  digestChannel?: string;
+  /** When it goes out, UTC: weekday 1–7 (Mon–Sun) and hour. Default Monday 09:00. */
+  digestWeekday: number;
+  digestHour: number;
+}
+
 export interface SlackSettings {
   /** Channel id for publish announcements and draft-approval buttons. Optional. */
   notifyChannel?: string;
@@ -120,6 +145,13 @@ export interface WebhookSettings {
    * still Connect/OAuth-only, so registration remains a UI step.
    */
   jiraHmacSecret?: string;
+  /**
+   * Opens the run viewer (`/runs/<id>?token=…`). Unset: no viewer. The page shows a run's
+   * audit trail — questions, tool calls, approvals — so it is a credential, not a nicety.
+   */
+  traceToken?: string;
+  /** Where the ingress is reachable (`https://…run.app`), for "view run" links on replies. */
+  publicBaseUrl?: string;
   /** GitHub signs with HMAC-SHA256, so this is a real shared secret. */
   githubSecret?: string;
 }
@@ -137,11 +169,18 @@ export interface AppConfig {
   port: number;
   scribe: SlackAppTokens;
   curator: SlackAppTokens;
+  teammate: TeammateSettings;
   jira: JiraSettings;
   docsRepo: DocsRepoSettings;
   webhook: WebhookSettings;
   slack: SlackSettings;
   sites: SiteSettings;
+  /**
+   * Signs approvals (lessons, memories) so a restore from the docs repo cannot be fed a
+   * forged one. Unset: approvals are unsigned and restores trust the branch — see
+   * docs/security-model.md.
+   */
+  signingKey?: string;
 }
 
 export function docsRepoReady(docs: DocsRepoSettings): boolean {
@@ -210,6 +249,18 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       botToken: env("CURATOR_SLACK_BOT_TOKEN"),
       appToken: env("CURATOR_SLACK_APP_TOKEN"),
     },
+    signingKey: env("SCRIPTORIUM_SIGNING_KEY"),
+    teammate: {
+      botToken: env("TEAMMATE_SLACK_BOT_TOKEN"),
+      appToken: env("TEAMMATE_SLACK_APP_TOKEN"),
+      approvers: list(env("TEAMMATE_APPROVERS")),
+      channels: list(env("TEAMMATE_SLACK_CHANNELS")),
+      jiraProjects: list(env("TEAMMATE_JIRA_PROJECTS")),
+      confluenceSpaces: list(env("TEAMMATE_CONFLUENCE_SPACES")),
+      digestChannel: env("TEAMMATE_DIGEST_CHANNEL"),
+      digestWeekday: envNumber("TEAMMATE_DIGEST_WEEKDAY", 1),
+      digestHour: envNumber("TEAMMATE_DIGEST_HOUR", 9),
+    },
     jira: {
       baseUrl: env("JIRA_BASE_URL"),
       email: env("JIRA_EMAIL"),
@@ -221,6 +272,7 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       inProgressStatus: env("JIRA_IN_PROGRESS_STATUS") ?? "In Progress",
       inReviewStatus: env("JIRA_IN_REVIEW_STATUS") ?? "In Review",
       approvedStatus: env("JIRA_APPROVED_STATUS") ?? "Approved",
+      approvers: list(env("JIRA_APPROVERS")),
       pollMs: envNumber("JIRA_POLL_MS", 15_000),
       stateDir: path.resolve(repoRoot, env("STATE_DIR") ?? ".scriptorium-state"),
     },
@@ -233,6 +285,8 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       jiraSecret: env("JIRA_WEBHOOK_SECRET"),
       jiraHmacSecret: env("JIRA_WEBHOOK_HMAC_SECRET"),
       githubSecret: env("GITHUB_WEBHOOK_SECRET"),
+      traceToken: env("TRACE_TOKEN"),
+      publicBaseUrl: env("PUBLIC_BASE_URL"),
     },
     docsRepo: {
       url: env("DOCS_REPO_URL"),

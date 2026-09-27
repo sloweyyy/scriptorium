@@ -21,6 +21,12 @@ export interface ApprovalRequest {
   agent: string;
   tool: string;
   argsHash: string;
+  /**
+   * The exact arguments that were shown for approval. Kept so an approval can be carried
+   * out when it is given — the model that asked has long since finished its turn — and so
+   * a card can show precisely what is being approved.
+   */
+  args?: unknown;
   /** Human-readable summary of the action, shown on the approval card. */
   summary: string;
   /** Where the request lives (e.g. `jira:issue:DOC-1`) — the approval surface for it. */
@@ -52,13 +58,38 @@ function canonical(value: unknown): string {
 export interface ApprovalStore {
   all(): Promise<ApprovalRequest[]>;
   save(request: ApprovalRequest): Promise<void>;
+  /**
+   * Atomic read-modify-write of one request: `change` sees the current value and returns the
+   * next one, or undefined to leave it. Two approvers clicking at once, or a click racing a
+   * run, must not both see "pending" and both proceed — so every state transition goes here.
+   */
+  update(id: string, change: (current: ApprovalRequest) => ApprovalRequest | undefined): Promise<ApprovalRequest | undefined>;
+}
+
+/** Serialises async critical sections within one process. */
+class Mutex {
+  private tail: Promise<unknown> = Promise.resolve();
+  run<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.tail.then(work, work);
+    this.tail = next.catch(() => undefined);
+    return next;
+  }
 }
 
 /** One JSON file, rewritten atomically — the ledger's pattern, and just as local. */
-export class FileApprovalStore implements ApprovalStore {
-  constructor(private readonly file: string) {}
+/** One lock per approvals file, shared by every store instance opened on it. */
+const fileLocks = new Map<string, Mutex>();
 
-  async all(): Promise<ApprovalRequest[]> {
+export class FileApprovalStore implements ApprovalStore {
+  private readonly lock: Mutex;
+  private readonly file: string;
+  constructor(file: string) {
+    this.file = path.resolve(file);
+    this.lock = fileLocks.get(this.file) ?? new Mutex();
+    fileLocks.set(this.file, this.lock);
+  }
+
+  private async read(): Promise<ApprovalRequest[]> {
     try {
       return JSON.parse(await fs.readFile(this.file, "utf8")) as ApprovalRequest[];
     } catch (error) {
@@ -67,22 +98,53 @@ export class FileApprovalStore implements ApprovalStore {
     }
   }
 
-  async save(request: ApprovalRequest): Promise<void> {
-    const rest = (await this.all()).filter((existing) => existing.id !== request.id);
+  private async write(requests: ApprovalRequest[]): Promise<void> {
     await fs.mkdir(path.dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.${process.pid}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify([...rest, request], null, 2));
+    const tmp = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify(requests, null, 2));
     await fs.rename(tmp, this.file);
+  }
+
+  all(): Promise<ApprovalRequest[]> {
+    return this.lock.run(() => this.read());
+  }
+
+  save(request: ApprovalRequest): Promise<void> {
+    return this.lock.run(async () => {
+      const rest = (await this.read()).filter((existing) => existing.id !== request.id);
+      await this.write([...rest, request]);
+    });
+  }
+
+  update(id: string, change: (current: ApprovalRequest) => ApprovalRequest | undefined): Promise<ApprovalRequest | undefined> {
+    return this.lock.run(async () => {
+      const all = await this.read();
+      const index = all.findIndex((request) => request.id === id);
+      const next = index >= 0 ? change(all[index] as ApprovalRequest) : undefined;
+      if (!next) return undefined;
+      all[index] = next;
+      await this.write(all);
+      return next;
+    });
   }
 }
 
 export class MemoryApprovalStore implements ApprovalStore {
   private readonly requests = new Map<string, ApprovalRequest>();
-  async all(): Promise<ApprovalRequest[]> {
-    return [...this.requests.values()];
+  private readonly lock = new Mutex();
+  all(): Promise<ApprovalRequest[]> {
+    return this.lock.run(async () => [...this.requests.values()].map((request) => ({ ...request })));
   }
-  async save(request: ApprovalRequest): Promise<void> {
-    this.requests.set(request.id, { ...request });
+  save(request: ApprovalRequest): Promise<void> {
+    return this.lock.run(async () => void this.requests.set(request.id, { ...request }));
+  }
+  update(id: string, change: (current: ApprovalRequest) => ApprovalRequest | undefined): Promise<ApprovalRequest | undefined> {
+    return this.lock.run(async () => {
+      const current = this.requests.get(id);
+      const next = current ? change({ ...current }) : undefined;
+      if (next) this.requests.set(id, { ...next });
+      return next;
+    });
   }
 }
 
@@ -102,7 +164,10 @@ export async function requestApproval(
   // Asking twice for the same action is one request, not two cards.
   const existing = (await store.all())
     .map((request) => live(request, now))
-    .find((request) => request.agent === input.agent && request.tool === input.tool && request.argsHash === hash && request.status === "pending");
+    // Same action asked again IN THE SAME CONVERSATION is one request. In another thread it
+    // is a new request with its own card and its own asker — otherwise the second asker
+    // inherits the first one's `requestedBy` and can approve their own action.
+    .find((request) => request.agent === input.agent && request.tool === input.tool && request.argsHash === hash && request.status === "pending" && request.key === input.key && request.requestedBy === input.requestedBy);
   if (existing) return { request: existing, created: false };
 
   const request: ApprovalRequest = {
@@ -110,6 +175,7 @@ export async function requestApproval(
     agent: input.agent,
     tool: input.tool,
     argsHash: hash,
+    args: input.args,
     summary: input.summary,
     key: input.key,
     requestedBy: input.requestedBy,
@@ -132,18 +198,27 @@ export async function decideApproval(
   approver: Approver | undefined,
   now = new Date(),
 ): Promise<DecisionResult> {
-  const found = (await store.all()).find((request) => request.id === id);
-  if (!found) return { ok: false, reason: "no such approval request" };
-  const request = live(found, now);
-  if (request.status !== "pending") return { ok: false, reason: `this request is already ${request.status}` };
-  const rule = envelope.tools[request.tool];
-  if (!rule || rule.tier !== "approve") return { ok: false, reason: `${request.tool} is not an approvable action for ${envelope.agent}` };
-  const allowed = mayApprove(envelope, rule, approver, request.requestedBy);
-  if (!allowed.ok) return allowed;
-
-  const decided: ApprovalRequest = { ...request, status: decision, decidedBy: approver, decidedAt: now.toISOString() };
-  await store.save(decided);
-  return { ok: true, request: decided };
+  let refusal = "no such approval request";
+  // Checked and decided in ONE atomic step: two clicks can't both find it pending.
+  const decided = await store.update(id, (found) => {
+    const request = live(found, now);
+    if (request.status !== "pending") {
+      refusal = `this request is already ${request.status}`;
+      return undefined;
+    }
+    const rule = envelope.tools[request.tool];
+    if (!rule || rule.tier !== "approve") {
+      refusal = `${request.tool} is not an approvable action for ${envelope.agent}`;
+      return undefined;
+    }
+    const allowed = mayApprove(envelope, rule, approver, request.requestedBy);
+    if (!allowed.ok) {
+      refusal = allowed.reason;
+      return undefined;
+    }
+    return { ...request, status: decision, decidedBy: approver, decidedAt: now.toISOString() };
+  });
+  return decided ? { ok: true, request: decided } : { ok: false, reason: refusal };
 }
 
 /**
@@ -152,15 +227,36 @@ export async function decideApproval(
  */
 export async function consumeApproval(
   store: ApprovalStore,
-  input: { agent: string; tool: string; args: unknown },
+  input: { agent: string; tool: string; args: unknown; requestId?: string },
   now = new Date(),
 ): Promise<ApprovalRequest | undefined> {
   const hash = argsHash(input.args);
-  const approved = (await store.all())
+  const candidates = (await store.all())
     .map((request) => live(request, now))
-    .find((request) => request.agent === input.agent && request.tool === input.tool && request.argsHash === hash && request.status === "approved");
-  if (!approved) return undefined;
-  const consumed: ApprovalRequest = { ...approved, status: "consumed" };
-  await store.save(consumed);
-  return consumed;
+    .filter(
+      (request) =>
+        request.agent === input.agent &&
+        request.tool === input.tool &&
+        request.argsHash === hash &&
+        request.status === "approved" &&
+        // Carrying out a specific approval spends THAT one, not another with equal args.
+        (!input.requestId || request.id === input.requestId),
+    );
+  for (const candidate of candidates) {
+    // Spent atomically: of two runs racing for one approval, exactly one gets it.
+    const consumed = await store.update(candidate.id, (current) =>
+      live(current, now).status === "approved" && current.argsHash === hash ? { ...current, status: "consumed" } : undefined,
+    );
+    if (consumed) return consumed;
+  }
+  return undefined;
+}
+
+/**
+ * Give an approval back when the action it was spent on failed before doing anything
+ * useful (a 500, a timeout). The effect layer makes the retry safe; losing the approval
+ * would make the human click again for a failure that was not theirs.
+ */
+export async function restoreApproval(store: ApprovalStore, id: string): Promise<void> {
+  await store.update(id, (current) => (current.status === "consumed" ? { ...current, status: "approved" } : undefined));
 }

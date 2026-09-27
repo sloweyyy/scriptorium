@@ -23,6 +23,7 @@ Every one of these fails closed: unset means *less* is allowed, never more.
 | `TEAMMATE_PR_CHANNEL` | PRs are never checked automatically | a channel for PR-check summaries; each check's approval card threads under its summary |
 | `TEAMMATE_ALLOW_DMS` | a DM gets a one-time pointer to a channel, never an answer | `true`, to answer DMs (their cards still go to the notify channel) |
 | `TEAMMATE_MEMORY_DAYS` | memories lapse after 180 days | days; the expiry is signed with the approval |
+| `TEAMMATE_PEOPLE` | a request made on Jira or GitHub can be approved in Slack by the same person | each approver's Slack, Jira and GitHub accounts, linked (`slack:U1=jira:abc=github:dev; …`) |
 | `TEAMMATE_DAILY_TOKENS` | no spend cap | tokens per UTC day for each channel, Jira project and PR repo; over it the Teammate answers with a notice and no model call |
 | `TRACE_TOKEN` + `PUBLIC_BASE_URL` | no run viewer, so replies show a bare run id | a long random token and the service URL |
 

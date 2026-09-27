@@ -22,6 +22,8 @@ export interface AgentConfig {
   tools: Readonly<Record<string, Tier | ToolRule>>;
   /** Event kinds this agent answers, e.g. `slack.mention`, `jira.mention`. */
   triggers: readonly string[];
+  /** One person's accounts across surfaces, for separation of duties (see Envelope.people). */
+  people?: ReadonlyArray<ReadonlyArray<string>>;
 }
 
 export interface Skill {
@@ -44,7 +46,7 @@ export async function loadSkills(dir: string): Promise<Map<string, Skill>> {
 export function envelopeOf(config: AgentConfig): Envelope {
   const tools: Record<string, ToolRule> = {};
   for (const [name, rule] of Object.entries(config.tools)) tools[name] = typeof rule === "string" ? { tier: rule } : rule;
-  return { agent: config.name, selfAccountIds: config.selfAccountIds, tools };
+  return { agent: config.name, selfAccountIds: config.selfAccountIds, tools, ...(config.people?.length ? { people: config.people } : {}) };
 }
 
 /**

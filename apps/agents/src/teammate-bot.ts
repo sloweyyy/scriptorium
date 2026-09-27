@@ -239,7 +239,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const ledger = new FileEffectLedger(path.join(stateDir, "effects.json"));
   const connectorTools = teammateConnectorTools(config, slack, ledger);
   const skills = await loadSkills(path.join(config.repoRoot, "skills"));
-  const agentConfig = teammateConfig({ selfAccountIds: [self], approvers: (settings.approvers ?? []).map((id) => `slack:${id}`) });
+  const agentConfig = teammateConfig({ selfAccountIds: [self], approvers: (settings.approvers ?? []).map((id) => `slack:${id}`), people: settings.people });
   // Restrict to the connectors actually configured here: a tool the host can't provide is not offered.
   const available = new Set([...connectorTools.map((tool) => tool.name), "vault_overview", "search_vault", "read_note", "memory_save"]);
   const hostConfig = { ...agentConfig, tools: Object.fromEntries(Object.entries(agentConfig.tools).filter(([name]) => available.has(name))) };

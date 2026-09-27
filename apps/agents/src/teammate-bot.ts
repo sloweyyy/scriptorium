@@ -153,18 +153,28 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         const { channel, threadTs, text, ts } = event.payload as { channel: string; threadTs: string; text: string; ts: string };
         // One failing turn is answered and logged; it never drops the rest of the batch —
         // those deliveries are already marked seen, so Slack's redelivery would not bring them back.
+        // Acknowledge at once, then turn that same message into the answer: the asker sees the
+        // agent is on it, and the thread gets one reply rather than a placeholder plus an answer.
+        const placeholder = text
+          ? await slack.chat.postMessage({ channel, thread_ts: threadTs, text: "🔎 Looking into it…" }).catch(() => undefined)
+          : undefined;
+        const deliver = async (message: string): Promise<void> => {
+          if (placeholder?.ts) {
+            const updated = await slack.chat.update({ channel, ts: placeholder.ts, text: message }).catch(() => undefined);
+            if (updated?.ok) return;
+          }
+          await slack.chat.postMessage({ channel, thread_ts: threadTs, text: message });
+        };
         try {
           const context = text ? await threadContext(slack, channel, threadTs, ts).catch(() => undefined) : undefined;
           const reply = text
             ? await runTeammateTurn({ question: text, askedBy: event.actor.id, channel, threadTs, context }, turnDeps(key))
             : ({ kind: "action", text: "Hi — ask me about the product, a page or a ticket, or ask me to file one." } as const);
-          await slack.chat.postMessage({ channel, thread_ts: threadTs, text: formatReply(reply, currentRunId()) });
+          await deliver(formatReply(reply, currentRunId()));
           await audit(config.auditFile, { type: `teammate.${reply.kind}`, actor: "teammate", key, askedBy: event.actor.id, event: event.id });
         } catch (error) {
           await audit(config.auditFile, { type: "teammate.error", actor: "teammate", key, event: event.id, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
-          await slack.chat
-            .postMessage({ channel, thread_ts: threadTs, text: `⚠️ I couldn't finish that, so I haven't answered or changed anything. _run \`${(currentRunId() ?? "").slice(0, 8)}\`_` })
-            .catch(() => undefined);
+          await deliver(`⚠️ I couldn't finish that, so I haven't answered or changed anything. _run \`${(currentRunId() ?? "").slice(0, 8)}\`_`).catch(() => undefined);
         }
       });
     },

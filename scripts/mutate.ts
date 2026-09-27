@@ -172,6 +172,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-e2e.test.ts"],
   },
   {
+    control: "a plan's steps are held to the per-turn bounds",
+    file: "apps/agents/src/teammate.ts",
+    find: "          if (refusal) return `${refusal.replace(",
+    replace: "          if (false) return `${refusal.replace(",
+    evals: ["evals/teammate-bot.test.ts"],
+  },
+  {
     control: "slack_read_channel reads only the turn's own channel",
     file: "apps/agents/src/teammate.ts",
     find: "if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return \"NOT_ALLOWED: you may read only the channel",

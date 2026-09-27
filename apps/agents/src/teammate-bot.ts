@@ -1,5 +1,5 @@
 import path from "node:path";
-import { audit, jiraReady, type AppConfig, type ToolSpec, type Vault } from "@scriptorium/core";
+import { audit, currentRunId, jiraReady, withRun, type AppConfig, type ToolSpec, type Vault } from "@scriptorium/core";
 import {
   APPROVE_ACTION,
   ConfluenceConnector,
@@ -73,10 +73,15 @@ export function teammateConnectorTools(config: AppConfig, slack: SlackClient, le
   return tools;
 }
 
-export function formatReply(reply: TeammateReply): string {
+/**
+ * The reply as posted. Every agent-written message says so and names its run: the footer is
+ * the thread a reader pulls to find the trigger, tool calls and approvals behind it.
+ */
+export function formatReply(reply: TeammateReply, runId?: string): string {
   const body = toSlackMrkdwn(reply.text);
-  if (reply.kind === "gap" && reply.ticket) return `${body}\n🎫 <${reply.ticket.url}|${reply.ticket.key}>`;
-  return body;
+  const ticket = reply.kind === "gap" && reply.ticket ? `\n🎫 <${reply.ticket.url}|${reply.ticket.key}>` : "";
+  const footer = `\n_AI-generated — verify before acting${runId ? ` · run \`${runId.slice(0, 8)}\`` : ""}_`;
+  return `${body}${ticket}${footer}`;
 }
 
 export async function startTeammateBot(config: AppConfig, vault: Vault): Promise<() => Promise<void>> {
@@ -106,7 +111,7 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
 
   const queue = new KeyedQueue(
     async (key, events) => {
-      for (const event of events) {
+      for (const event of events) await withRun(async () => {
         const { channel, threadTs, text } = event.payload as { channel: string; threadTs: string; text: string };
         const reply = text
           ? await runTeammateTurn(
@@ -114,9 +119,9 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
               { vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config) },
             )
           : ({ kind: "action", text: "Hi — ask me about the product, a page or a ticket, or ask me to file one." } as const);
-        await app.client.chat.postMessage({ channel, thread_ts: threadTs, text: formatReply(reply) });
-        await audit(config.auditFile, { type: `teammate.${reply.kind}`, actor: "teammate", key, askedBy: event.actor.id });
-      }
+        await app.client.chat.postMessage({ channel, thread_ts: threadTs, text: formatReply(reply, currentRunId()) });
+        await audit(config.auditFile, { type: `teammate.${reply.kind}`, actor: "teammate", key, askedBy: event.actor.id, event: event.id });
+      });
     },
     {
       concurrency: 2,

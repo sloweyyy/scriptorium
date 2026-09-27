@@ -315,10 +315,12 @@ export class JiraClient {
     description: string;
     issueType: string;
     labels?: string[];
+    /** Defaults to the client's project. */
+    project?: string;
   }): Promise<{ key: string; url: string }> {
     const created = await this.post<{ key: string }>("/rest/api/2/issue", {
       fields: {
-        project: { key: this.projectKey },
+        project: { key: input.project ?? this.projectKey },
         summary: input.summary,
         description: input.description,
         issuetype: { name: input.issueType },

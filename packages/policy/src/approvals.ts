@@ -164,7 +164,10 @@ export async function requestApproval(
   // Asking twice for the same action is one request, not two cards.
   const existing = (await store.all())
     .map((request) => live(request, now))
-    .find((request) => request.agent === input.agent && request.tool === input.tool && request.argsHash === hash && request.status === "pending");
+    // Same action asked again IN THE SAME CONVERSATION is one request. In another thread it
+    // is a new request with its own card and its own asker — otherwise the second asker
+    // inherits the first one's `requestedBy` and can approve their own action.
+    .find((request) => request.agent === input.agent && request.tool === input.tool && request.argsHash === hash && request.status === "pending" && request.key === input.key && request.requestedBy === input.requestedBy);
   if (existing) return { request: existing, created: false };
 
   const request: ApprovalRequest = {
@@ -224,13 +227,21 @@ export async function decideApproval(
  */
 export async function consumeApproval(
   store: ApprovalStore,
-  input: { agent: string; tool: string; args: unknown },
+  input: { agent: string; tool: string; args: unknown; requestId?: string },
   now = new Date(),
 ): Promise<ApprovalRequest | undefined> {
   const hash = argsHash(input.args);
   const candidates = (await store.all())
     .map((request) => live(request, now))
-    .filter((request) => request.agent === input.agent && request.tool === input.tool && request.argsHash === hash && request.status === "approved");
+    .filter(
+      (request) =>
+        request.agent === input.agent &&
+        request.tool === input.tool &&
+        request.argsHash === hash &&
+        request.status === "approved" &&
+        // Carrying out a specific approval spends THAT one, not another with equal args.
+        (!input.requestId || request.id === input.requestId),
+    );
   for (const candidate of candidates) {
     // Spent atomically: of two runs racing for one approval, exactly one gets it.
     const consumed = await store.update(candidate.id, (current) =>
@@ -239,4 +250,13 @@ export async function consumeApproval(
     if (consumed) return consumed;
   }
   return undefined;
+}
+
+/**
+ * Give an approval back when the action it was spent on failed before doing anything
+ * useful (a 500, a timeout). The effect layer makes the retry safe; losing the approval
+ * would make the human click again for a failure that was not theirs.
+ */
+export async function restoreApproval(store: ApprovalStore, id: string): Promise<void> {
+  await store.update(id, (current) => (current.status === "consumed" ? { ...current, status: "approved" } : undefined));
 }

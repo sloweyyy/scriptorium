@@ -82,6 +82,11 @@ export class ConfluenceConnector {
     if (!this.settings.allowedSpaceKeys.length) return Promise.resolve(new Map());
     this.spaceIds ??= this.get(`/api/v2/spaces?keys=${this.settings.allowedSpaceKeys.map(encodeURIComponent).join(",")}`, SpaceList).then(
       (list) => new Map(list.results.map((space) => [space.id, space.key])),
+      (error: unknown) => {
+        // A failed lookup must not be cached: that kept Confluence dead until restart.
+        this.spaceIds = undefined;
+        throw error;
+      },
     );
     return this.spaceIds;
   }

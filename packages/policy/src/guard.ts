@@ -1,5 +1,5 @@
 import { audit, type ToolSpec } from "@scriptorium/core";
-import { consumeApproval, requestApproval, type ApprovalRequest, type ApprovalStore } from "./approvals";
+import { consumeApproval, requestApproval, restoreApproval, type ApprovalRequest, type ApprovalStore } from "./approvals";
 import { evaluate, type Envelope } from "./policy";
 
 /**
@@ -21,6 +21,8 @@ export interface GuardDeps {
   requestedBy?: string;
   /** One line describing the call for the card. Defaults to the tool name and args. */
   summarize?: (tool: string, input: unknown) => string;
+  /** When carrying out a specific approval: spend that request, not any with equal args. */
+  approvalId?: string;
 }
 
 /**
@@ -69,9 +71,16 @@ export async function runUnderPolicy(envelope: Envelope, tool: ToolSpec, input: 
     return { kind: "ran", result };
   }
 
-  const approval = await consumeApproval(deps.store, { agent: envelope.agent, tool: tool.name, args: input });
+  const approval = await consumeApproval(deps.store, { agent: envelope.agent, tool: tool.name, args: input, requestId: deps.approvalId });
   if (approval) {
-    const result = await tool.run(input, { approval: { id: approval.id, approvedBy: approval.decidedBy?.name ?? approval.decidedBy?.accountId } });
+    let result: string;
+    try {
+      result = await tool.run(input, { approval: { id: approval.id, approvedBy: approval.decidedBy?.name ?? approval.decidedBy?.accountId } });
+    } catch (error) {
+      await restoreApproval(deps.store, approval.id);
+      await audit(deps.auditFile, { type: "policy.run.failed", ...base, approval: approval.id, error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
     await audit(deps.auditFile, { type: "policy.ran", ...base, tier: "approve", approval: approval.id, approvedBy: approval.decidedBy?.accountId });
     return { kind: "ran", result, approval };
   }
@@ -139,5 +148,8 @@ export async function executeApproved(
   if (request.agent !== envelope.agent) return { kind: "not-runnable", reason: `request ${requestId} belongs to ${request.agent}` };
   const tool = tools.find((candidate) => candidate.name === request.tool);
   if (!tool) return { kind: "not-runnable", reason: `no tool ${request.tool} on this host` };
-  return runUnderPolicy(envelope, tool, request.args, { ...deps, key: request.key, requestedBy: request.requestedBy });
+  const outcome = await runUnderPolicy(envelope, tool, request.args, { ...deps, key: request.key, requestedBy: request.requestedBy, approvalId: request.id });
+  // Carrying out an approval must never turn into asking for a new one.
+  if (outcome.kind === "pending") return { kind: "not-runnable", reason: `request ${requestId} could not be spent` };
+  return outcome;
 }

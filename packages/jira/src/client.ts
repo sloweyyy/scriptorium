@@ -2,6 +2,9 @@ import { Buffer } from "node:buffer";
 import type { JiraSettings } from "@scriptorium/core";
 import type { JiraAttachment, JiraComment, JiraIssue, JiraRemoteLink, JiraTransition, JiraUser } from "./types";
 
+/** Entity-property key an op-keyed comment carries. */
+export const COMMENT_OP_PROPERTY = "scriptorium.op";
+
 export interface JiraClientConfig {
   baseUrl: string;
   email: string;
@@ -164,15 +167,30 @@ export class JiraClient {
     return undefined;
   }
 
-  async listComments(key: string, maxResults = 200): Promise<JiraComment[]> {
+  async listComments(key: string, maxResults = 200, options: { expandProperties?: boolean } = {}): Promise<JiraComment[]> {
+    const expand = options.expandProperties ? "&expand=properties" : "";
     const data = await this.get<{ comments?: JiraComment[] }>(
-      `/rest/api/2/issue/${encodeURIComponent(key)}/comment?orderBy=created&maxResults=${maxResults}`,
+      `/rest/api/2/issue/${encodeURIComponent(key)}/comment?orderBy=created&maxResults=${maxResults}${expand}`,
     );
     return data.comments ?? [];
   }
 
-  async addComment(key: string, body: string): Promise<JiraComment> {
-    return this.post<JiraComment>(`/rest/api/2/issue/${encodeURIComponent(key)}/comment`, { body });
+  /**
+   * `op` is stored as an entity property on the comment itself, in the same call — so
+   * whether a write landed can be asked of Jira, not only of a local ledger that a crash
+   * may have left behind (see `findCommentByOp`).
+   */
+  async addComment(key: string, body: string, options: { op?: string } = {}): Promise<JiraComment> {
+    const properties = options.op ? [{ key: COMMENT_OP_PROPERTY, value: { op: options.op } }] : undefined;
+    return this.post<JiraComment>(`/rest/api/2/issue/${encodeURIComponent(key)}/comment`, { body, ...(properties ? { properties } : {}) });
+  }
+
+  /** The comment an op already produced, if Jira has it. */
+  async findCommentByOp(key: string, op: string): Promise<JiraComment | undefined> {
+    const comments = await this.listComments(key, 200, { expandProperties: true });
+    return comments.find((comment) =>
+      comment.properties?.some((property) => property.key === COMMENT_OP_PROPERTY && (property.value as { op?: string } | undefined)?.op === op),
+    );
   }
 
   async listTransitions(key: string): Promise<JiraTransition[]> {

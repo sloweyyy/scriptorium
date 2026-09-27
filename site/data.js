@@ -7,7 +7,7 @@ window.SITE = {
     { value: "500+", label: "evals, deterministic, on every commit" },
     { value: "31", label: "guardrails proven by mutation testing" },
     { value: "30+", label: "tools, every write approve-tier" },
-    { value: "12", label: "reviewed pull requests merged" },
+    { value: "9", label: "reviewed pull requests merged" },
   ],
 
   capabilities: [
@@ -48,6 +48,7 @@ window.SITE = {
     { when: "27 Sep", pr: 11, title: "Jira edits and channel catch-up", text: "Move, assign, label and link issues. Channel catch-up, triage of new tickets, and answers to edited mentions. The busiest file split apart.", tags: ["Jira", "Slack", "triage"] },
     { when: "27 Sep", pr: 12, title: "Plans, reminders, the approvals inbox", text: "One approval for a multi-step plan, approved reminders, sprint reports, release notes, Confluence page trees, /teammate and the File-as-a-ticket shortcut, and an App Home inbox.", tags: ["plans", "reminders", "App Home"] },
     { when: "27 Sep, late", pr: 13, title: "Production readiness", text: "An admin kill switch, waiting out rate limits, a hash-chained audit log, Confluence attachments, bounded lists that say when they stopped short, and a DM scope fix.", tags: ["kill switch", "audit", "rate limits"] },
+    { when: "28 Sep", pr: 14, title: "A project page and an open-source README", text: "This page, with its architecture diagram, favicon and social card, and a README rewritten for an open-source project, plus CONTRIBUTING and SECURITY policies.", tags: ["site", "docs"] },
   ],
 
   findings: [

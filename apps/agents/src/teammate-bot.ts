@@ -437,6 +437,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       if (!(await answersIn(channel, user))) return notHere();
       const question = text.trim();
       if (isHelpRequest(question)) return helpText(settings);
+      // Over today's cap: say so privately, before posting a question nobody will answer.
+      if (await overBudget(keys.slackThread(channel, "command"), channel)) return LIMIT_NOTICE;
       // The command itself is invisible to the channel, so the question is posted first and
       // becomes the thread — the answer and any approval card land under it, where people see them.
       const root = await slack.chat.postMessage({ channel, text: `<@${user}> asked: ${escapeMrkdwn(question)}` }).catch(() => undefined);

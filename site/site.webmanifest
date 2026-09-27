@@ -1,0 +1,11 @@
+{
+  "name": "scriptorium",
+  "short_name": "scriptorium",
+  "icons": [
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "theme_color": "#2d3a8c",
+  "background_color": "#fbfaf7",
+  "display": "browser"
+}

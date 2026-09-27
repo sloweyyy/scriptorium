@@ -3,7 +3,7 @@
 Operating scriptorium. The deployment is one always-on Cloud Run service, pinned to a single
 instance (`--min-instances=1 --max-instances=1 --no-cpu-throttling`). It runs the Jira
 poller, the Slack bots over Socket Mode, the webhooks and the run viewer. Setup is covered in
-the README's *Deploy it* section. This page covers what to set, how to check it works, and
+[deploy.md](deploy.md). This page covers what to set, how to check it works, and
 what to do when it doesn't.
 
 ## Settings that decide safety

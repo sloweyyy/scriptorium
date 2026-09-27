@@ -1,5 +1,6 @@
+import fs from "node:fs/promises";
 import path from "node:path";
-import { audit, currentRunId, jiraReady, withRun, type AppConfig, type ToolSpec, type Vault } from "@scriptorium/core";
+import { audit, currentRunId, jiraReady, parseAudit, withRun, type AppConfig, type ToolSpec, type Vault } from "@scriptorium/core";
 import {
   APPROVE_ACTION,
   ConfluenceConnector,
@@ -14,7 +15,7 @@ import {
 import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type JiraClient } from "@scriptorium/jira";
 import { installationToken } from "@scriptorium/publish";
 import { FileApprovalStore, executeApproved, type GuardDeps } from "@scriptorium/policy";
-import { FileEffectLedger, Gate, KeyedQueue, envelopeOf, keys, loadSkills, memoryTools, once, opKey, type AgentEvent, type EffectLedger } from "@scriptorium/runtime";
+import { DailyBudget, FileEffectLedger, Gate, KeyedQueue, envelopeOf, keys, loadSkills, memoryTools, once, opKey, type AgentEvent, type EffectLedger } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
 import { gapTicketOpener } from "./gap-ticket";
@@ -195,6 +196,9 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   // Cards follow the request: its channel thread; a PR → the PR channel; a DM or Jira → notify.
   const approvalChannel = new SlackApprovalChannel(slack, { fallbackChannel: config.slack.notifyChannel, prChannel: settings.prChannel });
   const guardDepsFor = (key: string): GuardDeps => ({ store, channel: approvalChannel, auditFile: config.auditFile, key });
+  // Spend caps per channel per day, seeded from today's audit so a restart is not a reset.
+  const budget = new DailyBudget(settings.dailyTokens);
+  budget.seed(parseAudit(await fs.readFile(config.auditFile, "utf8").catch(() => "")));
   const turnDeps = (key: string) => ({ vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config), signingKey: config.signingKey });
 
   const gate = new Gate({
@@ -230,7 +234,15 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
             await deliver(helpText(settings));
             return;
           }
-          const reply = await runTeammateTurn({ question: text, askedBy: event.actor.id, channel, threadTs, context }, turnDeps(key));
+          if (budget.exhausted(channel)) {
+            await audit(config.auditFile, { type: "teammate.budget.exhausted", actor: "teammate", key, scope: channel }).catch(() => undefined);
+            await deliver("I've reached today's usage limit for this channel, so I'm not answering until tomorrow (UTC). An admin can raise `TEAMMATE_DAILY_TOKENS`.");
+            return;
+          }
+          const reply = await runTeammateTurn(
+            { question: text, askedBy: event.actor.id, channel, threadTs, context },
+            { ...turnDeps(key), onUsage: (usage) => budget.add(channel, usage.input + usage.output) },
+          );
           const textOut = formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken });
           // An answer's sources are the point of the product: render them as links, the way
           // Curator does — vault notes to their site, Jira/Confluence/GitHub to their pages.

@@ -7,3 +7,4 @@ When asked to "make a ticket", "file this" or "track this":
 2. Search Jira for an existing issue on the same thing. If one exists, say so and link it instead of creating a duplicate.
 3. Draft the issue: a summary under 12 words that names the outcome, a description with context (link the thread), acceptance criteria as a checklist, and open questions.
 4. Call `jira_create_issue`. It needs approval: tell the person the ticket is waiting on an approver, and that nothing is filed until then.
+5. If the discussion needs several changes — tickets from a meeting, a ticket plus labels or links — propose them together with `propose_plan` (one card, every step listed) instead of one card per change.

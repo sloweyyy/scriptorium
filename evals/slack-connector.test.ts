@@ -218,3 +218,14 @@ describe("a Slack message as a citation", () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 });
+
+describe("a plan's card", () => {
+  it("lists every step, in order, from the stored arguments", async () => {
+    const { describeRequest } = await import("@scriptorium/connectors");
+    const request = {
+      id: "r", agent: "Teammate", tool: "propose_plan", argsHash: "h", summary: "", key: "slack:thread:C1/1.0", requestedAt: "", expiresAt: "", status: "pending" as const,
+      args: { title: "Meeting follow-ups", steps: [{ tool: "jira_create_issue", args: { summary: "Digest timezone" } }, { tool: "jira_labels", args: { key: "DOC-7", add: ["needs-docs"] } }] },
+    };
+    expect(describeRequest(request)).toBe("Carry out a 2-step plan: “Meeting follow-ups”\n1. Create a Jira issue: “Digest timezone”\n2. Change labels on DOC-7: +needs-docs");
+  });
+});

@@ -1,6 +1,6 @@
 import { audit, type ToolRunContext, type ToolSpec, type Vault } from "@scriptorium/core";
 import { buildRetrievalIndex, enforceGrounding, fileGapNote, parseQaAnswer, qaTools, type GapInput } from "@scriptorium/curator";
-import type { GuardDeps } from "@scriptorium/policy";
+import { PLAN_TOOL, checkPlan, type GuardDeps } from "@scriptorium/policy";
 import { assembleAgent, listMemories, memoryTools, renderMemories, runSession, scopesFor, SessionError, type AgentConfig, type SessionUsage, type Skill } from "@scriptorium/runtime";
 
 /**
@@ -30,6 +30,7 @@ const WRITE_DESCRIPTIONS: Record<string, string> = {
   confluence_update_page: "update the Confluence page",
   memory_save: "remember that",
   github_pr_comment: "comment on the pull request",
+  propose_plan: "carry out the plan",
   slack_reply: "reply in the thread",
 };
 
@@ -47,7 +48,7 @@ export function describeOutcome(tool: string, result: string): string {
   return `✅ ${result.split("\n")[0]}`;
 }
 
-export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "jira_transition", "jira_assign", "jira_labels", "jira_link", "slack_reply", "confluence_create_page", "confluence_update_page", "memory_save", "github_pr_comment"]);
+export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "jira_transition", "jira_assign", "jira_labels", "jira_link", "slack_reply", "confluence_create_page", "confluence_update_page", "memory_save", "github_pr_comment", "propose_plan"]);
 
 export type TeammateReply =
   | { kind: "answer"; text: string; citations: string[] }
@@ -147,7 +148,17 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
   const records = new Set<string>();
   /** What each write tool reported — the ONLY text an uncited action reply may carry. */
   const writeOutcomes: string[] = [];
-  const tools = bindToTurn(agent.tools, turn).map((tool) => ({
+  // A plan that couldn't run is refused before it becomes a card: an approver never sees one.
+  const available = [...vaultTools, ...memoryTools(deps.vault, deps.signingKey), ...deps.connectorTools];
+  const planned = agent.tools.map((tool) =>
+    tool.name === PLAN_TOOL
+      ? { ...tool, run: async (input: unknown, context?: ToolRunContext) => {
+          const problem = checkPlan(agent.envelope, available, input);
+          return problem ? `NOT_ALLOWED: ${problem}` : tool.run(input, context);
+        } }
+      : tool,
+  );
+  const tools = bindToTurn(planned, turn).map((tool) => ({
     ...tool,
     run: async (input: unknown) => {
       used.add(tool.name);

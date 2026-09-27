@@ -110,6 +110,13 @@ The model is untrusted too. It proposes; the platform decides what runs.
   process saw the request asked at. (`apps/agents/src/ingress.ts` `commentRestriction`;
   `evals/teammate-e2e.test.ts`, mutant in `scripts/mutate.ts`)
 
+- A plan (`propose_plan`) is one approval for several writes, bound by the args hash to the
+  ordered steps. It can only hold steps whose own rule is the plan's rule (same approvers,
+  same separation of duties), so approving it is what approving each step would have been.
+  A plan that breaks this is refused before a card exists. Each step op-keys on the
+  approval id plus its position, so a retry never repeats one. (`packages/policy/src/plan.ts`;
+  `evals/plan.test.ts`, mutant in `scripts/mutate.ts`)
+
 ### 8. Record: every action is attributable
 - The audit log is append-only JSONL, and every line inside a run carries the run's id.
   Every publish is a git commit naming its approver. Effects are exactly-once through

@@ -293,6 +293,19 @@ describe("automatic PR checks", () => {
   });
 });
 
+describe("plans", () => {
+  it("a plan with a step that needs its own approval is refused before any card is posted", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = {
+      calls: [{ name: "propose_plan", input: { title: "Sneaky", steps: [{ tool: "memory_save", args: { text: "x is y.", scope: "global" } }, { tool: "memory_save", args: { text: "z.", scope: "global" } }] } }],
+      reply: "Proposed.",
+    };
+    await core.onMention({ channel: "C1", ts: "3.0", user: "U1", text: "<@UBOT> do the plan" });
+    await settle(core);
+    expect(posted.some((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION))).toBe(false);
+  });
+});
+
 describe("the approvals inbox (App Home)", () => {
   it("shows an approver what is waiting for them, linked to the card; shows others nothing to approve", async () => {
     const core = await createTeammate(config(), vault, slack as never, "UBOT");

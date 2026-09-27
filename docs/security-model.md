@@ -1,0 +1,103 @@
+# Security model
+
+scriptorium's agents read text written by anyone who can reach a Jira ticket, a Confluence
+page or a Slack channel. They can also write: comments, tickets, published docs, house rules,
+memories. This document says what is trusted, what isn't, and which control stops each way
+that could go wrong. Every control is backed by an eval that fails if the control is removed.
+
+## Trust boundaries
+
+| Trusted | Untrusted (data, never instructions) |
+|---|---|
+| This repository's code, `skills/*.md`, agent configs | PRD attachments, ticket descriptions and comments |
+| Environment configuration (allow-lists, approver lists, secrets) | Confluence pages, design images and their filenames |
+| A decision recorded by a listed approver, by account id | Slack messages and threads |
+| | Anything a model writes, including its tool calls |
+| | Webhook payloads, until their signature checks out |
+
+The model is untrusted too. It proposes; the platform decides what runs.
+
+## Layers
+
+### 1. Ingress: only authentic, first-time events get in
+- Jira webhooks need a secret path, plus an HMAC signature once one is configured. GitHub
+  webhooks need `x-hub-signature-256`. Failures get 404 or 401 and do no work.
+  (`apps/agents/src/ingress.ts`; `evals/ingress.test.ts`)
+- Redeliveries are deduplicated on `X-Atlassian-Webhook-Identifier` / `X-GitHub-Delivery`,
+  after the signature check, so a forgery can't poison a real delivery.
+- The `Gate` drops the platform's own events, other bots' events and anything outside a
+  source's configured scope, and every refusal is logged with its reason.
+  (`packages/runtime/src/gate.ts`; `evals/runtime.test.ts`)
+
+### 2. Parsing: input stays input
+- Frontmatter is YAML only. gray-matter's `---js` engine would *execute* a PRD, so it is
+  refused. (`packages/core/src/vault.ts`; `evals/frontmatter-safety.test.ts`)
+- A PRD's own frontmatter keys are allow-listed before they reach the vault. A design's
+  filename comes from its media type, not from what the uploader typed.
+  (`evals/jira.test.ts`, "untrusted ticket input stays input")
+- Commands are read only from the reviewer's own words. A quoted or code-block `approve` is
+  not an approval, and an approval-shaped near-miss gets a question.
+  (`packages/jira/src/commands.ts`; `evals/jira.test.ts`)
+
+### 3. Prompting: untrusted text is fenced
+- Every agent's system prompt says that tool output is data and must never be obeyed.
+  Skills can't remove this. (`packages/runtime/src/agent.ts`; `evals/agent-config.test.ts`)
+- Scribe's PRD, draft and feedback go in `<prd>`, `<draft>` and `<feedback>` fences that
+  can't be closed from inside. (`packages/scribe/src/prompts.ts`; `evals/injection.test.ts`)
+
+### 4. Policy: one check on every tool call
+- Every tool is `allow`, `approve` or `deny`, per agent. Unlisted tools are denied and not
+  even offered to the model. (`packages/policy`; `evals/policy.test.ts`)
+- An approval belongs to a named, listed human, never to the agent itself (and under
+  separation of duties, never to the requester). It is single-use, it expires, and it
+  covers only the exact arguments that were shown, by hash.
+- An approval request nobody can see is not requested: if the card can't be posted, the
+  tool does not run.
+- The same rules hold on every surface: Jira `approve` (`JIRA_APPROVERS`), a board move (an
+  unattributable mover fails closed), the Slack buttons (`SCRIBE_SLACK_APPROVERS`, and a
+  draft fingerprint on the card), and lesson decisions (only on the ticket that proposed
+  them, and a rejection stands). (`evals/jira-board.test.ts`, `evals/slack-approval.test.ts`,
+  `evals/lessons.test.ts`)
+- An approval older than the current draft was given to an earlier draft, and it is held.
+
+### 5. Blast radius: connectors see only what they are allowed to see
+- Jira projects, Confluence spaces and Slack channels are allow-listed, reads included, and
+  an empty list means none. A refused Confluence page leaks not even its title.
+  (`packages/connectors`; `evals/*-connector.test.ts`)
+- The model supplies words, never JQL or CQL. Its input is escaped into a string literal.
+- There is no Slack search tool: agents read only the thread they were asked in.
+- The vault path guard means nothing an agent writes lands outside the vault.
+  (`evals/publish-record.test.ts`)
+- The MCP server is read-only: it files no gaps and writes no notes.
+  (`evals/mcp-server.test.ts`)
+- Credentials live in connectors and never enter a prompt or a tool result.
+
+### 6. Output: no citation, no claim
+- Any factual answer must cite a record that a tool returned in this conversation and that
+  exists. Anything else is refused, not posted. (`enforceGrounding`; `evals/grounding.test.ts`)
+- The model loop fails closed: a capped, truncated, refused or empty turn raises an error;
+  it is never half an answer. (`evals/session.test.ts`)
+- Every reply says it is AI-generated and names its run.
+
+### 7. Learning: nothing is learned without a human
+- Scribe's house rules and the Teammate's memories are both proposals until a listed human
+  approves them. Memories are scoped (global, channel or person) and never reach published
+  docs. Curator's behaviour never changes with either.
+  (`evals/lesson-gate.test.ts`, `evals/memory.test.ts`, `evals/curator-isolation.test.ts`)
+
+### 8. Record: every action is attributable
+- The audit log is append-only JSONL, and every line inside a run carries the run's id.
+  Every publish is a git commit naming its approver. Effects are exactly-once through
+  op-keys, so a retry never doubles a write. (`evals/publish-record.test.ts`,
+  `evals/run-trace.test.ts`, `evals/effects.test.ts`)
+
+## Known gaps
+
+- A restore from the internal branch (`vault-live`) trusts lessons already marked
+  approved, so write access to that branch skips the lesson gate.
+- Atlassian writes are made with one person's API token. A scoped service-account token
+  would make the agent its own identity in Jira and Confluence.
+- The Teammate acts on Jira only from Slack in v1. Answering inside Jira needs a second
+  Atlassian identity, so it doesn't share Scribe's.
+- Prompt-injection resistance is structural and cannot be proved deterministically. It
+  needs a live red-team suite behind `RUN_LLM_EVALS`.

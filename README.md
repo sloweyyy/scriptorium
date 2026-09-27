@@ -154,6 +154,9 @@ configuration — identity, a tool → tier map, skills, triggers — not a new 
 | Connectors see only allow-listed projects, spaces and channels; the model writes words, never JQL/CQL | `packages/connectors` |
 | Tool output is data, never instructions — in every agent's system prompt, whatever its skills say | `packages/runtime/src/agent.ts` |
 
+The full threat model, layer by layer and with the eval behind each control, is in
+[`docs/security-model.md`](docs/security-model.md).
+
 **The Teammate** (`apps/agents/src/teammate-bot.ts`, `slack-manifests/teammate.yaml`) is the
 general agent on it. Skills are markdown in [`skills/`](skills/). It answers only in
 `TEAMMATE_SLACK_CHANNELS`; its Jira comments and new issues post an approval card, and a
@@ -219,7 +222,7 @@ agent never pushes `main`.
 
 ## What is verified, and how
 
-**319 scripted checks, none of which need a model or a credential:** `git clone`,
+**352 scripted checks, none of which need a model or a credential:** `git clone`,
 `pnpm install`, `pnpm eval`, green (`RUN_LLM_EVALS=1` adds five live grounded-Q&A checks on
 whichever provider is configured). They cover the guardrails rather than the prose — contract
 refusal, the lint, the ledger and its restart behaviour, the board transitions, the publish
@@ -296,7 +299,7 @@ Checks:
 
 ```bash
 pnpm typecheck
-pnpm eval                     # 319 checks, no API key needed
+pnpm eval                     # 352 checks, no API key needed
 RUN_LLM_EVALS=1 pnpm eval     # + live grounded-Q&A checks
 ```
 

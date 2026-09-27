@@ -34,6 +34,13 @@ describe("teammate slack surface", () => {
     expect(scoped.check(mentionToEvent({ channel: "C1", ts: "1.2", user: "UBOT" })).accepted).toBe(false);
   });
 
+  it("caps a question's length, and says it was cut", () => {
+    const long = mentionToEvent({ channel: "C1", ts: "1.0", user: "U9", text: `<@UBOT> ${"x".repeat(10_000)}` });
+    expect(long.payload.text.length).toBeLessThan(4_200);
+    expect(long.payload.text).toContain("was cut off");
+    expect(mentionToEvent({ channel: "C1", ts: "1.0", user: "U9", text: "<@UBOT> short" }).payload.text).toBe("short");
+  });
+
   it("offers only the connectors configured on this host", () => {
     const slackOnly = teammateConnectorTools(config(), slack, new MemoryEffectLedger()).map((tool) => tool.name);
     expect(slackOnly).toEqual(["slack_read_thread", "slack_reply"]);

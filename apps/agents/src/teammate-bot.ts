@@ -47,6 +47,16 @@ export interface SlackMention {
 }
 
 /** A Slack `app_mention` as the platform's event. Pure, so the mapping is pinned by evals. */
+/**
+ * The longest question a turn takes. A pasted log or a 30k-character comment is not a
+ * question, and every character of it is paid for on every model round.
+ */
+export const MAX_QUESTION_CHARS = 4_000;
+
+export function capQuestion(text: string): string {
+  return text.length > MAX_QUESTION_CHARS ? `${text.slice(0, MAX_QUESTION_CHARS)}\n\n[…the rest of this message (${text.length - MAX_QUESTION_CHARS} characters) was cut off]` : text;
+}
+
 export function mentionToEvent(mention: SlackMention): AgentEvent<{ channel: string; threadTs: string; text: string; ts: string }> {
   const threadTs = mention.thread_ts ?? mention.ts;
   return {
@@ -55,7 +65,7 @@ export function mentionToEvent(mention: SlackMention): AgentEvent<{ channel: str
     key: keys.slackThread(mention.channel, threadTs),
     kind: "slack.mention",
     actor: { id: `slack:${mention.user ?? mention.bot_id ?? "unknown"}`, isBot: Boolean(mention.bot_id) },
-    payload: { channel: mention.channel, threadTs, text: stripMentions(mention.text), ts: mention.ts },
+    payload: { channel: mention.channel, threadTs, text: capQuestion(stripMentions(mention.text)), ts: mention.ts },
     receivedAt: new Date().toISOString(),
   };
 }
@@ -621,7 +631,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         key: keys.jiraIssue(issueKey),
         kind: "jira.mention",
         actor: { id: `jira:${authorId ?? "unknown"}` },
-        payload: { issueKey, commentId, question: jiraToMarkdown(plainText(body)), restriction },
+        payload: { issueKey, commentId, question: capQuestion(jiraToMarkdown(plainText(body))), restriction },
         receivedAt: new Date().toISOString(),
       };
       const verdict = gate.check(event);

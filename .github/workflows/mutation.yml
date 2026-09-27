@@ -15,6 +15,10 @@ on:
       - "packages/curator/src/search.ts"
       - "packages/core/src/vault.ts"
       - "packages/connectors/**"
+      - "apps/agents/src/teammate.ts"
+      - "apps/agents/src/teammate-bot.ts"
+      - "packages/jira/src/commands.ts"
+      - "packages/scribe/src/pipeline.ts"
       - "scripts/mutate.ts"
 permissions:
   contents: read

@@ -111,6 +111,11 @@ export interface TeammateSettings extends SlackAppTokens {
   jiraProjects: string[];
   /** Confluence space keys it may search and read. */
   confluenceSpaces: string[];
+  /** Channel for the weekly digest. Unset: no digest. */
+  digestChannel?: string;
+  /** When it goes out, UTC: weekday 1–7 (Mon–Sun) and hour. Default Monday 09:00. */
+  digestWeekday: number;
+  digestHour: number;
 }
 
 export interface SlackSettings {
@@ -238,6 +243,9 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       channels: list(env("TEAMMATE_SLACK_CHANNELS")),
       jiraProjects: list(env("TEAMMATE_JIRA_PROJECTS")),
       confluenceSpaces: list(env("TEAMMATE_CONFLUENCE_SPACES")),
+      digestChannel: env("TEAMMATE_DIGEST_CHANNEL"),
+      digestWeekday: envNumber("TEAMMATE_DIGEST_WEEKDAY", 1),
+      digestHour: envNumber("TEAMMATE_DIGEST_HOUR", 9),
     },
     jira: {
       baseUrl: env("JIRA_BASE_URL"),

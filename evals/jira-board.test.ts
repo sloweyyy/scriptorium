@@ -84,7 +84,7 @@ function config(): AppConfig {
     port: 8080,
     scribe: {},
     curator: {},
-    teammate: { channels: [], jiraProjects: [], confluenceSpaces: [] },
+    teammate: { channels: [], jiraProjects: [], confluenceSpaces: [], digestWeekday: 1, digestHour: 9 },
     slack: {},
     sites: {},
     webhook: {},

@@ -111,4 +111,28 @@ describe("memories lapse", () => {
       else process.env.SCRIPTORIUM_SIGNING_KEY = previous;
     }
   });
+
+  it("an unquoted expiry (how Obsidian saves one) still verifies and still lapses; an unreadable one fails closed", async () => {
+    const previous = process.env.SCRIPTORIUM_SIGNING_KEY;
+    process.env.SCRIPTORIUM_SIGNING_KEY = "k";
+    try {
+      const [save] = memoryTools(vault);
+      await save!.run({ text: "Release notes go out on Thursdays.", scope: "channel:C1" }, { approval: { id: "a3", approvedBy: "Priya" } });
+      const [relPath] = await vault.listNotes("_memory");
+      const file = path.join(tmpRoot, relPath!);
+      const expiresAt = (await vault.readNote(relPath!)).frontmatter.expires_at as string;
+      const raw = await fs.readFile(file, "utf8");
+      await fs.writeFile(file, raw.replace(/^expires_at: .*$/m, `expires_at: ${expiresAt}`));
+      expect((await vault.readNote(relPath!)).frontmatter.expires_at).toBeInstanceOf(Date);
+      expect(await listMemories(vault, ["channel:C1"])).toHaveLength(1);
+      expect(await listMemories(vault, ["channel:C1"], new Date(Date.parse(expiresAt) + 1_000))).toHaveLength(0);
+
+      delete process.env.SCRIPTORIUM_SIGNING_KEY;
+      await fs.writeFile(file, raw.replace(/^expires_at: .*$/m, "expires_at: someday"));
+      expect(await listMemories(vault, ["channel:C1"])).toHaveLength(0);
+    } finally {
+      if (previous === undefined) delete process.env.SCRIPTORIUM_SIGNING_KEY;
+      else process.env.SCRIPTORIUM_SIGNING_KEY = previous;
+    }
+  });
 });

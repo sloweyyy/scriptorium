@@ -57,7 +57,7 @@ describe("teammate slack surface", () => {
 
   it("offers only the connectors configured on this host", () => {
     const slackOnly = teammateConnectorTools(config(), slack, new MemoryEffectLedger()).map((tool) => tool.name);
-    expect(slackOnly).toEqual(["slack_read_thread", "slack_reply"]);
+    expect(slackOnly).toEqual(["slack_read_thread", "slack_read_channel", "slack_reply"]);
     // The shared token reads; it never writes as the Teammate.
     const shared = teammateConnectorTools(config({}, true), slack, new MemoryEffectLedger()).map((tool) => tool.name);
     expect(shared).toEqual(expect.arrayContaining(["jira_search", "jira_get_issue", "confluence_search"]));
@@ -129,6 +129,14 @@ describe("tools bound to the turn", () => {
     for (const scope of ["global", "channel:C1", "person:slack:U1"]) expect(await save!.run({ text: "x is y.", scope })).toBe("ok");
     for (const scope of ["channel:C2", "person:slack:U2"]) expect(await save!.run({ text: "x is y.", scope })).toMatch(/^NOT_ALLOWED/);
     expect(ran).toEqual(["slack_read_thread", "memory_save", "memory_save", "memory_save"]);
+  });
+
+  it("reads only the channel it was asked in — never another allowed one", async () => {
+    const { bindToTurn } = await import("@scriptorium/agents");
+    const { z } = await import("zod");
+    const [channel] = bindToTurn([{ name: "slack_read_channel", description: "", inputSchema: z.object({}), run: async () => "ok" }], { question: "q", askedBy: "slack:U1", channel: "C1", threadTs: "1.0" });
+    expect(await channel!.run({ channel: "C1", hours: 24 })).toBe("ok");
+    expect(await channel!.run({ channel: "C_PRIVATE", hours: 24 })).toMatch(/^NOT_ALLOWED/);
   });
 });
 

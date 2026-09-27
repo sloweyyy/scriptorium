@@ -42,6 +42,7 @@ describe("agent policy", () => {
       jira_children: "allow",
       jira_get_issue: "allow",
       slack_read_thread: "allow",
+      slack_read_channel: "allow",
       github_get_pull: "allow",
       jira_comment: "approve",
       jira_create_issue: "approve",

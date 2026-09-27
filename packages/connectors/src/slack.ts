@@ -15,7 +15,8 @@ import { z } from "zod";
  * Slack as tools, and Slack as the place a human approves (ADR-001 slice 4c).
  *
  * - Channels are allow-listed, reads included. Slack's terms rule out bulk indexing, so
- *   there is no "search Slack" tool at all: an agent reads the one thread it was asked in.
+ *   there is no "search Slack" tool at all: an agent reads, on demand, the thread or the
+ *   channel it was asked in (bindToTurn holds it to that), and keeps nothing.
  * - A reply carries its op-key in message metadata, so a retry finds the reply it already
  *   made (exactly-once, same pattern as Jira comment properties).
  * - `SlackApprovalChannel` is the policy layer's approval card: posted in the thread the
@@ -38,6 +39,11 @@ export interface SlackToolSettings {
 
 export class SlackAccessError extends Error {}
 
+/** A Slack message as a citable record: `slack:<channel>/<ts>` — no "#", which wikilinks read as a heading. */
+export function slackRecord(channel: string, ts: string): string {
+  return `slack:${channel}/${ts}`;
+}
+
 export function slackTools(settings: SlackToolSettings): ToolSpec[] {
   const check = (channel: string): string => {
     if (!settings.allowedChannels.includes(channel)) throw new SlackAccessError(`Channel ${channel} is outside the Slack channels this agent may use.`);
@@ -55,6 +61,33 @@ export function slackTools(settings: SlackToolSettings): ToolSpec[] {
           const replies = await settings.client.conversations.replies({ channel: check(channel), ts: thread_ts, limit: 50 });
           return (replies.messages ?? []).map((message) => `${message.user ?? message.bot_id ?? "someone"}: ${message.text ?? ""}`).join("\n");
         }),
+    },
+    {
+      name: "slack_read_channel",
+      description:
+        "Read the recent messages of the channel you were asked in (up to 72 hours back), to catch someone up. Cite a message as [[slack:<channel>/<ts>]], using the id at the start of its line.",
+      inputSchema: z.object({ channel: z.string(), hours: z.number().int().min(1).max(72).default(24) }),
+      run: (input) =>
+        refusalOr(async () => {
+          const { channel, hours } = z.object({ channel: z.string(), hours: z.number().int().min(1).max(72).default(24) }).parse(input);
+          const oldest = String(Math.floor(Date.now() / 1000) - hours * 3600);
+          const history = await settings.client.conversations.history({ channel: check(channel), oldest, limit: 200 });
+          const messages = [...(history.messages ?? [])].filter((message) => message.ts && message.text).reverse();
+          if (!messages.length) return `No messages in ${channel} in the last ${hours} hours.`;
+          // One message per line, its id first, its text flattened: text is DATA, and a message
+          // that contains a newline and "slack:C1/…" must not become a record it isn't.
+          return messages
+            .map((message) => `${slackRecord(channel, message.ts as string)} — ${message.bot_id ? "(bot) " : ""}<@${message.user ?? message.bot_id ?? "someone"}>: ${(message.text ?? "").replace(/\s+/g, " ").slice(0, 600)}`)
+            .join("\n");
+        }),
+      records: (input, output) => {
+        const channel = (input as { channel?: unknown } | undefined)?.channel;
+        if (typeof channel !== "string") return [];
+        return output
+          .split("\n")
+          .map((line) => line.match(/^(slack:[A-Z0-9]+\/\d+\.\d+) — /)?.[1])
+          .filter((id): id is string => Boolean(id) && (id as string).startsWith(`slack:${channel}/`));
+      },
     },
     {
       name: "slack_reply",

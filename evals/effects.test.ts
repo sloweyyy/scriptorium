@@ -104,6 +104,25 @@ describe("jira op-keyed comments", () => {
     expect((await client.findCommentByOp("DOC-1", "abc"))?.id).toBe("10");
     expect(await client.findCommentByOp("DOC-1", "other")).toBeUndefined();
   });
+
+  it("finds the comment on a busy ticket, past the first page", async () => {
+    // 450 comments, oldest first by id; the op's comment is the newest.
+    const all = Array.from({ length: 450 }, (_, i) => ({ id: String(i + 1), body: "x", created: "now", ...(i === 449 ? { properties: [{ key: COMMENT_OP_PROPERTY, value: { op: "late" } }] } : {}) }));
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", async (input: string) => {
+      const url = new URL(String(input));
+      asked.push(url.search);
+      const newestFirst = url.searchParams.get("orderBy") === "-created";
+      const ordered = newestFirst ? [...all].reverse() : all;
+      const startAt = Number(url.searchParams.get("startAt") ?? 0);
+      const max = Number(url.searchParams.get("maxResults") ?? 50);
+      return new Response(JSON.stringify({ comments: ordered.slice(startAt, startAt + max), total: all.length }), { status: 200 });
+    });
+    const client = new JiraClient({ baseUrl: "https://example.atlassian.net", email: "a@example.com", apiToken: "t" } as never);
+    expect((await client.findCommentByOp("DOC-1", "late"))?.id).toBe("450");
+    expect(await client.findCommentByOp("DOC-1", "never")).toBeUndefined();
+    expect(asked.length).toBeLessThanOrEqual(6);
+  });
 });
 
 describe("once, concurrently", () => {

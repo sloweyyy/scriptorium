@@ -73,7 +73,8 @@ export type ImageMediaType = "image/png" | "image/jpeg" | "image/webp" | "image/
  * layer only: a tool never learns who approved it from its own input, which the model wrote.
  */
 export interface ToolRunContext {
-  approval?: { id: string; approvedBy?: string };
+  /** `approvedBy` is a display name (for commit messages); `approvedById` is the account. */
+  approval?: { id: string; approvedBy?: string; approvedById?: string };
 }
 
 export interface ToolSpec {

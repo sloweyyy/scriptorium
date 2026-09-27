@@ -100,11 +100,13 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
       name: "jira_comment",
       description: "Add a comment to a Jira issue. Requires human approval; it is not done until approved.",
       inputSchema: z.object({ key: z.string(), body: z.string().min(1).describe("Markdown.") }),
-      run: (input) =>
+      run: (input, context) =>
         refusalOr(async () => {
           const parsed = z.object({ key: z.string(), body: z.string().min(1) }).parse(input);
           const key = checkKey(parsed.key);
-          const op = opKey("jira.comment", key, digest(parsed.body));
+          // The approval is part of the cause: two separately approved identical comments are
+          // two comments. A retry of ONE approval keeps the same op, and stays a replay.
+          const op = opKey("jira.comment", key, digest(parsed.body), context?.approval?.id);
           const { result, replayed } = await once(
             settings.ledger,
             op,
@@ -123,13 +125,13 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
       name: "jira_create_issue",
       description: `Create a Jira issue in ${project}. Requires human approval; it is not done until approved.`,
       inputSchema: z.object({ summary: z.string().min(1).max(250), description: z.string().describe("Markdown.") }),
-      run: (input) =>
+      run: (input, context) =>
         refusalOr(async () => {
           const parsed = z.object({ summary: z.string().min(1).max(250), description: z.string() }).parse(input);
           // No probe yet (issue properties on create are a follow-up), so a crash between the
           // create and the ledger write can duplicate — the ledger still stops every retry
           // that happens after the record lands.
-          const { result, replayed } = await once(settings.ledger, opKey("jira.create", project, digest(parsed.summary), digest(parsed.description)), () =>
+          const { result, replayed } = await once(settings.ledger, opKey("jira.create", project, digest(parsed.summary), digest(parsed.description), context?.approval?.id), () =>
             settings.client.createIssue({ summary: parsed.summary, description: markdownToJira(parsed.description), issueType: settings.issueType ?? "Task", project }),
           );
           return `${replayed ? "Already created" : "Created"} jira:${result.key} ${result.url}`;

@@ -38,19 +38,25 @@ vi.mock("@scriptorium/core", async (importOriginal) => ({
 
 const { createTeammate, APPROVE_ACTION, REJECT_ACTION, RETRY_ACTION } = await import("@scriptorium/agents").then(async (agents) => ({ ...agents, ...(await import("@scriptorium/connectors")) }));
 
-interface Posted { channel: string; thread_ts?: string; text: string; blocks?: unknown[] }
+interface Posted { channel: string; thread_ts?: string; text: string; blocks?: unknown[]; metadata?: { event_type: string; event_payload?: unknown } }
 let tmpRoot: string;
 let vault: Vault;
 let posted: Posted[];
 let progressUpdates: string[] = [];
 /** How long a progress update takes to land (a slow call, or a 429 retried later). */
 let progressDelayMs = 0;
+/** Lose the next reminder post's response after Slack stored it. */
+let loseNextReminderPost = false;
 
 /** Posted messages, as they read NOW: an update replaces the text of the message it targets. */
 const slack = {
   chat: {
     postMessage: async (args: Posted) => {
       posted.push({ ...args });
+      if (loseNextReminderPost && args.text.includes("Reminder:")) {
+        loseNextReminderPost = false;
+        throw new Error("socket hang up");
+      }
       return { ok: true, ts: `9.${posted.length}` };
     },
     getPermalink: async (args: { channel: string; message_ts: string }) => ({ ok: true, permalink: `https://team.slack.com/archives/${args.channel}/p${args.message_ts.replace(".", "")}` }),
@@ -64,7 +70,10 @@ const slack = {
       return { ok: true };
     },
   },
-  conversations: { replies: async () => ({ messages: threadReplies }) },
+  conversations: {
+    replies: async () => ({ messages: threadReplies }),
+    history: async (args: { channel: string }) => ({ messages: posted.filter((message) => message.channel === args.channel).map((message, index) => ({ ...message, ts: `9.${index + 1}` })) }),
+  },
 };
 
 function config(): AppConfig {
@@ -92,6 +101,7 @@ beforeEach(async () => {
   progressDelayMs = 0;
   threadReplies = [];
   lastPrompt = "";
+  loseNextReminderPost = false;
 });
 
 afterEach(async () => {
@@ -314,6 +324,36 @@ describe("reminders", () => {
     expect(posted[0]).toMatchObject({ channel: "C1" });
     expect(posted[0]?.text).toContain("Update estimates &lt;!channel&gt;");
     expect(posted[0]?.text).toContain("approved by priya");
+  });
+
+  it("posts once even when Slack's response to the post is lost", async () => {
+    const { reminderTools } = await import("@scriptorium/agents");
+    const { FileEffectLedger } = await import("@scriptorium/runtime");
+    const store = new FileEffectLedger(path.join(tmpRoot, "state", "reminders.json"));
+    const [schedule] = reminderTools(store);
+    await schedule!.run({ channel: "C1", at: new Date(Date.now() + 60_000).toISOString(), text: "stand-up" }, { approval: { id: "ap-lost" } });
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    loseNextReminderPost = true;
+    await core.checkReminders(new Date(Date.now() + 120_000));
+    await core.checkReminders(new Date(Date.now() + 180_000));
+    expect(posted.filter((message) => message.text.includes("stand-up"))).toHaveLength(1);
+  });
+
+  it("needs a timezone, and ids stay tellable apart for the steps of one plan", async () => {
+    const { reminderTools, shortId } = await import("@scriptorium/agents");
+    const { MemoryEffectLedger } = await import("@scriptorium/runtime");
+    const store = new MemoryEffectLedger();
+    const [schedule, list, cancel] = reminderTools(store);
+    expect(await schedule!.run({ channel: "C1", at: "2030-10-02T09:00:00", text: "x" })).toMatch(/timezone offset/);
+    expect(await schedule!.run({ channel: "C1", at: "2030-10-02", text: "x" })).toMatch(/timezone offset/);
+    const soon = new Date(Date.now() + 3_600_000).toISOString();
+    await schedule!.run({ channel: "C1", at: soon, text: "one" }, { approval: { id: "4f1c2a90-aaaa-bbbb-cccc-000000000000#1" } });
+    await schedule!.run({ channel: "C1", at: soon, text: "two" }, { approval: { id: "4f1c2a90-aaaa-bbbb-cccc-000000000000#2" } });
+    const ids = (JSON.parse(await list!.run({ channel: "C1" })) as Array<{ id: string }>).map((reminder) => reminder.id);
+    expect(ids).toEqual(["4f1c2a90#1", "4f1c2a90#2"]);
+    expect(await cancel!.run({ channel: "C1", id: "4f1c2a90#2" })).toBe("Cancelled reminder 4f1c2a90#2.");
+    expect(JSON.parse(await list!.run({ channel: "C1" }))).toHaveLength(1);
+    expect(shortId("abcdef1234")).toBe("abcdef12");
   });
 
   it("can't be set for another channel, and one a day overdue is dropped, not posted", async () => {

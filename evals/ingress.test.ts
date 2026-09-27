@@ -304,6 +304,12 @@ describe("jira comment webhooks", () => {
 });
 
 describe("ADF comment bodies", () => {
+  it("keep a pasted issue link (a smart card) as its URL", async () => {
+    const { adfToText } = await import("@scriptorium/agents");
+    const adf = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "is " }, { type: "inlineCard", attrs: { url: "https://x.atlassian.net/browse/DOC-42" } }, { type: "text", text: " ready?" }] }] };
+    expect(adfToText(adf)).toBe("is https://x.atlassian.net/browse/DOC-42 ready?\n");
+  });
+
   it("are read, mentions included, instead of being dropped", async () => {
     const { jiraCommentFrom } = await import("@scriptorium/agents");
     const adf = { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: "tm-1", text: "@Teammate" } }, { type: "text", text: " when do digests go out?" }] }] };

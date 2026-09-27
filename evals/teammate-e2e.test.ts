@@ -230,7 +230,7 @@ describe("the Teammate on Jira", () => {
   it("answers a mention of its own account on the ticket, once, as itself — and nothing else", async () => {
     const { comments, jira } = fakeJira();
     const core = await createTeammate(config(), vault, slack as never, "UBOT", jira);
-    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]." };
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]; see [[docs/digest-emails.md|Digest emails]]." };
     const mention = { issueKey: "DOC-7", commentId: "c1", body: "[~accountid:tm-1] when do digests go out?", authorId: "human-1" };
     await core.onJiraComment(mention);
     await core.onJiraComment(mention); // a webhook redelivery
@@ -243,6 +243,8 @@ describe("the Teammate on Jira", () => {
     expect(comments).toHaveLength(1);
     // A Jira link to the doc, not a raw [[wikilink]].
     expect(comments[0]?.body).toContain("[docs/digest-emails|https://docs.example/digest-emails]");
+    // A `.md` target still resolves, and an alias is the link's label.
+    expect(comments[0]?.body).toContain("[Digest emails|https://docs.example/digest-emails]");
     expect(comments[0]?.body).not.toContain("[[");
     expect(comments[0]?.body).toContain("AI-generated");
     expect(posted).toHaveLength(0);

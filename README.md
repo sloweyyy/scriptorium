@@ -172,6 +172,7 @@ memory — posts an approval card that a `TEAMMATE_APPROVERS` click carries out 
 | Is this ticket ready? | `readiness-check`; verdict plus what is missing, cited |
 | Remember this | `remember`; scoped memory (person / channel / global), human-approved, never reaches published docs |
 | Weekly digest | `weekly-digest`; what moved in Jira and which doc gaps opened, posted once per week to `TEAMMATE_DIGEST_CHANNEL` |
+| Find the right spec page | `confluence_page_children` walks a page tree; every child is checked against the allowed spaces, so a page moved elsewhere isn't even listed |
 | Docs into Confluence | `confluence_create_page` / `confluence_update_page`, approve-tier, allowed spaces only |
 | Move, assign, label, link Jira issues | `jira_transition` / `jira_assign` / `jira_labels` / `jira_link`, approve-tier, allowed projects only (both ends of a link); an assignee must match exactly one person |
 | Status update for an epic | `status-update`; what shipped, what's in flight, what's at risk — every line cited, posted only on approval |

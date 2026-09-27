@@ -116,6 +116,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/confluence-connector.test.ts"],
   },
   {
+    control: "a Confluence page tree lists only children in allowed spaces",
+    file: "packages/connectors/src/confluence.ts",
+    find: "      .filter((child) => allowed.has(child.spaceId ?? parent.spaceId))\n",
+    replace: "",
+    evals: ["evals/confluence-connector.test.ts"],
+  },
+  {
     control: "memories are invisible to retrieval",
     file: "packages/curator/src/search.ts",
     find: "    if (isPrivateNote(relPath)) continue;",

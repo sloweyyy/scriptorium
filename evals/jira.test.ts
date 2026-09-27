@@ -12,6 +12,7 @@ import {
   splitAtLastOwnComment,
   type JiraComment,
 } from "@scriptorium/jira";
+import { newestFirst } from "@scriptorium/agents";
 
 function comment(body: string, accountId = "human-1", id = "1"): JiraComment {
   return { id, body, created: new Date().toISOString(), author: { accountId, displayName: "Reviewer" } };
@@ -286,5 +287,13 @@ describe("jira client", () => {
   it("surfaces Jira's error body instead of a bare status code", async () => {
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ errorMessages: ["Issue does not exist"] }), { status: 404 }));
     await expect(client().getIssue("DOC-404")).rejects.toThrow(/Issue does not exist/);
+  });
+});
+
+describe("which PRD attachment is the PRD", () => {
+  it("prefers the newest upload over a stale one still attached", () => {
+    const at = (filename: string, created: string) => ({ id: filename, filename, mimeType: "text/markdown", content: "", created });
+    const picked = newestFirst([at("prd.md", "2026-08-20T10:00:00.000+0000"), at("prd-fixed.md", "2026-08-21T09:00:00.000+0000")]);
+    expect(picked.map((attachment) => attachment.filename)).toEqual(["prd-fixed.md", "prd.md"]);
   });
 });

@@ -82,3 +82,33 @@ describe("memories are private to their scope", () => {
     expect(await tools.vault_overview!.run({})).not.toContain("_memory");
   });
 });
+
+describe("memories lapse", () => {
+  it("an approved memory stops applying at its expiry, and its expiry is covered by the signature", async () => {
+    const [save] = memoryTools(vault);
+    await save!.run({ text: "Release notes go out on Thursdays.", scope: "channel:C1" }, { approval: { id: "a1", approvedBy: "Priya" } });
+    const [relPath] = await vault.listNotes("_memory");
+    const note = await vault.readNote(relPath!);
+    expect(typeof note.frontmatter.expires_at).toBe("string");
+    expect(await listMemories(vault, ["channel:C1"])).toHaveLength(1);
+    const later = new Date(Date.parse(note.frontmatter.expires_at as string) + 1_000);
+    expect(await listMemories(vault, ["channel:C1"], later)).toHaveLength(0);
+  });
+
+  it("with a signing key, pushing a memory's expiry back breaks its signature", async () => {
+    const previous = process.env.SCRIPTORIUM_SIGNING_KEY;
+    process.env.SCRIPTORIUM_SIGNING_KEY = "k";
+    try {
+      const [save] = memoryTools(vault);
+      await save!.run({ text: "Priya prefers short answers.", scope: "person:slack:U1" }, { approval: { id: "a2", approvedBy: "Priya" } });
+      const [relPath] = await vault.listNotes("_memory");
+      const note = await vault.readNote(relPath!);
+      expect(await listMemories(vault, ["person:slack:U1"])).toHaveLength(1);
+      await vault.writeNote(relPath!, note.body, { ...note.frontmatter, expires_at: "2099-01-01T00:00:00.000Z" });
+      expect(await listMemories(vault, ["person:slack:U1"])).toHaveLength(0);
+    } finally {
+      if (previous === undefined) delete process.env.SCRIPTORIUM_SIGNING_KEY;
+      else process.env.SCRIPTORIUM_SIGNING_KEY = previous;
+    }
+  });
+});

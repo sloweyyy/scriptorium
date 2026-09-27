@@ -157,7 +157,7 @@ configuration — identity, a tool → tier map, skills, triggers — not a new 
 The full threat model, layer by layer and with the eval behind each control, is in
 [`docs/security-model.md`](docs/security-model.md); the invariants and package map in
 [`docs/architecture.md`](docs/architecture.md); adding a skill, tool, connector or agent in
-[`docs/extending.md`](docs/extending.md).
+[`docs/extending.md`](docs/extending.md); operating it in [`docs/runbook.md`](docs/runbook.md).
 
 **The Teammate** (`apps/agents/src/teammate-bot.ts`, `slack-manifests/teammate.yaml`) is the
 general agent on it. Skills are markdown in [`skills/`](skills/). It answers only in

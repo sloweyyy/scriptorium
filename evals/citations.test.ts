@@ -35,7 +35,7 @@ function config(sites: { external?: string; internal?: string }): AppConfig {
     port: 8080,
     scribe: {},
     curator: {},
-    teammate: { channels: [], jiraProjects: [], confluenceSpaces: [], githubRepos: [], digestWeekday: 1, digestHour: 9 },
+    teammate: { channels: [], jiraProjects: [], confluenceSpaces: [], githubRepos: [], allowDms: false, digestWeekday: 1, digestHour: 9 },
     slack: {},
     sites,
     webhook: {},

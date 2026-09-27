@@ -61,7 +61,7 @@ function config(): AppConfig {
     auditFile: path.join(tmpRoot, "audit.jsonl"),
     slack: {},
     jira: { stateDir: path.join(tmpRoot, "state") },
-    teammate: { channels: ["C1"], approvers: ["UPM"], jiraProjects: [], confluenceSpaces: [], githubRepos: [], digestWeekday: 1, digestHour: 9 },
+    teammate: { channels: ["C1"], approvers: ["UPM"], jiraProjects: [], confluenceSpaces: [], githubRepos: [], allowDms: false, digestWeekday: 1, digestHour: 9 },
   } as unknown as AppConfig;
 }
 
@@ -149,5 +149,24 @@ describe("automatic PR checks", () => {
     expect(summaries[0]?.text).toContain("github:org/app/pull/12");
     const audit = await fs.readFile(path.join(tmpRoot, "audit.jsonl"), "utf8");
     expect(audit).toContain("PR checks are not configured for this repo");
+  });
+});
+
+describe("direct messages", () => {
+  it("answers a DM only when DMs are allowed, and never a bot's or an edit", async () => {
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]." };
+    const off = await createTeammate(config(), vault, slack as never, "UBOT");
+    await off.onDirectMessage({ channel: "D1", channel_type: "im", ts: "1.0", user: "U1", text: "when are digests sent?" });
+    await settle(off);
+    expect(posted).toHaveLength(0);
+
+    const on = await createTeammate({ ...config(), teammate: { ...config().teammate, allowDms: true } } as AppConfig, vault, slack as never, "UBOT");
+    await on.onDirectMessage({ channel: "D1", channel_type: "im", ts: "2.0", user: "U1", text: "when are digests sent?" });
+    await on.onDirectMessage({ channel: "D1", channel_type: "im", ts: "3.0", user: "U1", text: "edited", subtype: "message_changed" });
+    await on.onDirectMessage({ channel: "D1", channel_type: "im", ts: "4.0", bot_id: "B9", text: "bot says hi" });
+    await settle(on);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatchObject({ channel: "D1" });
+    expect(posted[0]?.text).toContain("docs/digest-emails");
   });
 });

@@ -122,6 +122,8 @@ export function formatReply(reply: TeammateReply, runId?: string, viewer?: { bas
 export interface TeammateCore {
   /** A Slack `app_mention`, from Bolt or a test. */
   onMention(mention: SlackMention): Promise<void>;
+  /** A direct message to the Teammate (only when `TEAMMATE_ALLOW_DMS=true`). */
+  onDirectMessage(message: SlackMention & { channel_type?: string; subtype?: string }): Promise<void>;
   /** An Approve/Reject click. Returns a message for the clicker, if any (ephemeral). */
   onApprovalClick(action: string, payload: ApprovalClickPayload): Promise<string | undefined>;
   /** The weekly digest, if due and not yet posted this week. */
@@ -165,7 +167,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const gate = new Gate({
     selfIds: [self],
     // No channels configured → an empty scope list → it answers nowhere (fail closed).
-    scopes: { slack: settings.channels.map((channel) => `slack:thread:${channel}/`) },
+    // DMs (channel ids starting "D") only when explicitly allowed.
+    scopes: { slack: [...settings.channels.map((channel) => `slack:thread:${channel}/`), ...(settings.allowDms ? ["slack:thread:D"] : [])] },
   });
 
   const queue = new KeyedQueue(
@@ -224,7 +227,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const digestChannel = settings.digestChannel && settings.channels.includes(settings.digestChannel) ? settings.digestChannel : undefined;
   if (settings.digestChannel && !digestChannel) console.warn(`[teammate] TEAMMATE_DIGEST_CHANNEL ${settings.digestChannel} is not in TEAMMATE_SLACK_CHANNELS — no digest`);
 
-  return {
+  const core: TeammateCore = {
     async onMention(mention) {
       const agentEvent = mentionToEvent(mention);
       const verdict = gate.check(agentEvent);
@@ -238,6 +241,13 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         return;
       }
       queue.push(agentEvent);
+    },
+
+    async onDirectMessage(message) {
+      // A DM is a conversation with the Teammate by definition: no mention needed. Other
+      // bots, edits and joins arrive as subtypes and are never questions.
+      if (!settings.allowDms || message.channel_type !== "im" || message.subtype || message.bot_id) return;
+      await core.onMention(message);
     },
 
     async onApprovalClick(action, payload) {
@@ -304,6 +314,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
 
     drain: (deadlineMs) => queue.drain(deadlineMs),
   };
+  return core;
 }
 
 export async function startTeammateBot(config: AppConfig, vault: Vault): Promise<{ stop: () => Promise<void>; core: TeammateCore }> {
@@ -313,6 +324,7 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
   const core = await createTeammate(config, vault, app.client, String(identity.user_id));
 
   app.event("app_mention", async ({ event }) => core.onMention(event as SlackMention));
+  app.message(async ({ message }) => core.onDirectMessage(message as SlackMention & { channel_type?: string; subtype?: string }));
   for (const action of [APPROVE_ACTION, REJECT_ACTION]) {
     app.action(action, async ({ ack, body, respond }) => {
       await ack();

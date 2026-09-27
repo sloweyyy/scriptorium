@@ -243,3 +243,23 @@ describe("spend caps", () => {
     expect(posted[0]?.text).not.toContain("SHOULD NOT BE CALLED");
   });
 });
+
+describe("assigned on Jira", () => {
+  it("checks readiness and replies on the ticket when the ticket is assigned to it — once, and only to it", async () => {
+    const comments: Array<{ body: string; op?: string }> = [];
+    const jira = {
+      accountId: "tm-1",
+      client: {
+        addComment: async (_key: string, body: string, options: { op?: string } = {}) => (comments.push({ body, op: options.op }), { id: String(comments.length), body, created: "now" }),
+        findCommentByOp: async (_key: string, op: string) => comments.find((comment) => comment.op === op),
+      } as never,
+    };
+    const core = await createTeammate(config(), vault, slack as never, "UBOT", jira);
+    script = { calls: [], reply: "NOT_IN_KB: acceptance criteria" };
+    await core.onJiraAssigned({ issueKey: "DOC-9", assigneeId: "tm-1", changeId: "ch-1" });
+    await core.onJiraAssigned({ issueKey: "DOC-9", assigneeId: "tm-1", changeId: "ch-1" });
+    await core.onJiraAssigned({ issueKey: "DOC-9", assigneeId: "someone-else", changeId: "ch-2" });
+    await settle(core);
+    expect(comments).toHaveLength(1);
+  });
+});

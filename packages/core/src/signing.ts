@@ -40,6 +40,18 @@ export function approvalSigningKey(): string | undefined {
 }
 
 /**
+ * Keys that used to sign, accepted for VERIFYING only while approvals are moved onto the
+ * current key (`pnpm resign`). This is what makes rotation safe: set the new key, move the
+ * old one here, re-sign, then drop it. Nothing is ever signed with a previous key.
+ */
+export function previousSigningKeys(): string[] {
+  return (process.env.SCRIPTORIUM_PREVIOUS_SIGNING_KEYS ?? "")
+    .split(",")
+    .map((key) => key.trim())
+    .filter(Boolean);
+}
+
+/**
  * A frontmatter value as the string it was written as. An unquoted ISO timestamp — which is
  * how Obsidian's property editor saves one — parses as a Date; it is still that timestamp.
  */
@@ -55,12 +67,25 @@ export function approvalTerms(frontmatter: Record<string, unknown>): Record<stri
   return { scope: pick("scope"), check_present: pick("check_present"), check_absent: pick("check_absent"), expires_at: pick("expires_at") };
 }
 
-/** Does this approved note carry a signature that matches it, under the deployment key? */
+/** Does this approved note carry a signature that matches it, under the deployment key (or one being rotated out)? */
 export function approvalVerified(frontmatter: Record<string, unknown>, body: string, key = approvalSigningKey()): boolean {
   if (!key) return true;
+  return signedWith(frontmatter, body, [key, ...previousSigningKeys()]) !== undefined;
+}
+
+/** Which of these keys signed this approved note, if any. */
+export function signedWith(frontmatter: Record<string, unknown>, body: string, keys: readonly string[]): string | undefined {
   const id = typeof frontmatter.id === "string" ? frontmatter.id : "";
   const approvedBy = typeof frontmatter.approved_by === "string" ? frontmatter.approved_by : undefined;
-  return verifyApprovalSignature(key, { id, status: "approved", body, approvedBy, terms: approvalTerms(frontmatter) }, frontmatter.approval_sig);
+  const approval = { id, status: "approved", body, approvedBy, terms: approvalTerms(frontmatter) };
+  return keys.find((key) => verifyApprovalSignature(key, approval, frontmatter.approval_sig));
+}
+
+/** A fresh signature for an approved note, with the current key. Only call it on a note that already verified. */
+export function resignApproval(frontmatter: Record<string, unknown>, body: string, key: string): string {
+  const id = typeof frontmatter.id === "string" ? frontmatter.id : "";
+  const approvedBy = typeof frontmatter.approved_by === "string" ? frontmatter.approved_by : undefined;
+  return approvalSignature(key, { id, status: "approved", body, approvedBy, terms: approvalTerms(frontmatter) });
 }
 
 export function verifyApprovalSignature(key: string, approval: SignedApproval, signature: unknown): boolean {

@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { previousSigningKeys } from "@scriptorium/core";
 
 /**
  * The Teammate's runtime controls: what an admin can change without a redeploy, when a tool
@@ -47,9 +48,13 @@ export async function readControl(file: string, key?: string): Promise<Control> 
       reason: typeof parsed.reason === "string" ? parsed.reason : undefined,
     };
     if (key) {
-      const expected = Buffer.from(signature(key, control), "hex");
+      // The current key, or one being rotated out (SCRIPTORIUM_PREVIOUS_SIGNING_KEYS).
       const given = Buffer.from(typeof parsed.sig === "string" ? parsed.sig : "", "hex");
-      if (given.length !== expected.length || !timingSafeEqual(given, expected)) return { ...OPEN, paused: true, reason: "the control file's signature does not match" };
+      const matches = [key, ...previousSigningKeys()].some((candidate) => {
+        const expected = Buffer.from(signature(candidate, control), "hex");
+        return given.length === expected.length && timingSafeEqual(given, expected);
+      });
+      if (!matches) return { ...OPEN, paused: true, reason: "the control file's signature does not match" };
     }
     return control;
   } catch {

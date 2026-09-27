@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { docsRepoReady, jiraReady, repoSlugFromUrl, vaultRepoReady, type AppConfig } from "@scriptorium/core";
+import { docsRepoReady, jiraReady, previousSigningKeys, repoSlugFromUrl, vaultRepoReady, type AppConfig } from "@scriptorium/core";
 
 /**
  * `pnpm doctor`: is this deployment set up the way its safety depends on? Every check names
@@ -44,6 +44,10 @@ export async function runDoctor(config: AppConfig, probes: DoctorProbes = {}): P
   // Signing
   if (config.signingKey) add("signing", "ok", "approvals are signed and verified where they are used");
   else add("signing", "warn", "approvals are unsigned, so an edited memory or house rule file is trusted", "set SCRIPTORIUM_SIGNING_KEY (openssl rand -hex 32) as a secret, then re-approve existing house rules");
+
+  if (config.signingKey && previousSigningKeys().length) {
+    add("signing", "warn", "a key rotation is in progress: previous signing keys are still accepted", "run pnpm resign, then remove SCRIPTORIUM_PREVIOUS_SIGNING_KEYS");
+  }
 
   // Where the record lives
   const stateDir = path.resolve(config.jira.stateDir);

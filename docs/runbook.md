@@ -12,7 +12,7 @@ Every one of these fails closed: unset means *less* is allowed, never more.
 
 | Setting | Unset means | Set it to |
 |---|---|---|
-| `SCRIPTORIUM_SIGNING_KEY` | approvals are unsigned, and the docs repo's internal branch is trusted | `openssl rand -hex 32`, as a Secret Manager secret. After setting it, re-approve existing house rules |
+| `SCRIPTORIUM_SIGNING_KEY` | approvals are unsigned, and the vault repo is trusted | `openssl rand -hex 32`, as a Secret Manager secret. After setting it, re-approve existing house rules. To rotate it, see *Rotating the signing key* below |
 | `JIRA_APPROVERS` | any human on the ticket may approve a publish (never the agent) | the Jira account ids of your reviewers |
 | `SCRIBE_SLACK_APPROVERS` | the Slack "Approve & publish" button is off | Slack user ids |
 | `TEAMMATE_APPROVERS` | no Teammate write can be approved | Slack user ids |
@@ -81,6 +81,20 @@ detectable:
 Set `AUDIT_FILE` to a path on the persistent state volume (for example
 `/state/audit/log.jsonl`). The default, `audit/log.jsonl` in the working directory, does not
 survive a Cloud Run revision.
+
+## Rotating the signing key
+
+Changing `SCRIPTORIUM_SIGNING_KEY` on its own makes every approved house rule and memory stop
+applying, because none of them verifies under the new key. To rotate without that:
+
+1. Set the new key as `SCRIPTORIUM_SIGNING_KEY`, and put the old one in
+   `SCRIPTORIUM_PREVIOUS_SIGNING_KEYS` (comma-separated). Previous keys verify; they never sign.
+2. Run `pnpm resign` (`--dry-run` first). It re-signs, with the new key, every approval that
+   already verifies under a previous key. A note that verifies under no key is reported and
+   left alone: re-approve it if it should apply.
+3. Change any admin control once (`/teammate admin status` doesn't count; `resume` does), so
+   the control file is signed with the new key too.
+4. Remove the old key from `SCRIPTORIUM_PREVIOUS_SIGNING_KEYS`.
 
 ## Stop it now
 

@@ -143,6 +143,8 @@ export interface CardRouting {
   prChannel?: string;
   /** The thread a conversation already has in its channel (a PR check's summary), if any. */
   threadFor?: (key: string) => string | undefined;
+  /** Told where each card landed, so it can be linked to later (an approvals inbox). */
+  onPosted?: (request: ApprovalRequest, where: { channel: string; ts: string }) => Promise<void> | void;
 }
 
 /**
@@ -177,6 +179,8 @@ export class SlackApprovalChannel implements ApprovalChannel {
     if (!target) throw new Error("no Slack channel to post the approval card in");
     const posted = await this.client.chat.postMessage({ ...target, text: `Approval needed: ${escapeMrkdwn(request.tool)}`, blocks: approvalBlocks(request) as never });
     if (!posted.ok) throw new Error(`Slack refused the approval card: ${posted.error ?? "unknown error"}`);
+    // Best-effort bookkeeping: the card is posted either way.
+    if (posted.ts) await Promise.resolve(this.routing.onPosted?.(request, { channel: posted.channel ?? target.channel, ts: posted.ts })).catch(() => undefined);
   }
 }
 
@@ -223,6 +227,16 @@ export function describeRequest(request: ApprovalRequest): string {
       return `Remember (${text(args.scope, 60)}): “${text(args.text, 200)}”`;
     case "github_pr_comment":
       return `Comment on pull request ${text(args.repo, 80)}#${text(args.number, 10)}`;
+    case "schedule_reminder":
+      return `Post a reminder in channel ${text(args.channel, 20)} at ${text(args.at, 40)}: “${text(args.text, 200)}”`;
+    case "cancel_reminder":
+      return `Cancel reminder ${text(args.id, 20)} in channel ${text(args.channel, 20)}`;
+    case "propose_plan": {
+      // Every step, in order, from the stored arguments: the approver approves exactly this list.
+      const steps = Array.isArray(args.steps) ? (args.steps as Array<{ tool?: unknown; args?: unknown }>) : [];
+      const lines = steps.map((step, index) => `${index + 1}. ${describeRequest({ ...request, tool: String(step.tool ?? ""), args: step.args })}`);
+      return [`Carry out a ${steps.length}-step plan: “${text(args.title)}”`, ...lines].join("\n");
+    }
     default:
       return `Run ${request.tool}`;
   }
@@ -237,14 +251,20 @@ export function approvalBlocks(request: ApprovalRequest): unknown[] {
   // so what the approver reads is exactly the text that will run.
   const shown = escapeMrkdwn(request.summary).replace(/```/g, "ˋˋˋ");
   const expires = Math.floor(Date.parse(request.expiresAt) / 1000);
+  // Slack refuses a section over 3,000 characters, counted AFTER escaping. The headline is
+  // shortened at a line break if it must be; the arguments below always show every step.
+  const described = escapeMrkdwn(describeRequest(request));
+  const headline = described.length > 2_000 ? `${described.slice(0, Math.max(described.lastIndexOf("\n", 2_000), 0))}\n…` : described;
   return [
     {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*Approval needed:* ${escapeMrkdwn(describeRequest(request))}\nRequested by ${requesterMention(request)} · *Approve*: done now, as ${escapeMrkdwn(request.agent)} · *Reject*: nothing happens\n\`\`\`${shown}\`\`\``,
+        text: `*Approval needed:* ${headline}\nRequested by ${requesterMention(request)} · *Approve*: done now, as ${escapeMrkdwn(request.agent)} · *Reject*: nothing happens`,
       },
     },
+    // Fenced, in its own section: its own 3,000-character budget.
+    { type: "section", text: { type: "mrkdwn", text: `\`\`\`${shown}\`\`\`` } },
     {
       type: "actions",
       elements: [

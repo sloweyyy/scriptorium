@@ -27,6 +27,7 @@ Every one of these fails closed: unset means *less* is allowed, never more.
 | `TEAMMATE_DAILY_TOKENS` | no spend cap | tokens per UTC day for each channel, Jira project and PR repo; over it the Teammate answers with a notice and no model call |
 | `TEAMMATE_TRIAGE_PROJECTS` | no triage of new tickets | project keys (not Scribe's doc project); the Jira webhook must send *Issue created*. `TEAMMATE_TRIAGE_PER_HOUR` (20) caps each project |
 | `TEAMMATE_DAILY_TOKENS_TOTAL` | no overall cap: each DM is its own scope, so N people each get the full per-scope cap | tokens per UTC day across everything |
+| `SLACK_WORKSPACE_URL` | Slack messages an answer cites are shown as ids, not links | `https://<your-team>.slack.com` |
 | `TRACE_TOKEN` + `PUBLIC_BASE_URL` | no run viewer, so replies show a bare run id | a long random token and the service URL |
 
 Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
@@ -38,6 +39,8 @@ Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
    attachments and transitions (read-only unless `--write`).
 3. In an allowed channel, `@Teammate what does <a documented feature> do?` should get a
    cited answer, with "AI-generated · view run …" at the end.
+   `/teammate help` should answer privately with the help card, and the app's Home tab should
+   list nothing waiting (or what is).
 4. Ask it to "file a ticket for this". An approval card should appear. Click Approve as a
    listed approver, and "Done: Created jira:…" should follow in the thread.
 5. Open the run link. The run page shows the trigger, the tool calls, the approval and the
@@ -54,6 +57,9 @@ Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
 | A house rule stopped applying | lesson frontmatter `restored_unverified: true`, or a missing `approval_sig` | the signing key was set after the rule was approved, or the rule was edited in the repo. Re-approve it |
 | A draft shows `L-00N ✗` | the draft comment's house-rules line | the draft broke a checked rule. The auto-revise already ran once; give feedback or fix the rule's check |
 | "This doc may be out of date" on a ticket | `doc.stale.notified` | the PRD changed after approval. Comment `draft` to revise |
+| A reminder never arrived | audit `teammate.reminder.failed` / `teammate.reminder.stale` | the bot isn't in the channel (`/invite @Teammate`), or the service was down for over a day — overdue reminders are dropped, not posted late |
+| `/teammate` says "I don't work in this conversation" | `TEAMMATE_SLACK_CHANNELS` | the channel isn't listed, or it's a DM and `TEAMMATE_ALLOW_DMS` is off |
+| The Home tab is empty or missing | the app's manifest | the app was installed before the Home tab was added: reinstall it from `slack-manifests/teammate.yaml` |
 | The same Jira comment twice | shouldn't happen: writes are op-keyed | check whether two instances are running (see below) |
 
 ## Hard rules

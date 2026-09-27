@@ -168,15 +168,22 @@ memory — posts an approval card that a `TEAMMATE_APPROVERS` click carries out 
 |---|---|
 | Cited answers across the vault, Confluence and Jira | `answer-with-citations`; uncited claims are refused, misses become gap tickets (deduped) |
 | What did I miss? | `channel-catchup`; reads the channel it was asked in (up to 72h, on demand, nothing kept): decided / still open / waiting on you, each point cited to its message |
-| Thread → Jira ticket | `thread-to-ticket`; reads the thread it was asked in, proposes the issue on a card |
+| Thread → Jira ticket | `thread-to-ticket`; reads the thread it was asked in, proposes the issue on a card — or use the **File as a ticket** message shortcut |
+| Several changes, one approval | `propose_plan`: e.g. the tickets from a meeting and their links on one card, every step listed; bound to exactly those steps, each exactly-once, stops at a refusal |
+| An approver's inbox | the App Home tab lists what is waiting for *your* approval, each linked to its card, and what you asked for (read-only — cards are where things are decided) |
+| Ask without a mention | `/teammate <question>` posts the question as a thread in the channel and answers under it (same channels, same approvals) |
 | Is this ticket ready? | `readiness-check`; verdict plus what is missing, cited |
 | Remember this | `remember`; scoped memory (person / channel / global), human-approved, never reaches published docs |
 | Weekly digest | `weekly-digest`; what moved in Jira and which doc gaps opened, posted once per week to `TEAMMATE_DIGEST_CHANNEL` |
+| Find the right spec page | `confluence_page_children` walks a page tree; every child is checked against the allowed spaces, so a page moved elsewhere isn't even listed |
 | Docs into Confluence | `confluence_create_page` / `confluence_update_page`, approve-tier, allowed spaces only |
 | Move, assign, label, link Jira issues | `jira_transition` / `jira_assign` / `jira_labels` / `jira_link`, approve-tier, allowed projects only (both ends of a link); an assignee must match exactly one person |
+| Reminders | "remind us Friday at 9 to update estimates": approved once for its exact text, channel and time; posted once, escaped, only in the channel that asked; listable and cancellable |
+| Sprint report / standup | `sprint-report`; the project's open sprint (`jira_sprint`) as done / in progress / not started / looks stuck, every issue cited |
 | Status update for an epic | `status-update`; what shipped, what's in flight, what's at risk — every line cited, posted only on approval |
 | Triage new tickets | `triage`; in `TEAMMATE_TRIAGE_PROJECTS`, a new issue gets one reply: ready or not, what's missing, likely duplicates (cited); rate-capped per project, changes nothing |
 | Ready to start? (on assignment) | assigning a ticket to the Teammate runs `readiness-check` and replies on the ticket |
+| Release notes | `release-notes`; what merged into an allowed repo since a date (`github_list_merged`), grouped new / improved / fixed, every line cited to its PR; published only on approval |
 | Check a PR against its ticket | `pr-check`; on request or automatically when a PR opens, acceptance criteria covered or not, doc drift flagged, one advisory comment behind a card |
 
 **What keeps the docs honest after they ship.** A published doc records its PRD's hash; if

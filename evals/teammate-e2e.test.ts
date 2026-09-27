@@ -10,6 +10,9 @@ import { Vault, type AppConfig } from "@scriptorium/core";
  * gate, queue, assembly from config, skills, policy, grounding, memory — is the real thing.
  */
 
+/** What the model was sent last — to check the thread it was given. */
+let lastPrompt = "";
+let threadReplies: Array<{ ts: string; user?: string; text: string }> = [];
 let script: { calls: Array<{ name: string; input: unknown }>; reply: string; throwOnce?: boolean; hang?: boolean };
 vi.mock("@scriptorium/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@scriptorium/core")>()),
@@ -17,7 +20,8 @@ vi.mock("@scriptorium/core", async (importOriginal) => ({
   anthropic: () => ({
     beta: {
       messages: {
-        toolRunner: async (params: { tools: Array<{ name: string; run: (input: unknown) => Promise<unknown> }> }) => {
+        toolRunner: async (params: { tools: Array<{ name: string; run: (input: unknown) => Promise<unknown> }>; messages?: unknown }) => {
+          lastPrompt = JSON.stringify(params.messages ?? "");
           // A model call still running when the process goes away.
           if (script.hang) return new Promise(() => undefined);
           if (script.throwOnce) {
@@ -34,21 +38,28 @@ vi.mock("@scriptorium/core", async (importOriginal) => ({
 
 const { createTeammate, APPROVE_ACTION, REJECT_ACTION, RETRY_ACTION } = await import("@scriptorium/agents").then(async (agents) => ({ ...agents, ...(await import("@scriptorium/connectors")) }));
 
-interface Posted { channel: string; thread_ts?: string; text: string; blocks?: unknown[] }
+interface Posted { channel: string; thread_ts?: string; text: string; blocks?: unknown[]; metadata?: { event_type: string; event_payload?: unknown } }
 let tmpRoot: string;
 let vault: Vault;
 let posted: Posted[];
 let progressUpdates: string[] = [];
 /** How long a progress update takes to land (a slow call, or a 429 retried later). */
 let progressDelayMs = 0;
+/** Lose the next reminder post's response after Slack stored it. */
+let loseNextReminderPost = false;
 
 /** Posted messages, as they read NOW: an update replaces the text of the message it targets. */
 const slack = {
   chat: {
     postMessage: async (args: Posted) => {
       posted.push({ ...args });
+      if (loseNextReminderPost && args.text.includes("Reminder:")) {
+        loseNextReminderPost = false;
+        throw new Error("socket hang up");
+      }
       return { ok: true, ts: `9.${posted.length}` };
     },
+    getPermalink: async (args: { channel: string; message_ts: string }) => ({ ok: true, permalink: `https://team.slack.com/archives/${args.channel}/p${args.message_ts.replace(".", "")}` }),
     update: async (args: { ts: string; text: string; blocks?: unknown[] }) => {
       if (args.text.startsWith("🔎")) {
         progressUpdates.push(args.text);
@@ -59,7 +70,10 @@ const slack = {
       return { ok: true };
     },
   },
-  conversations: { replies: async () => ({ messages: [] }) },
+  conversations: {
+    replies: async () => ({ messages: threadReplies }),
+    history: async (args: { channel: string }) => ({ messages: posted.filter((message) => message.channel === args.channel).map((message, index) => ({ ...message, ts: `9.${index + 1}` })) }),
+  },
 };
 
 function config(): AppConfig {
@@ -85,6 +99,9 @@ beforeEach(async () => {
   posted = [];
   progressUpdates = [];
   progressDelayMs = 0;
+  threadReplies = [];
+  lastPrompt = "";
+  loseNextReminderPost = false;
 });
 
 afterEach(async () => {
@@ -283,6 +300,150 @@ describe("automatic PR checks", () => {
     expect(summary?.text).toContain("Waiting for approval");
     expect(card?.text).toContain("Approval needed");
     expect(card?.thread_ts).toBe(`9.${posted.indexOf(summary!) + 1}`);
+  });
+});
+
+describe("reminders", () => {
+  it("a reminder is approved once, posted once when due, escaped, and only in the channel that asked", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    const at = new Date(Date.now() + 3_600_000).toISOString();
+    script = { calls: [{ name: "schedule_reminder", input: { channel: "C1", at, text: "Update estimates <!channel>" } }], reply: "Asked." };
+    await core.onMention({ channel: "C1", ts: "3.0", user: "U1", text: "<@UBOT> remind us in an hour to update estimates" });
+    await settle(core);
+    const card = posted.find((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION))!;
+    expect(JSON.stringify(card.blocks)).toContain("Post a reminder in channel C1");
+    const requestId = JSON.stringify(card.blocks).match(/"value":"([0-9a-f-]{36})"/)?.[1] as string;
+    await core.onApprovalClick(APPROVE_ACTION, { actions: [{ value: requestId }], user: { id: "UPM", username: "priya" }, channel: { id: "C1" }, message: { ts: "9.1", thread_ts: "3.0" } });
+
+    posted.length = 0;
+    await core.checkReminders(new Date(Date.now() + 60_000)); // not yet
+    expect(posted).toEqual([]);
+    await core.checkReminders(new Date(Date.now() + 3_700_000));
+    await core.checkReminders(new Date(Date.now() + 3_800_000)); // already sent
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatchObject({ channel: "C1" });
+    expect(posted[0]?.text).toContain("Update estimates &lt;!channel&gt;");
+    expect(posted[0]?.text).toContain("approved by priya");
+  });
+
+  it("posts once even when Slack's response to the post is lost", async () => {
+    const { reminderTools } = await import("@scriptorium/agents");
+    const { FileEffectLedger } = await import("@scriptorium/runtime");
+    const store = new FileEffectLedger(path.join(tmpRoot, "state", "reminders.json"));
+    const [schedule] = reminderTools(store);
+    await schedule!.run({ channel: "C1", at: new Date(Date.now() + 60_000).toISOString(), text: "stand-up" }, { approval: { id: "ap-lost" } });
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    loseNextReminderPost = true;
+    await core.checkReminders(new Date(Date.now() + 120_000));
+    await core.checkReminders(new Date(Date.now() + 180_000));
+    expect(posted.filter((message) => message.text.includes("stand-up"))).toHaveLength(1);
+  });
+
+  it("needs a timezone, and ids stay tellable apart for the steps of one plan", async () => {
+    const { reminderTools, shortId } = await import("@scriptorium/agents");
+    const { MemoryEffectLedger } = await import("@scriptorium/runtime");
+    const store = new MemoryEffectLedger();
+    const [schedule, list, cancel] = reminderTools(store);
+    expect(await schedule!.run({ channel: "C1", at: "2030-10-02T09:00:00", text: "x" })).toMatch(/timezone offset/);
+    expect(await schedule!.run({ channel: "C1", at: "2030-10-02", text: "x" })).toMatch(/timezone offset/);
+    const soon = new Date(Date.now() + 3_600_000).toISOString();
+    await schedule!.run({ channel: "C1", at: soon, text: "one" }, { approval: { id: "4f1c2a90-aaaa-bbbb-cccc-000000000000#1" } });
+    await schedule!.run({ channel: "C1", at: soon, text: "two" }, { approval: { id: "4f1c2a90-aaaa-bbbb-cccc-000000000000#2" } });
+    const ids = (JSON.parse(await list!.run({ channel: "C1" })) as Array<{ id: string }>).map((reminder) => reminder.id);
+    expect(ids).toEqual(["4f1c2a90#1", "4f1c2a90#2"]);
+    expect(await cancel!.run({ channel: "C1", id: "4f1c2a90#2" })).toBe("Cancelled reminder 4f1c2a90#2.");
+    expect(JSON.parse(await list!.run({ channel: "C1" }))).toHaveLength(1);
+    expect(shortId("abcdef1234")).toBe("abcdef12");
+  });
+
+  it("can't be set for another channel, and one a day overdue is dropped, not posted", async () => {
+    const { bindToTurn, reminderTools, dueReminders } = await import("@scriptorium/agents");
+    const { MemoryEffectLedger } = await import("@scriptorium/runtime");
+    const store = new MemoryEffectLedger();
+    const [schedule] = bindToTurn(reminderTools(store), { question: "q", askedBy: "slack:U1", channel: "C1", threadTs: "1.0" });
+    expect(await schedule!.run({ channel: "C_OTHER", at: new Date(Date.now() + 3_600_000).toISOString(), text: "x" })).toMatch(/^NOT_ALLOWED/);
+    expect(await schedule!.run({ channel: "C1", at: "2020-01-01T00:00:00Z", text: "x" })).toMatch(/^NOT_ALLOWED: that time has already passed/);
+    expect(await schedule!.run({ channel: "C1", at: new Date(Date.now() + 40 * 24 * 3_600_000).toISOString(), text: "x" })).toMatch(/at most 30 days/);
+    await schedule!.run({ channel: "C1", at: new Date(Date.now() + 60_000).toISOString(), text: "stand-up" }, { approval: { id: "ap-1" } });
+    const { due, stale } = await dueReminders(store, Date.now() + 2 * 24 * 3_600_000);
+    expect(due).toEqual([]);
+    expect(stale.map((reminder) => reminder.text)).toEqual(["stand-up"]);
+  });
+});
+
+describe("plans", () => {
+  it("a plan with a step that needs its own approval is refused before any card is posted", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = {
+      calls: [{ name: "propose_plan", input: { title: "Sneaky", steps: [{ tool: "memory_save", args: { text: "x is y.", scope: "global" } }, { tool: "memory_save", args: { text: "z.", scope: "global" } }] } }],
+      reply: "Proposed.",
+    };
+    await core.onMention({ channel: "C1", ts: "3.0", user: "U1", text: "<@UBOT> do the plan" });
+    await settle(core);
+    expect(posted.some((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION))).toBe(false);
+  });
+});
+
+describe("the approvals inbox (App Home)", () => {
+  it("shows an approver what is waiting for them, linked to the card; shows others nothing to approve", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [{ name: "memory_save", input: { text: "Release notes go out on Thursdays.", scope: "channel:C1" } }], reply: "Asked." };
+    await core.onMention({ channel: "C1", ts: "3.0", user: "U1", text: "<@UBOT> remember release notes go out on Thursdays" });
+    await settle(core);
+    const card = posted.find((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION))!;
+    const cardTs = `9.${posted.indexOf(card) + 1}`;
+
+    const approver = JSON.stringify(await core.homeView("UPM"));
+    expect(approver).toContain("Waiting for your approval (1)");
+    expect(approver).toContain("Remember (channel:C1)");
+    expect(approver).toContain(`https://team.slack.com/archives/C1/p${cardTs.replace(".", "")}|open the card`);
+    // Read-only: deciding happens on the card, never from Home.
+    expect(approver).not.toContain(APPROVE_ACTION);
+
+    const asker = JSON.stringify(await core.homeView("U1"));
+    expect(asker).toContain("Waiting for your approval (0)");
+    expect(asker).toContain("*waiting*");
+    expect(JSON.stringify(await core.homeView("U_RANDOM"))).toContain("Waiting for your approval (0)");
+  });
+
+  it("doesn't describe a request whose card is in a private channel", async () => {
+    const privateConfig = { ...config(), teammate: { ...config().teammate, channels: ["C1", "G1"] } } as AppConfig;
+    const core = await createTeammate(privateConfig, vault, slack as never, "UBOT");
+    script = { calls: [{ name: "memory_save", input: { text: "The reorg is announced Friday.", scope: "channel:G1" } }], reply: "Asked." };
+    await core.onMention({ channel: "G1", ts: "3.0", user: "U1", text: "<@UBOT> remember the reorg date" });
+    await settle(core);
+    const home = JSON.stringify(await core.homeView("UPM"));
+    expect(home).toContain("Waiting for your approval (1)");
+    expect(home).toContain("A request in a private conversation");
+    expect(home).not.toContain("reorg");
+  });
+});
+
+describe("slash command and shortcut", () => {
+  it("/teammate posts the question as a thread and answers under it — only where it answers at all", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]." };
+    expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: "when are digests sent? <!channel>", commandId: "t1" })).toBeUndefined();
+    expect(await core.onSlashCommand({ channel: "C_OTHER", user: "U1", text: "hello", commandId: "t2" })).toMatch(/^I don't work in this conversation\. Ask me in <#C1>/);
+    expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: "help", commandId: "t3" })).toContain("I'm the Teammate");
+    await settle(core);
+    const [root, answer, ...rest] = posted;
+    expect(rest).toEqual([]);
+    // The question is shown as asked, but can't ping the channel.
+    expect(root).toMatchObject({ channel: "C1", text: "<@U1> asked: when are digests sent? &lt;!channel&gt;" });
+    expect(answer).toMatchObject({ channel: "C1", thread_ts: "9.1" });
+    expect(answer?.text).toContain("docs/digest-emails");
+  });
+
+  it("'File as a ticket' reads the thread including the message it was used on", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    threadReplies = [{ ts: "5.0", user: "U2", text: "Digest times should follow each subscriber's timezone" }];
+    script = { calls: [], reply: "Proposed a ticket." };
+    expect(await core.onFileAsTicket({ channel: "C1", user: "U1", messageTs: "5.0", shortcutId: "s1" })).toBeUndefined();
+    expect(await core.onFileAsTicket({ channel: "C_OTHER", user: "U1", messageTs: "5.0", shortcutId: "s2" })).toMatch(/^I don't work/);
+    await settle(core);
+    expect(lastPrompt).toContain("follow each subscriber");
+    expect(posted[0]).toMatchObject({ channel: "C1", thread_ts: "5.0" });
   });
 });
 

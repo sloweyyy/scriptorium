@@ -58,6 +58,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/policy.test.ts"],
   },
   {
+    control: "a plan can't include a step that needs a different approval",
+    file: "packages/policy/src/plan.ts",
+    find: "    if (!sameRule(envelope.tools[step.tool], rule)) return",
+    replace: "    if (false) return",
+    evals: ["evals/plan.test.ts"],
+  },
+  {
+    control: "a plan's card shows every step's arguments",
+    file: "packages/policy/src/guard.ts",
+    find: "(tool.name === PLAN_TOOL ? summarizePlan(input) : summarizeArgs(input))",
+    replace: "summarizeArgs(input)",
+    evals: ["evals/plan.test.ts"],
+  },
+  {
     control: "approvals bind to the exact arguments",
     file: "packages/policy/src/approvals.ts",
     find: "request.argsHash === hash &&\n        request.status === \"approved\" &&",
@@ -116,6 +130,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/confluence-connector.test.ts"],
   },
   {
+    control: "a Confluence page tree lists only children in allowed spaces",
+    file: "packages/connectors/src/confluence.ts",
+    find: "      .filter((child) => allowed.has(child.spaceId ?? parent.spaceId))\n",
+    replace: "",
+    evals: ["evals/confluence-connector.test.ts"],
+  },
+  {
     control: "memories are invisible to retrieval",
     file: "packages/curator/src/search.ts",
     find: "    if (isPrivateNote(relPath)) continue;",
@@ -144,10 +165,24 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-bot.test.ts"],
   },
   {
+    control: "a reminder is set only in the channel that asked",
+    file: "apps/agents/src/teammate.ts",
+    find: "if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return \"NOT_ALLOWED: reminders",
+    replace: "if (false) return \"NOT_ALLOWED: reminders",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "a plan's steps are held to the per-turn bounds",
+    file: "apps/agents/src/teammate.ts",
+    find: "          if (refusal) return `${refusal.replace(",
+    replace: "          if (false) return `${refusal.replace(",
+    evals: ["evals/teammate-bot.test.ts"],
+  },
+  {
     control: "slack_read_channel reads only the turn's own channel",
     file: "apps/agents/src/teammate.ts",
-    find: "if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return",
-    replace: "if (false) return",
+    find: "if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return \"NOT_ALLOWED: you may read only the channel",
+    replace: "if (false) return \"NOT_ALLOWED: you may read only the channel",
     evals: ["evals/teammate-bot.test.ts"],
   },
   {
@@ -217,6 +252,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   for (const mutant of MUTANTS) {
     const original = fs.readFileSync(mutant.file, "utf8");
     const edits = [{ find: mutant.find, replace: mutant.replace }, ...(mutant.also ?? [])];
+    // A find string that matches twice mutates whichever comes first — maybe not the control.
+    if (edits.some((edit) => original.split(edit.find).length !== 2)) {
+      survivors.push(`${mutant.control} — find string is missing or not unique in ${mutant.file}; update scripts/mutate.ts`);
+      continue;
+    }
     if (edits.some((edit) => !original.includes(edit.find))) {
       // The guarded line moved: the catalogue is stale, which is itself a failure.
       survivors.push(`${mutant.control} — mutant no longer applies (${mutant.file}); update scripts/mutate.ts`);

@@ -5,16 +5,30 @@ display_information:
   background_color: "#2D3A8C"
 features:
   app_home:
+    # The approvals inbox: what is waiting for you, linked to each card (read-only).
+    home_tab_enabled: true
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
   bot_user:
     display_name: Teammate
     always_online: true
+  slash_commands:
+    - command: /teammate
+      description: Ask the Teammate — answered in a thread in this channel
+      usage_hint: "what does quiet hours do? | help"
+      should_escape: false
+  shortcuts:
+    - name: File as a ticket
+      type: message
+      callback_id: file_as_ticket
+      description: Turn this thread into a Jira issue (waits for an approver)
 oauth_config:
   scopes:
     bot:
       - app_mentions:read
       - chat:write
+      # /teammate and the "File as a ticket" shortcut.
+      - commands
       # Reads only the thread or channel it was asked in, on demand (Slack's terms rule out bulk indexing).
       - channels:history
       - groups:history
@@ -25,6 +39,7 @@ settings:
     bot_events:
       - app_mention
       - message.im
+      - app_home_opened
   # Approval cards: Approve / Reject buttons.
   interactivity:
     is_enabled: true

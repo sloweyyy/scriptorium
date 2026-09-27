@@ -148,3 +148,15 @@ describe("small Jira edits: move, assign, label, link", () => {
     expect(await tools().jira_link!.run({ from: "DOC-7", to: "HR-2" })).toMatch(/^NOT_ALLOWED/);
   });
 });
+
+describe("sprint report", () => {
+  it("reads a project's open sprint through fixed JQL, and only allowed projects", async () => {
+    const out = await tools().jira_sprint!.run({ project: "doc" });
+    const jql = requests.find((request) => request.url.includes("/search"))?.url ?? "";
+    expect(jql).toContain('project = "DOC" AND sprint in openSprints()');
+    expect(JSON.parse(out)[0]).toMatchObject({ cite: "jira:DOC-7", status: "In Review", assignee: "unassigned" });
+    expect(tools().jira_sprint!.records!({ project: "DOC" }, out)).toEqual(["jira:DOC-7"]);
+    expect(await tools().jira_sprint!.run({ project: "HR" })).toMatch(/^NOT_ALLOWED/);
+    expect(await tools().jira_sprint!.run({ project: 'DOC" OR project = HR' })).toMatch(/^NOT_ALLOWED/);
+  });
+});

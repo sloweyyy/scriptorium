@@ -27,7 +27,7 @@ export class JiraError extends Error {
 }
 
 /** Fields the poller needs; asking for them explicitly keeps enhanced search (`/search/jql`) happy. */
-const ISSUE_FIELDS = ["summary", "description", "status", "issuetype", "labels", "attachment", "updated", "reporter"];
+const ISSUE_FIELDS = ["summary", "description", "status", "issuetype", "labels", "attachment", "updated", "reporter", "assignee"];
 
 /**
  * Jira Cloud REST v2 client.

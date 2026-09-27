@@ -49,6 +49,10 @@ const Page = z.object({
   body: z.object({ storage: z.object({ value: z.string() }) }),
   _links: z.object({ webui: z.string().optional(), base: z.string().optional() }).optional(),
 });
+const PageSpace = z.object({ id: z.union([z.string(), z.number()]).transform(String), spaceId: z.union([z.string(), z.number()]).transform(String) });
+const ChildList = z.object({
+  results: z.array(z.object({ id: z.union([z.string(), z.number()]).transform(String), title: z.string(), spaceId: z.union([z.string(), z.number()]).transform(String).optional() })),
+});
 const PageMeta = z.object({
   id: z.union([z.string(), z.number()]).transform(String),
   title: z.string(),
@@ -123,6 +127,22 @@ export class ConfluenceConnector {
       markdown: confluenceStorageToMarkdown(page.body.storage.value),
       url: page._links?.webui ? `${base}${page._links.webui}` : undefined,
     };
+  }
+
+  /**
+   * The pages directly under a page — how a spec space is organised. The parent must be in
+   * an allowed space, and so must every child listed: a child moved into another space is
+   * left out, title and all.
+   */
+  async listChildren(pageId: string): Promise<Array<{ id: string; title: string }>> {
+    if (!/^\d+$/.test(pageId)) throw new ConfluenceAccessError("A Confluence page id is digits only.");
+    const allowed = await this.allowedSpaces();
+    const parent = await this.get(`/api/v2/pages/${pageId}`, PageSpace);
+    if (!allowed.has(parent.spaceId)) throw new ConfluenceAccessError(`Page ${pageId} is outside the Confluence spaces this agent may read.`);
+    const children = await this.get(`/api/v2/pages/${pageId}/children?limit=100`, ChildList);
+    return children.results
+      .filter((child) => allowed.has(child.spaceId ?? parent.spaceId))
+      .map((child) => ({ id: child.id, title: child.title }));
   }
 
   private async send<T>(method: "POST" | "PUT", endpoint: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
@@ -241,6 +261,16 @@ export class ConfluenceConnector {
           const id = (input as { id?: unknown })?.id;
           return typeof id === "string" && output.startsWith(`confluence:${id} — `) ? [`confluence:${id}`] : [];
         },
+      },
+      {
+        name: "confluence_page_children",
+        description: "List the pages directly under a Confluence page (ids and titles), to find the right page in a spec tree. Read a page before citing it.",
+        inputSchema: z.object({ id: z.string().describe("The parent page id.") }),
+        run: async (input) => {
+          const { id } = z.object({ id: z.string() }).parse(input);
+          return refusalOr(async () => JSON.stringify((await this.listChildren(id)).map((child) => ({ cite: `confluence:${child.id}`, ...child }))));
+        },
+        records: (_input: unknown, output: string) => ownIds(output, (hit) => (typeof hit.id === "string" ? `confluence:${hit.id}` : undefined)),
       },
       ...(this.settings.ledger
         ? [

@@ -124,6 +124,9 @@ export async function threadContext(slack: SlackClient, channel: string, threadT
   return lines.length ? lines.join("\n") : undefined;
 }
 
+/** Message subtypes that are still a person asking something (the file itself is not read). */
+const ASKING_SUBTYPES = new Set(["file_share", "thread_broadcast"]);
+
 /** "help", "what can you do", or an empty mention: answered from a fixed card, no model call. */
 export function isHelpRequest(text: string): boolean {
   return !text.trim() || /^(help|\?|what can you do\??|how do (i|you) use (this|you)\??)$/i.test(text.trim());
@@ -502,7 +505,9 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     async onDirectMessage(message) {
       // A DM is a conversation with the Teammate by definition: no mention needed. Other
       // bots, edits and joins arrive as subtypes and are never questions.
-      if (message.channel_type !== "im" || message.subtype || message.bot_id) return;
+      // A message with a screenshot is `file_share`, and one also sent to the channel is
+      // `thread_broadcast`: both are still a person asking.
+      if (message.channel_type !== "im" || (message.subtype && !ASKING_SUBTYPES.has(message.subtype)) || message.bot_id) return;
       if (!settings.allowDms) {
         // Silence reads as broken. Say once per DM where to ask instead — never answer here.
         const where = settings.channels.length ? `<#${settings.channels[0]}>` : "a channel I've been added to";

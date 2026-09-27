@@ -21,7 +21,18 @@ export interface Reminder {
 
 const MAX_DAYS_AHEAD = 30;
 const op = (id: string) => `reminder:${id}`;
-const Schedule = z.object({ channel: z.string(), at: z.string().describe("When, as an ISO date-time with a timezone, e.g. 2026-10-02T09:00:00+07:00."), text: z.string().min(1).max(500) });
+/**
+ * A date-time WITH its timezone. "2026-10-02T09:00" would be read in the server's timezone
+ * (UTC on Cloud Run) while the approver reads "09:00" as theirs: the card would promise one
+ * time and the post happen at another.
+ */
+const AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
+const Schedule = z.object({ channel: z.string(), at: z.string().describe("When, as an ISO date-time with its timezone offset, e.g. 2026-10-02T09:00:00+07:00."), text: z.string().min(1).max(500) });
+
+/** The id a person sees and types back: short, and unique even for the steps of one plan (`…#2`). */
+export function shortId(id: string): string {
+  return `${id.slice(0, 8)}${id.match(/#\d+$/)?.[0] ?? ""}`;
+}
 
 export function reminderTools(store: EffectLedger, now: () => number = () => Date.now()): ToolSpec[] {
   return [
@@ -32,7 +43,7 @@ export function reminderTools(store: EffectLedger, now: () => number = () => Dat
       run: async (input: unknown, context?: ToolRunContext) => {
         const parsed = Schedule.parse(input);
         const at = Date.parse(parsed.at);
-        if (!Number.isFinite(at)) return "NOT_ALLOWED: `at` is not a date-time I can read.";
+        if (!AT.test(parsed.at.trim()) || !Number.isFinite(at)) return "NOT_ALLOWED: `at` must be a date-time with its timezone offset, e.g. 2026-10-02T09:00:00+07:00.";
         if (at <= now()) return "NOT_ALLOWED: that time has already passed.";
         if (at > now() + MAX_DAYS_AHEAD * 24 * 3600 * 1000) return `NOT_ALLOWED: reminders can be set at most ${MAX_DAYS_AHEAD} days ahead.`;
         // One reminder per approval: a retry of the same approval is the same reminder.
@@ -40,7 +51,7 @@ export function reminderTools(store: EffectLedger, now: () => number = () => Dat
         const existing = await store.get(op(id));
         const reminder: Reminder = { id, channel: parsed.channel, at: new Date(at).toISOString(), text: parsed.text, approvedBy: context?.approval?.approvedBy };
         if (!existing) await store.put({ op: op(id), status: "in-progress", startedAt: new Date(now()).toISOString(), meta: { kind: "teammate.reminder", ...reminder } });
-        return `${existing ? "Already scheduled" : "Scheduled"} reminder ${id.slice(0, 8)} for ${reminder.at} in <#${parsed.channel}>.`;
+        return `${existing ? "Already scheduled" : "Scheduled"} reminder ${shortId(id)} for ${reminder.at} in <#${parsed.channel}>.`;
       },
     },
     {
@@ -50,7 +61,7 @@ export function reminderTools(store: EffectLedger, now: () => number = () => Dat
       run: async (input: unknown) => {
         const { channel } = z.object({ channel: z.string() }).parse(input);
         const pending = (await pendingReminders(store)).filter((reminder) => reminder.channel === channel);
-        return pending.length ? JSON.stringify(pending.map(({ id, at, text }) => ({ id: id.slice(0, 8), at, text }))) : "No reminders are waiting in this channel.";
+        return pending.length ? JSON.stringify(pending.map(({ id, at, text }) => ({ id: shortId(id), at, text }))) : "No reminders are waiting in this channel.";
       },
     },
     {
@@ -59,7 +70,7 @@ export function reminderTools(store: EffectLedger, now: () => number = () => Dat
       inputSchema: z.object({ channel: z.string(), id: z.string().min(4) }),
       run: async (input: unknown) => {
         const { channel, id } = z.object({ channel: z.string(), id: z.string().min(4) }).parse(input);
-        const matches = (await pendingReminders(store)).filter((reminder) => reminder.channel === channel && reminder.id.startsWith(id));
+        const matches = (await pendingReminders(store)).filter((reminder) => reminder.channel === channel && (reminder.id === id || shortId(reminder.id) === id));
         if (matches.length !== 1) return `NOT_ALLOWED: ${matches.length ? "that id matches more than one reminder" : "no waiting reminder in this channel has that id"}.`;
         const record = await store.get(op((matches[0] as Reminder).id));
         if (record) await store.put({ ...record, status: "done", completedAt: new Date(now()).toISOString(), result: "cancelled" });
@@ -85,6 +96,9 @@ export async function dueReminders(store: EffectLedger, nowMs: number): Promise<
     stale: pending.filter((reminder) => nowMs - Date.parse(reminder.at) > 24 * 3600 * 1000),
   };
 }
+
+/** Slack message metadata marking a reminder's post, so a retry can find the one that landed. */
+export const REMINDER_EVENT_TYPE = "scriptorium_reminder";
 
 /** As posted: the approved text, escaped so it can't ping a channel or hide a link. */
 export function reminderText(reminder: Reminder): string {

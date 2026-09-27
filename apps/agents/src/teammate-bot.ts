@@ -24,7 +24,7 @@ import { ASKING_SUBTYPES, capQuestion, formatReply, helpText, isHelpRequest, men
 import { sharesScribeAccount, teammateConnectorTools } from "./teammate-bot/tools";
 import { outcomeMessages } from "./teammate-bot/outcome";
 import { homeBlocks } from "./teammate-bot/home";
-import { dueReminders, markReminder, reminderText, reminderTools } from "./teammate-bot/reminders";
+import { REMINDER_EVENT_TYPE, dueReminders, markReminder, reminderText, reminderTools } from "./teammate-bot/reminders";
 
 export * from "./teammate-bot/messages";
 export * from "./teammate-bot/tools";
@@ -496,7 +496,22 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     async checkReminders(now = new Date()) {
       const { due, stale } = await dueReminders(reminders, now.getTime());
       for (const reminder of due) {
-        await once(ledger, opKey("teammate.reminder.post", reminder.id), async () => (await slack.chat.postMessage({ channel: reminder.channel, text: reminderText(reminder) })).ts ?? "")
+        // Probed, not just op-keyed: a post that landed before a crash or a timeout is found
+        // by its metadata on the retry, instead of being posted again.
+        await once(
+          ledger,
+          opKey("teammate.reminder.post", reminder.id),
+          async () =>
+            (await slack.chat.postMessage({ channel: reminder.channel, text: reminderText(reminder), metadata: { event_type: REMINDER_EVENT_TYPE, event_payload: { reminder: reminder.id } } })).ts ?? "",
+          {
+            probe: async () => {
+              const history = await slack.conversations.history({ channel: reminder.channel, oldest: String(Date.parse(reminder.at) / 1000 - 60), include_all_metadata: true, limit: 200 });
+              return (history.messages ?? []).find(
+                (message) => message.metadata?.event_type === REMINDER_EVENT_TYPE && (message.metadata.event_payload as { reminder?: string } | undefined)?.reminder === reminder.id,
+              )?.ts;
+            },
+          },
+        )
           .then(() => markReminder(reminders, reminder, "sent", now.getTime()))
           .catch((error: unknown) => audit(config.auditFile, { type: "teammate.reminder.failed", actor: "teammate", reminder: reminder.id, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined));
       }

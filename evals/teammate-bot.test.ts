@@ -139,6 +139,17 @@ describe("tools bound to the turn", () => {
     expect(ran).toEqual(["slack_read_thread", "memory_save", "memory_save", "memory_save"]);
   });
 
+  it("a plan's steps are held to the same bounds — a reminder step for another channel is refused", async () => {
+    const { bindToTurn } = await import("@scriptorium/agents");
+    const { z } = await import("zod");
+    const ran: unknown[] = [];
+    const [plan] = bindToTurn([{ name: "propose_plan", description: "", inputSchema: z.object({}), run: async (input) => (ran.push(input), "ok") }], { question: "q", askedBy: "slack:U1", channel: "C1", threadTs: "1.0" });
+    const reminder = (channel: string) => ({ tool: "schedule_reminder", args: { channel, at: "2030-01-01T09:00:00Z", text: "x" } });
+    expect(await plan!.run({ title: "t", steps: [reminder("C1"), reminder("C_PRIVATE")] })).toMatch(/^NOT_ALLOWED: step 2: reminders can be set/);
+    expect(await plan!.run({ title: "t", steps: [reminder("C1"), { tool: "jira_labels", args: { key: "DOC-1" } }] })).toBe("ok");
+    expect(ran).toHaveLength(1);
+  });
+
   it("reads only the channel it was asked in — never another allowed one", async () => {
     const { bindToTurn } = await import("@scriptorium/agents");
     const { z } = await import("zod");

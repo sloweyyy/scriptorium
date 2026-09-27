@@ -81,52 +81,47 @@ export interface TeammateTurn {
  */
 export function bindToTurn(tools: ToolSpec[], turn: TeammateTurn): ToolSpec[] {
   const scopes = new Set(scopesFor(turn));
-  return tools.map((tool) => {
-    if (tool.name === "slack_read_thread") {
-      return {
-        ...tool,
-        run: async (input: unknown, context?: ToolRunContext) => {
-          const { channel, thread_ts } = (input ?? {}) as { channel?: unknown; thread_ts?: unknown };
-          if (channel !== turn.channel || thread_ts !== turn.threadTs) return "NOT_ALLOWED: you may read only the thread you were asked in.";
-          return tool.run(input, context);
-        },
-      };
+  return tools.map((tool) => ({
+    ...tool,
+    run: async (input: unknown, context?: ToolRunContext) => {
+      // A plan's steps are held to the same bounds as the tools they name: a plan is not a
+      // way around them (a reminder step for another channel is refused like the tool is).
+      if (tool.name === PLAN_TOOL) {
+        const steps = (input as { steps?: unknown } | undefined)?.steps;
+        for (const [index, step] of (Array.isArray(steps) ? steps : []).entries()) {
+          const { tool: name, args } = (step ?? {}) as { tool?: unknown; args?: unknown };
+          const refusal = typeof name === "string" ? turnRefusal(name, args, turn, scopes) : undefined;
+          if (refusal) return `${refusal.replace(/^NOT_ALLOWED: /, `NOT_ALLOWED: step ${index + 1}: `)}`;
+        }
+        return tool.run(input, context);
+      }
+      return turnRefusal(tool.name, input, turn, scopes) ?? tool.run(input, context);
+    },
+  }));
+}
+
+/** Why this call is outside the turn it serves, or undefined when it is inside. */
+export function turnRefusal(name: string, input: unknown, turn: TeammateTurn, scopes: ReadonlySet<string> = new Set(scopesFor(turn))): string | undefined {
+  if (name === "slack_read_thread") {
+    const { channel, thread_ts } = (input ?? {}) as { channel?: unknown; thread_ts?: unknown };
+    if (channel !== turn.channel || thread_ts !== turn.threadTs) return "NOT_ALLOWED: you may read only the thread you were asked in.";
+  }
+  if (name === "schedule_reminder" || name === "list_reminders" || name === "cancel_reminder") {
+    // Reminders only in the conversation that asked: the model does not get to post into other channels later.
+    if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return "NOT_ALLOWED: reminders can be set, listed or cancelled only in the channel you were asked in.";
+  }
+  if (name === "slack_read_channel") {
+    // Only the channel it was asked in: from anywhere else it would hand a private
+    // channel's messages to someone who isn't in it.
+    if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return "NOT_ALLOWED: you may read only the channel you were asked in.";
+  }
+  if (name === "memory_save") {
+    const scope = (input as { scope?: unknown } | undefined)?.scope;
+    if (typeof scope !== "string" || !scopes.has(scope)) {
+      return `NOT_ALLOWED: from here a memory can be scoped to ${[...scopes].map((value) => `"${value}"`).join(", ")} only.`;
     }
-    if (tool.name === "schedule_reminder" || tool.name === "list_reminders" || tool.name === "cancel_reminder") {
-      return {
-        ...tool,
-        run: async (input: unknown, context?: ToolRunContext) => {
-          // Reminders only in the conversation that asked: the model does not get to post into other channels later.
-          if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return "NOT_ALLOWED: reminders can be set, listed or cancelled only in the channel you were asked in.";
-          return tool.run(input, context);
-        },
-      };
-    }
-    if (tool.name === "slack_read_channel") {
-      return {
-        ...tool,
-        run: async (input: unknown, context?: ToolRunContext) => {
-          // Only the channel it was asked in: from anywhere else it would hand a private
-          // channel's messages to someone who isn't in it.
-          if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return "NOT_ALLOWED: you may read only the channel you were asked in.";
-          return tool.run(input, context);
-        },
-      };
-    }
-    if (tool.name === "memory_save") {
-      return {
-        ...tool,
-        run: async (input: unknown, context?: ToolRunContext) => {
-          const scope = (input as { scope?: unknown } | undefined)?.scope;
-          if (typeof scope !== "string" || !scopes.has(scope)) {
-            return `NOT_ALLOWED: from here a memory can be scoped to ${[...scopes].map((value) => `"${value}"`).join(", ")} only.`;
-          }
-          return tool.run(input, context);
-        },
-      };
-    }
-    return tool;
-  });
+  }
+  return undefined;
 }
 
 export interface TeammateDeps {

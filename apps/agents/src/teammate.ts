@@ -18,7 +18,7 @@ import { assembleAgent, listMemories, memoryTools, renderMemories, runSession, s
  *   loop failed closed. Never posted as an answer.
  */
 
-export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "slack_reply", "confluence_update_page", "memory_save"]);
+export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "slack_reply", "confluence_create_page", "confluence_update_page", "memory_save"]);
 
 export type TeammateReply =
   | { kind: "answer"; text: string; citations: string[] }

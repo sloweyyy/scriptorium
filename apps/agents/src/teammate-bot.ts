@@ -68,6 +68,7 @@ export function teammateConnectorTools(config: AppConfig, slack: SlackClient, le
         email: config.jira.email as string,
         apiToken: config.jira.apiToken as string,
         allowedSpaceKeys: settings.confluenceSpaces,
+        ledger,
       }).tools(),
     );
   }

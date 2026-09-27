@@ -1,5 +1,6 @@
 import type { ToolSpec } from "@scriptorium/core";
-import { confluenceStorageToMarkdown } from "@scriptorium/jira";
+import { confluenceStorageToMarkdown, markdownToJira } from "@scriptorium/jira";
+import { once, opKey, type EffectLedger } from "@scriptorium/runtime";
 import { z } from "zod";
 
 /**
@@ -26,6 +27,8 @@ export interface ConfluenceSettings {
   apiToken: string;
   /** Space KEYS the agent may see. Empty: none. */
   allowedSpaceKeys: readonly string[];
+  /** Needed for writes (exactly-once). Without it the connector is read-only. */
+  ledger?: EffectLedger;
 }
 
 const SpaceList = z.object({ results: z.array(z.object({ id: z.union([z.string(), z.number()]).transform(String), key: z.string() })) });
@@ -46,6 +49,13 @@ const Page = z.object({
   body: z.object({ storage: z.object({ value: z.string() }) }),
   _links: z.object({ webui: z.string().optional(), base: z.string().optional() }).optional(),
 });
+const PageMeta = z.object({
+  id: z.union([z.string(), z.number()]).transform(String),
+  title: z.string(),
+  spaceId: z.union([z.string(), z.number()]).transform(String),
+  version: z.object({ number: z.number(), message: z.string().optional() }),
+});
+const PageList = z.object({ results: z.array(z.object({ id: z.union([z.string(), z.number()]).transform(String), title: z.string() })) });
 
 export class ConfluenceAccessError extends Error {}
 
@@ -110,6 +120,89 @@ export class ConfluenceConnector {
     };
   }
 
+  private async send<T>(method: "POST" | "PUT", endpoint: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
+    const response = await fetch(`${this.settings.baseUrl.replace(/\/$/, "")}/wiki${endpoint}`, {
+      method,
+      headers: { Authorization: this.auth, Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(`Confluence ${method} ${endpoint.split("?")[0]} → HTTP ${response.status}`);
+    const parsed = schema.safeParse(await response.json());
+    if (!parsed.success) throw new Error(`Confluence ${endpoint.split("?")[0]} returned an unexpected shape: ${parsed.error.issues[0]?.path.join(".")}`);
+    return parsed.data;
+  }
+
+  private async spaceIdFor(spaceKey: string): Promise<string> {
+    for (const [id, key] of await this.allowedSpaces()) if (key === spaceKey) return id;
+    throw new ConfluenceAccessError(`Space ${spaceKey} is outside the Confluence spaces this agent may write to.`);
+  }
+
+  /**
+   * Create a page, exactly once. The probe is the page itself: a page with this title
+   * already in this space means an earlier attempt landed (Confluence titles are unique
+   * per space), so a retry returns it instead of failing or duplicating.
+   */
+  async createPage(input: { space: string; title: string; markdown: string; parentId?: string }): Promise<{ id: string; created: boolean }> {
+    const ledger = this.settings.ledger;
+    if (!ledger) throw new ConfluenceAccessError("This connector is read-only.");
+    const spaceId = await this.spaceIdFor(input.space);
+    const find = async () => {
+      const found = await this.get(`/api/v2/pages?space-id=${spaceId}&title=${encodeURIComponent(input.title)}&limit=1`, PageList);
+      return found.results[0]?.id;
+    };
+    const { result, replayed } = await once(
+      ledger,
+      opKey("confluence.create", spaceId, input.title),
+      async () =>
+        (
+          await this.send("POST", "/api/v2/pages", {
+            spaceId,
+            status: "current",
+            title: input.title,
+            ...(input.parentId ? { parentId: input.parentId } : {}),
+            body: { representation: "wiki", value: markdownToJira(input.markdown) },
+          }, PageMeta)
+        ).id,
+      { probe: find },
+    );
+    return { id: result, created: !replayed };
+  }
+
+  /**
+   * Replace a page's body, exactly once. Confluence requires version = current + 1; the op
+   * rides in the version message, so a retry that finds its own op on the current version
+   * knows the update already landed.
+   */
+  async updatePage(input: { id: string; markdown: string; title?: string }): Promise<{ version: number; updated: boolean }> {
+    const ledger = this.settings.ledger;
+    if (!ledger) throw new ConfluenceAccessError("This connector is read-only.");
+    if (!/^\d+$/.test(input.id)) throw new ConfluenceAccessError("A Confluence page id is digits only.");
+    const current = await this.get(`/api/v2/pages/${input.id}`, PageMeta);
+    if (!(await this.allowedSpaces()).has(current.spaceId)) throw new ConfluenceAccessError(`Page ${input.id} is outside the Confluence spaces this agent may write to.`);
+    const op = opKey("confluence.update", input.id, input.markdown, input.title);
+    const { result, replayed } = await once(
+      ledger,
+      op,
+      async () =>
+        (
+          await this.send("PUT", `/api/v2/pages/${input.id}`, {
+            id: input.id,
+            status: "current",
+            title: input.title ?? current.title,
+            body: { representation: "wiki", value: markdownToJira(input.markdown) },
+            version: { number: current.version.number + 1, message: `scriptorium op ${op}` },
+          }, PageMeta)
+        ).version.number,
+      {
+        probe: async () => {
+          const now = await this.get(`/api/v2/pages/${input.id}`, PageMeta);
+          return now.version.message?.includes(op) ? now.version.number : undefined;
+        },
+      },
+    );
+    return { version: result, updated: !replayed };
+  }
+
   /** The connector as model tools. Plain-language refusals, never a thrown stack. */
   tools(): ToolSpec[] {
     return [
@@ -134,6 +227,34 @@ export class ConfluenceConnector {
           });
         },
       },
+      ...(this.settings.ledger
+        ? [
+            {
+              name: "confluence_create_page",
+              description: "Create a Confluence page in an allowed space. Requires human approval; it is not done until approved.",
+              inputSchema: z.object({ space: z.string(), title: z.string().min(1).max(255), markdown: z.string().min(1), parentId: z.string().optional() }),
+              run: async (input: unknown) => {
+                const parsed = z.object({ space: z.string(), title: z.string().min(1).max(255), markdown: z.string().min(1), parentId: z.string().optional() }).parse(input);
+                return refusalOr(async () => {
+                  const page = await this.createPage(parsed);
+                  return `${page.created ? "Created" : "Already created"} confluence:${page.id} — ${parsed.title}`;
+                });
+              },
+            },
+            {
+              name: "confluence_update_page",
+              description: "Replace the body of a Confluence page in an allowed space. Requires human approval; it is not done until approved.",
+              inputSchema: z.object({ id: z.string(), markdown: z.string().min(1), title: z.string().optional() }),
+              run: async (input: unknown) => {
+                const parsed = z.object({ id: z.string(), markdown: z.string().min(1), title: z.string().optional() }).parse(input);
+                return refusalOr(async () => {
+                  const page = await this.updatePage(parsed);
+                  return `${page.updated ? "Updated" : "Already updated"} confluence:${parsed.id} (version ${page.version})`;
+                });
+              },
+            },
+          ]
+        : []),
     ];
   }
 }

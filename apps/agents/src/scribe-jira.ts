@@ -247,6 +247,19 @@ function dueForRemoteLinkCheck(key: string): boolean {
   return seen % REMOTE_LINK_EVERY_N_TICKS === 0;
 }
 
+/**
+ * May this Jira account approve a publish? The same answer for a comment and a board move.
+ * Unknown is never yes: an approval nobody can attribute is not an approval.
+ */
+export function mayApproveOnJira(settings: { approvers?: readonly string[] }, botAccountId: string | undefined, accountId: string | undefined): { ok: true } | { ok: false; reason: string } {
+  if (!accountId) return { ok: false, reason: "I couldn't tell who approved, so I haven't published." };
+  if (botAccountId && accountId === botAccountId) return { ok: false, reason: "My own move is bookkeeping, not an approval." };
+  if (settings.approvers?.length && !settings.approvers.includes(accountId)) {
+    return { ok: false, reason: "Only the configured approvers can publish from this ticket, so I haven't. Ask one of them to comment `approve`." };
+  }
+  return { ok: true };
+}
+
 function authorName(comment: JiraComment): string {
   return comment.author?.displayName ?? comment.author?.accountId ?? "a Jira user";
 }
@@ -1252,11 +1265,14 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
         await flushFeedback();
         await runDraft(ctx, issue, { force: true });
         break;
-      case "approve-doc":
+      case "approve-doc": {
         await flushFeedback();
-        if (revisedThisTick) await holdUnseenRevision();
+        const allowed = mayApproveOnJira(ctx.config.jira, ctx.botAccountId, comment.author?.accountId);
+        if (!allowed.ok) await say(ctx, key, allowed.reason);
+        else if (revisedThisTick) await holdUnseenRevision();
         else await runPublish(ctx, issue, authorName(comment));
         break;
+      }
       case "approve-lesson":
         await flushFeedback();
         await runLessonDecision(ctx, key, "approve", command.id, authorName(comment));
@@ -1284,15 +1300,21 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
     // Belt to the snapshot's braces: whoever moved it must be a HUMAN. The agent drives
     // the board itself, and its own transition is bookkeeping, never an approval — the
     // fail-closed rule is "no human approval, no publish", and this is where it is held.
+    const allowed = mayApproveOnJira(ctx.config.jira, ctx.botAccountId, mover?.accountId);
     if (mover?.accountId && mover.accountId === ctx.botAccountId) {
       console.warn(`[scribe] ${key}: ignoring my own transition to "${ctx.config.jira.approvedStatus}" — not a human approval`);
+    } else if (!allowed.ok) {
+      // A mover the changelog can't name, or one who isn't an approver: fail closed, say why,
+      // and put the column back so the board doesn't claim an approval that didn't count.
+      await say(ctx, key, allowed.reason);
+      await moveTo(ctx, key, ctx.config.jira.inReviewStatus, ctx.config.jira.approvedStatus);
     } else if (revisedThisTick) {
       // Dragged to Approved while feedback was still being applied: the column was set
       // for the old draft. Put it back in review with the new one.
       await holdUnseenRevision();
       await moveTo(ctx, key, ctx.config.jira.inReviewStatus, ctx.state.get(key)?.lastStatus);
     } else {
-      await runPublish(ctx, issue, mover?.name ?? "a Jira approver", { quietWhenPublished: true });
+      await runPublish(ctx, issue, mover?.name ?? mover?.accountId ?? "a Jira approver", { quietWhenPublished: true });
     }
   }
 

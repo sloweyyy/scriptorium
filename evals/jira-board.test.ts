@@ -617,3 +617,37 @@ describe("the Slack approve button", () => {
     expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(1);
   });
 });
+
+describe("who may approve on Jira", () => {
+  it("with approvers configured, a non-approver's `approve` is refused and nothing publishes", async () => {
+    const settings = config();
+    settings.jira.approvers = ["pm-1"];
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+
+    comments.push(human("h1", "approve"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T13:00:00.000+0000" } };
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+    expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(0);
+    expect(comments.at(-1)?.body).toContain("Only the configured approvers");
+  });
+
+  it("a board move nobody can attribute is not an approval", async () => {
+    const settings = config();
+    const stateDir = settings.jira.stateDir;
+    await fs.mkdir(path.join(stateDir, "drafts"), { recursive: true });
+    await fs.writeFile(path.join(stateDir, "drafts", "DOC-1.md"), CLEAN_DRAFT);
+    await fs.writeFile(
+      path.join(stateDir, "jira-state.json"),
+      JSON.stringify({ version: 1, issues: { "DOC-1": { hasDraft: true, engaged: true, docSlug: "incident-timeline-embed", sourceFingerprint: "seeded", processedComments: [], lastStatus: "In Review", lastUpdated: "2026-08-20T10:00:00.000+0000" } } }),
+    );
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Done" }, updated: "2026-08-20T15:00:00.000+0000" } };
+    changelog = [];
+
+    const run = await startScribeJira(settings, vault);
+    run.stop();
+    expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(0);
+    expect(comments.at(-1)?.body).toContain("couldn't tell who approved");
+  });
+});

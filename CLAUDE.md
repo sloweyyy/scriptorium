@@ -11,6 +11,7 @@ vault, one audit log) with separate identities and separate permission envelopes
 ```bash
 pnpm dev                # vault watcher + Jira poller + any Slack bot with tokens in .env
 pnpm jira:doctor        # verify Jira auth/JQL/comments/attachments/transitions (--write for write access)
+pnpm doctor             # read-only setup check: model, signing, audit location, approvers, Slack scopes/channels, Confluence, GitHub, repos
 pnpm typecheck          # tsc --noEmit (strict) — must stay clean
 pnpm eval               # contract / lint / organizer evals, no API key needed
 RUN_LLM_EVALS=1 pnpm eval   # + live grounded-Q&A evals, on whichever provider is configured

@@ -116,6 +116,9 @@ cp .env.example .env
    `/invite @Teammate` in an allowed channel, then ask `@Teammate what does our digest do?`
    or `/teammate help`.
 
+Run `pnpm doctor` to check the setup: it names anything missing (a scope, a channel the bot
+isn't in, no approvers, an unsigned or ephemeral audit trail) and how to fix it.
+
 Every setting fails closed: unset means *less* is allowed. The [runbook](docs/runbook.md)
 lists the settings that decide safety, how to check a deploy works, and what to do when
 something goes wrong.

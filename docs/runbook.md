@@ -35,16 +35,20 @@ Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
 
 ## After a deploy: prove it works
 
-1. `curl $URL/health` should report the configured surfaces (`jira`, `docsRepo`, webhooks).
-2. `pnpm jira:doctor`, run locally against the same Jira, checks auth, JQL, comments,
+1. `pnpm doctor` (with the deployment's settings) checks what its safety depends on: the model,
+   signing, where the audit log lives, approvers and admins, spend caps, the Slack app's
+   scopes and channel membership, Confluence spaces, GitHub repos, and that the vault repo is
+   separate from the docs repo. Each problem is printed with its fix. It is read-only.
+2. `curl $URL/health` should report the configured surfaces (`jira`, `docsRepo`, webhooks).
+3. `pnpm jira:doctor`, run locally against the same Jira, checks auth, JQL, comments,
    attachments and transitions (read-only unless `--write`).
-3. In an allowed channel, `@Teammate what does <a documented feature> do?` should get a
+4. In an allowed channel, `@Teammate what does <a documented feature> do?` should get a
    cited answer, with "AI-generated · view run …" at the end.
    `/teammate help` should answer privately with the help card, and the app's Home tab should
    list nothing waiting (or what is).
-4. Ask it to "file a ticket for this". An approval card should appear. Click Approve as a
+5. Ask it to "file a ticket for this". An approval card should appear. Click Approve as a
    listed approver, and "Done: Created jira:…" should follow in the thread.
-5. Open the run link. The run page shows the trigger, the tool calls, the approval and the
+6. Open the run link. The run page shows the trigger, the tool calls, the approval and the
    reply.
 
 ## When something goes wrong

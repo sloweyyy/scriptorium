@@ -12,6 +12,7 @@
     "draft": "tsx scripts/draft.ts",
     "render:wireframes": "tsx scripts/render-wireframes.ts",
     "jira:doctor": "tsx scripts/jira-doctor.ts",
+    "doctor": "tsx scripts/doctor.ts",
     "seed:corpus": "tsx scripts/seed-corpus.ts",
     "mcp": "tsx scripts/mcp.ts",
     "trace": "tsx scripts/trace.ts",

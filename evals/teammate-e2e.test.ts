@@ -157,6 +157,20 @@ describe("automatic PR checks", () => {
     const audit = await fs.readFile(path.join(tmpRoot, "audit.jsonl"), "utf8");
     expect(audit).toContain("PR checks are not configured for this repo");
   });
+
+  it("the card a PR check raises threads under that check's summary", async () => {
+    const prConfig = { ...config(), teammate: { ...config().teammate, githubRepos: ["org/app"], prChannel: "CPR" } } as AppConfig;
+    const core = await createTeammate(prConfig, vault, slack as never, "UBOT");
+    script = { calls: [{ name: "memory_save", input: { text: "PRs in org/app need a DOC key.", scope: "global" } }], reply: "Proposed a note; it waits on approval." };
+    await core.onPullRequest({ repo: "org/app", number: 12, author: "dev", deliveryId: "d-3" });
+    await settle(core);
+    const [summary, card, ...rest] = posted.filter((message) => message.channel === "CPR");
+    expect(rest).toEqual([]);
+    expect(summary?.thread_ts).toBeUndefined();
+    expect(summary?.text).toContain("Waiting for approval");
+    expect(card?.text).toContain("Approval needed");
+    expect(card?.thread_ts).toBe(`9.${posted.indexOf(summary!) + 1}`);
+  });
 });
 
 describe("direct messages", () => {

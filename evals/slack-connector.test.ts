@@ -138,6 +138,7 @@ describe("where an approval card goes", () => {
     expect(cardTarget(request("slack:thread:C1/1.0"), routing)).toEqual({ channel: "C1", thread_ts: "1.0" });
     expect(cardTarget(request("slack:thread:D9/2.0"), routing)).toEqual({ channel: "CN" });
     expect(cardTarget(request("github:pull:org/app#12"), routing)).toEqual({ channel: "CPR" });
+    expect(cardTarget(request("github:pull:org/app#12"), { ...routing, threadFor: (key) => (key === "github:pull:org/app#12" ? "7.0" : undefined) })).toEqual({ channel: "CPR", thread_ts: "7.0" });
     expect(cardTarget(request("jira:issue:DOC-7"), routing)).toEqual({ channel: "CN" });
     expect(cardTarget(request("jira:issue:DOC-7"), {})).toBeUndefined();
   });

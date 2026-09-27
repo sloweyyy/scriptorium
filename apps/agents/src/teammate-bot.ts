@@ -215,7 +215,9 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const hostConfig = { ...agentConfig, tools: Object.fromEntries(Object.entries(agentConfig.tools).filter(([name]) => available.has(name))) };
   const envelope = envelopeOf(hostConfig);
   // Cards follow the request: its channel thread; a PR → the PR channel; a DM or Jira → notify.
-  const approvalChannel = new SlackApprovalChannel(slack, { fallbackChannel: config.slack.notifyChannel, prChannel: settings.prChannel });
+  /** A running PR check's summary message, keyed by conversation: its card threads under it. */
+  const prThreads = new Map<string, string>();
+  const approvalChannel = new SlackApprovalChannel(slack, { fallbackChannel: config.slack.notifyChannel, prChannel: settings.prChannel, threadFor: (key) => prThreads.get(key) });
   const guardDepsFor = (key: string): GuardDeps => ({ store, channel: approvalChannel, auditFile: config.auditFile, key });
   // Spend caps per channel per day, seeded from today's audit so a restart is not a reset.
   const budget = new DailyBudget(settings.dailyTokens);
@@ -332,6 +334,10 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   async function checkPullRequest(key: string, event: AgentEvent): Promise<void> {
     const { repo, number } = event.payload as { repo: string; number: number };
     const channel = settings.prChannel as string;
+    const heading = `*PR check* — <https://github.com/${repo}/pull/${number}|${repo}#${number}>`;
+    // The summary is posted first, so a card the check raises can thread under it.
+    const header = await slack.chat.postMessage({ channel, text: `${heading}\n⏳ Checking…` }).catch(() => undefined);
+    if (header?.ts) prThreads.set(key, header.ts);
     const reply = await runTeammateTurn(
       { question: `Check pull request github:${repo}/pull/${number} against the Jira ticket it implements, and propose one advisory comment.`, askedBy: event.actor.id },
       turnDeps(key),
@@ -339,7 +345,10 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       await audit(config.auditFile, { type: "teammate.error", actor: "teammate", key, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
       return { kind: "refused" as const, text: "I couldn't check this pull request, so nothing was posted to it." };
     });
-    await slack.chat.postMessage({ channel, text: `*PR check* — <https://github.com/${repo}/pull/${number}|${repo}#${number}>\n${formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken })}` });
+    prThreads.delete(key);
+    const text = `${heading}\n${formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken })}`;
+    const updated = header?.ts ? await slack.chat.update({ channel, ts: header.ts, text }).catch(() => undefined) : undefined;
+    if (!updated?.ok) await slack.chat.postMessage({ channel, text });
     await audit(config.auditFile, { type: `teammate.pr.${reply.kind}`, actor: "teammate", key, repo, number }).catch(() => undefined);
   }
 

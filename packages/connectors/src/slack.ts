@@ -106,17 +106,23 @@ export interface CardRouting {
   fallbackChannel?: string;
   /** Requests about a GitHub pull request. */
   prChannel?: string;
+  /** The thread a conversation already has in its channel (a PR check's summary), if any. */
+  threadFor?: (key: string) => string | undefined;
 }
 
 /**
  * Where a request's card goes. A channel thread keeps it in that thread. A DM does NOT —
  * only the requester can see a DM, and the requester is rarely the approver — so it goes to
- * the fallback channel, like a request from Jira. A PR goes to the PR channel.
+ * the fallback channel, like a request from Jira. A PR goes to the PR channel, under the
+ * check's summary when there is one, so the card sits next to the reasoning it asks about.
  */
 export function cardTarget(request: ApprovalRequest, routing: CardRouting): { channel: string; thread_ts?: string } | undefined {
   const thread = request.key.match(/^slack:thread:([^/]+)\/(.+)$/);
   if (thread && !(thread[1] as string).startsWith("D")) return { channel: thread[1] as string, thread_ts: thread[2] };
-  if (request.key.startsWith("github:pull:") && routing.prChannel) return { channel: routing.prChannel };
+  if (request.key.startsWith("github:pull:") && routing.prChannel) {
+    const threadTs = routing.threadFor?.(request.key);
+    return threadTs ? { channel: routing.prChannel, thread_ts: threadTs } : { channel: routing.prChannel };
+  }
   return routing.fallbackChannel ? { channel: routing.fallbackChannel } : undefined;
 }
 

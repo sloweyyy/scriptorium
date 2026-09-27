@@ -203,6 +203,9 @@ export interface QaEvidence {
 /** `confluence:<page id>`, `jira:<ISSUE-1>` — records outside the vault, cited by source. */
 const EXTERNAL_CITATION = /^(confluence:\d+|jira:[A-Z][A-Z0-9_]*-\d+)$/;
 
+/** Tool outputs that report an action NOT taken or a read refused — never evidence. */
+const REFUSAL = /^\s*(NOT_ALLOWED|DENIED|NOT_DONE|APPROVAL_PENDING|REFUSED)\b/;
+
 /** Queues and drafts, not knowledge: never evidence for a claim about the product. */
 const NOT_CITABLE = ["_gaps/", "_inbox/"];
 
@@ -224,7 +227,9 @@ export async function enforceGrounding(vault: Vault, answer: QaAnswer, evidence:
   for (const citation of answer.citations) {
     const relPath = citation.replace(/#.*$/, "").replace(/\.md$/, "");
     if (NOT_CITABLE.some((prefix) => relPath.startsWith(prefix))) continue;
-    if (!evidence.retrieved.some((result) => mentions(result, relPath))) continue;
+    // A refusal is not evidence: "NOT_ALLOWED: jira:DOC-99 is not an issue key" echoes the
+    // id it refused, and counting that as retrieval would ground a claim in nothing.
+    if (!evidence.retrieved.some((result) => !REFUSAL.test(result) && mentions(result, relPath))) continue;
     // A source-qualified citation (`confluence:123`, `jira:DOC-7`) names a record in another
     // system: it counts when a tool returned it in this conversation, which is the only
     // evidence there is — the vault cannot vouch for a Confluence page.

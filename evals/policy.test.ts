@@ -209,3 +209,26 @@ describe("what the approver reads", () => {
     expect(argsHash({ markdown: body })).not.toBe(argsHash({ markdown: `${body}y` }));
   });
 });
+
+describe("concurrency", () => {
+  it("two approvers clicking at once decide once, and the tool runs once", async () => {
+    const store = new FileApprovalStore(path.join(tmpRoot, "race.json"));
+    const pending = await runUnderPolicy(envelope, publish, DRAFT, deps(store));
+    if (pending.kind !== "pending") throw new Error("expected pending");
+    const click = async (who: string) => {
+      const decided = await decideApproval(store, envelope, pending.request.id, "approved", { accountId: who });
+      if (decided.ok) await executeApproved(envelope, [publish], pending.request.id, deps(store));
+      return decided.ok;
+    };
+    const results = await Promise.all([click("pm-1"), click("pm-2")]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(runs).toHaveLength(1);
+  });
+
+  it("concurrent saves to the file store lose nothing", async () => {
+    const store = new FileApprovalStore(path.join(tmpRoot, "many.json"));
+    const base = { agent: "scribe", tool: "publish_doc", argsHash: "h", summary: "", key: "k", requestedAt: "", expiresAt: "2099-01-01", status: "pending" as const };
+    await Promise.all([1, 2, 3, 4, 5].map((n) => store.save({ ...base, id: `r${n}` })));
+    expect(await store.all()).toHaveLength(5);
+  });
+});

@@ -109,7 +109,24 @@ export interface OnceResult<T> {
   replayed: boolean;
 }
 
-export async function once<T>(ledger: EffectLedger, op: string, act: () => Promise<T>, options: OnceOptions<T> = {}): Promise<OnceResult<T>> {
+/**
+ * In-process single flight per (ledger, op). Without it, two concurrent calls for the same
+ * op both read "no record" and both act — the ledger only stops the retries that come
+ * AFTER a record lands. The second caller now waits for the first and replays its result.
+ */
+const inFlight = new WeakMap<EffectLedger, Map<string, Promise<OnceResult<unknown>>>>();
+
+export function once<T>(ledger: EffectLedger, op: string, act: () => Promise<T>, options: OnceOptions<T> = {}): Promise<OnceResult<T>> {
+  let running = inFlight.get(ledger);
+  if (!running) inFlight.set(ledger, (running = new Map()));
+  const current = running.get(op);
+  if (current) return current.then((first) => ({ result: first.result as T, replayed: true }));
+  const attempt = onceUnshared(ledger, op, act, options).finally(() => running.delete(op));
+  running.set(op, attempt as Promise<OnceResult<unknown>>);
+  return attempt;
+}
+
+async function onceUnshared<T>(ledger: EffectLedger, op: string, act: () => Promise<T>, options: OnceOptions<T>): Promise<OnceResult<T>> {
   const existing = await ledger.get(op);
   if (existing?.status === "done") return { result: existing.result as T, replayed: true };
 

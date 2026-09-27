@@ -63,6 +63,20 @@ Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
 | Slow replies at busy times | nothing, usually | Jira, Confluence or GitHub rate-limited us (429). Calls wait what the service asks, up to 30s over 3 tries, then fail closed as before |
 | The same Jira comment twice | shouldn't happen: writes are op-keyed | check whether two instances are running (see below) |
 
+## The audit log
+
+Every line is hash-chained to the one before it, so an edited, removed or reordered line is
+detectable:
+
+- `pnpm auditlog verify [file]` checks the chain and names the first line that breaks it.
+- `pnpm auditlog export --from 2026-09-01 --to 2026-09-30 [file]` writes that range as JSONL,
+  with a digest on stderr (an HMAC with `SCRIPTORIUM_SIGNING_KEY` when set), so an extract
+  handed to a reviewer can be checked against it.
+
+Set `AUDIT_FILE` to a path on the persistent state volume (for example
+`/state/audit/log.jsonl`). The default, `audit/log.jsonl` in the working directory, does not
+survive a Cloud Run revision.
+
 ## Stop it now
 
 A tool misbehaving, answers going wrong, a cost spike: an admin (`TEAMMATE_ADMINS`) runs,

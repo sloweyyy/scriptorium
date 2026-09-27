@@ -21,6 +21,7 @@ pnpm seed:corpus        # corpus/*.md -> vault/reference/ (--inbox to let the wa
 pnpm mcp                # the vault as a read-only MCP server over stdio
 pnpm trace [run-id]     # what one agent run did (from the audit log); no arg = recent runs
 pnpm mutate             # sabotage each guardrail once; its eval must go red (weekly in CI)
+pnpm auditlog verify    # the audit log's hash chain holds (export --from --to for a signed extract)
 ```
 
 ## Architecture

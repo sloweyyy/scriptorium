@@ -108,6 +108,41 @@ export const MUTANTS: Mutant[] = [
     replace: "",
     evals: ["evals/memory.test.ts"],
   },
+  {
+    control: "a tool's refusal is never citation evidence",
+    file: "packages/curator/src/qa-contract.ts",
+    find: "evidence.retrieved.some((result) => !REFUSAL.test(result) && mentions(result, relPath))",
+    replace: "evidence.retrieved.some((result) => mentions(result, relPath))",
+    evals: ["evals/grounding.test.ts"],
+  },
+  {
+    control: "approval cards escape Slack markup",
+    file: "packages/connectors/src/slack.ts",
+    find: 'return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");',
+    replace: "return text;",
+    evals: ["evals/slack-connector.test.ts"],
+  },
+  {
+    control: "slack_read_thread reads only the turn's own thread",
+    file: "apps/agents/src/teammate.ts",
+    find: "if (channel !== turn.channel || thread_ts !== turn.threadTs) return",
+    replace: "if (false) return",
+    evals: ["evals/teammate-bot.test.ts"],
+  },
+  {
+    control: "the Teammate writes to Atlassian only as itself",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "tools.push(...(ownIdentity ? atlassian : atlassian.filter((tool) => !ATLASSIAN_WRITES.has(tool.name))));",
+    replace: "tools.push(...atlassian);",
+    evals: ["evals/teammate-bot.test.ts"],
+  },
+  {
+    control: "the Teammate answers on Jira only when it is mentioned",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "if (!jira || !mentionsAccount(body, jira.accountId) || authorId === jira.accountId) return;",
+    replace: "if (!jira || authorId === jira.accountId) return;",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
 ];
 
 function run(evals: string[]): boolean {

@@ -40,6 +40,9 @@ export function teammateConfig(input: { selfAccountIds: string[]; approvers: str
       confluence_create_page: write,
       confluence_update_page: write,
       github_pr_comment: write,
+      schedule_reminder: write,
+      cancel_reminder: write,
+      list_reminders: "allow",
       // One card for several writes; only steps whose own rule is `write` may be in it.
       propose_plan: write,
       // Remembering is a write about people and teams: a human approves every memory.

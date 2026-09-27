@@ -31,6 +31,8 @@ const WRITE_DESCRIPTIONS: Record<string, string> = {
   memory_save: "remember that",
   github_pr_comment: "comment on the pull request",
   propose_plan: "carry out the plan",
+  schedule_reminder: "schedule the reminder",
+  cancel_reminder: "cancel the reminder",
   slack_reply: "reply in the thread",
 };
 
@@ -48,7 +50,7 @@ export function describeOutcome(tool: string, result: string): string {
   return `✅ ${result.split("\n")[0]}`;
 }
 
-export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "jira_transition", "jira_assign", "jira_labels", "jira_link", "slack_reply", "confluence_create_page", "confluence_update_page", "memory_save", "github_pr_comment", "propose_plan"]);
+export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "jira_transition", "jira_assign", "jira_labels", "jira_link", "slack_reply", "confluence_create_page", "confluence_update_page", "memory_save", "github_pr_comment", "propose_plan", "schedule_reminder", "cancel_reminder"]);
 
 export type TeammateReply =
   | { kind: "answer"; text: string; citations: string[] }
@@ -86,6 +88,16 @@ export function bindToTurn(tools: ToolSpec[], turn: TeammateTurn): ToolSpec[] {
         run: async (input: unknown, context?: ToolRunContext) => {
           const { channel, thread_ts } = (input ?? {}) as { channel?: unknown; thread_ts?: unknown };
           if (channel !== turn.channel || thread_ts !== turn.threadTs) return "NOT_ALLOWED: you may read only the thread you were asked in.";
+          return tool.run(input, context);
+        },
+      };
+    }
+    if (tool.name === "schedule_reminder" || tool.name === "list_reminders" || tool.name === "cancel_reminder") {
+      return {
+        ...tool,
+        run: async (input: unknown, context?: ToolRunContext) => {
+          // Reminders only in the conversation that asked: the model does not get to post into other channels later.
+          if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return "NOT_ALLOWED: reminders can be set, listed or cancelled only in the channel you were asked in.";
           return tool.run(input, context);
         },
       };

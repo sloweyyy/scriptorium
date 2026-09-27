@@ -57,6 +57,9 @@ describe("agent policy", () => {
       confluence_update_page: "approve",
       github_pr_comment: "approve",
       propose_plan: "approve",
+      schedule_reminder: "approve",
+      cancel_reminder: "approve",
+      list_reminders: "allow",
       memory_save: "approve",
     });
   });

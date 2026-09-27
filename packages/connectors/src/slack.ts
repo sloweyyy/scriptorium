@@ -227,6 +227,10 @@ export function describeRequest(request: ApprovalRequest): string {
       return `Remember (${text(args.scope, 60)}): “${text(args.text, 200)}”`;
     case "github_pr_comment":
       return `Comment on pull request ${text(args.repo, 80)}#${text(args.number, 10)}`;
+    case "schedule_reminder":
+      return `Post a reminder in channel ${text(args.channel, 20)} at ${text(args.at, 40)}: “${text(args.text, 200)}”`;
+    case "cancel_reminder":
+      return `Cancel reminder ${text(args.id, 20)} in channel ${text(args.channel, 20)}`;
     case "propose_plan": {
       // Every step, in order, from the stored arguments: the approver approves exactly this list.
       const steps = Array.isArray(args.steps) ? (args.steps as Array<{ tool?: unknown; args?: unknown }>) : [];

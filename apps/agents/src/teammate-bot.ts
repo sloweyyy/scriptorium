@@ -24,11 +24,13 @@ import { ASKING_SUBTYPES, capQuestion, formatReply, helpText, isHelpRequest, men
 import { sharesScribeAccount, teammateConnectorTools } from "./teammate-bot/tools";
 import { outcomeMessages } from "./teammate-bot/outcome";
 import { homeBlocks } from "./teammate-bot/home";
+import { dueReminders, markReminder, reminderText, reminderTools } from "./teammate-bot/reminders";
 
 export * from "./teammate-bot/messages";
 export * from "./teammate-bot/tools";
 export * from "./teammate-bot/outcome";
 export * from "./teammate-bot/home";
+export * from "./teammate-bot/reminders";
 
 /**
  * The Teammate in Slack: the whole engine behind one surface.
@@ -47,6 +49,8 @@ export interface TeammateCore {
   onApprovalClick(action: string, payload: ApprovalClickPayload): Promise<string | undefined>;
   /** The weekly digest, if due and not yet posted this week. */
   checkDigest(now?: Date): Promise<void>;
+  /** Post any approved reminder that is due (once each); drop any a day overdue. */
+  checkReminders(now?: Date): Promise<void>;
   /** A Jira comment; answered on the ticket, as the Teammate, if it mentions the Teammate. */
   /** `restriction`: who may see the comment; the reply carries the same. Omitted: public. */
   onJiraComment(input: { issueKey: string; commentId: string; body: string; authorId?: string; restriction?: CommentRestriction }): Promise<void>;
@@ -94,6 +98,9 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const store = new FileApprovalStore(path.join(stateDir, "approvals.json"));
   const ledger = new FileEffectLedger(path.join(stateDir, "effects.json"));
   const connectorTools = teammateConnectorTools(config, slack, ledger);
+  // Approved reminders, in their own durable ledger: pending until posted or cancelled.
+  const reminders = new FileEffectLedger(path.join(stateDir, "reminders.json"));
+  connectorTools.push(...reminderTools(reminders));
 
   // A turn is in memory only: a restart mid-answer (a deploy, a crash) loses it, and its
   // "Looking into it…" would stay forever. Each open placeholder is on the ledger; on boot,
@@ -486,6 +493,19 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       return undefined;
     },
 
+    async checkReminders(now = new Date()) {
+      const { due, stale } = await dueReminders(reminders, now.getTime());
+      for (const reminder of due) {
+        await once(ledger, opKey("teammate.reminder.post", reminder.id), async () => (await slack.chat.postMessage({ channel: reminder.channel, text: reminderText(reminder) })).ts ?? "")
+          .then(() => markReminder(reminders, reminder, "sent", now.getTime()))
+          .catch((error: unknown) => audit(config.auditFile, { type: "teammate.reminder.failed", actor: "teammate", reminder: reminder.id, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined));
+      }
+      for (const reminder of stale) {
+        await markReminder(reminders, reminder, "stale", now.getTime());
+        await audit(config.auditFile, { type: "teammate.reminder.stale", actor: "teammate", reminder: reminder.id, at: reminder.at }).catch(() => undefined);
+      }
+    },
+
     async checkDigest(now = new Date()) {
       if (!digestChannel || !config.hasModelAccess) return;
       if (!digestDue(now, { weekday: settings.digestWeekday, hour: settings.digestHour })) return;
@@ -668,6 +688,7 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
   // restart or a second instance a no-op).
   const digestCheck = (): void => void core.checkDigest().catch((error) => console.warn(`[teammate] digest: ${error instanceof Error ? error.message : error}`));
   const digestTimer = setInterval(digestCheck, 60 * 60 * 1000);
+  const reminderTimer = setInterval(() => void core.checkReminders().catch((error) => console.warn(`[teammate] reminders: ${error instanceof Error ? error.message : error}`)), 60 * 1000);
   digestCheck();
 
   await app.start();
@@ -676,6 +697,7 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
     core,
     stop: async () => {
       clearInterval(digestTimer);
+      clearInterval(reminderTimer);
       await core.drain(8_000);
       await app.stop();
     },

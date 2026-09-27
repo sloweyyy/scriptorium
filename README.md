@@ -178,6 +178,7 @@ memory — posts an approval card that a `TEAMMATE_APPROVERS` click carries out 
 | Find the right spec page | `confluence_page_children` walks a page tree; every child is checked against the allowed spaces, so a page moved elsewhere isn't even listed |
 | Docs into Confluence | `confluence_create_page` / `confluence_update_page`, approve-tier, allowed spaces only |
 | Move, assign, label, link Jira issues | `jira_transition` / `jira_assign` / `jira_labels` / `jira_link`, approve-tier, allowed projects only (both ends of a link); an assignee must match exactly one person |
+| Reminders | "remind us Friday at 9 to update estimates": approved once for its exact text, channel and time; posted once, escaped, only in the channel that asked; listable and cancellable |
 | Sprint report / standup | `sprint-report`; the project's open sprint (`jira_sprint`) as done / in progress / not started / looks stuck, every issue cited |
 | Status update for an epic | `status-update`; what shipped, what's in flight, what's at risk — every line cited, posted only on approval |
 | Triage new tickets | `triage`; in `TEAMMATE_TRIAGE_PROJECTS`, a new issue gets one reply: ready or not, what's missing, likely duplicates (cited); rate-capped per project, changes nothing |

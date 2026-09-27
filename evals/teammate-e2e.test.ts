@@ -293,6 +293,44 @@ describe("automatic PR checks", () => {
   });
 });
 
+describe("reminders", () => {
+  it("a reminder is approved once, posted once when due, escaped, and only in the channel that asked", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    const at = new Date(Date.now() + 3_600_000).toISOString();
+    script = { calls: [{ name: "schedule_reminder", input: { channel: "C1", at, text: "Update estimates <!channel>" } }], reply: "Asked." };
+    await core.onMention({ channel: "C1", ts: "3.0", user: "U1", text: "<@UBOT> remind us in an hour to update estimates" });
+    await settle(core);
+    const card = posted.find((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION))!;
+    expect(JSON.stringify(card.blocks)).toContain("Post a reminder in channel C1");
+    const requestId = JSON.stringify(card.blocks).match(/"value":"([0-9a-f-]{36})"/)?.[1] as string;
+    await core.onApprovalClick(APPROVE_ACTION, { actions: [{ value: requestId }], user: { id: "UPM", username: "priya" }, channel: { id: "C1" }, message: { ts: "9.1", thread_ts: "3.0" } });
+
+    posted.length = 0;
+    await core.checkReminders(new Date(Date.now() + 60_000)); // not yet
+    expect(posted).toEqual([]);
+    await core.checkReminders(new Date(Date.now() + 3_700_000));
+    await core.checkReminders(new Date(Date.now() + 3_800_000)); // already sent
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatchObject({ channel: "C1" });
+    expect(posted[0]?.text).toContain("Update estimates &lt;!channel&gt;");
+    expect(posted[0]?.text).toContain("approved by priya");
+  });
+
+  it("can't be set for another channel, and one a day overdue is dropped, not posted", async () => {
+    const { bindToTurn, reminderTools, dueReminders } = await import("@scriptorium/agents");
+    const { MemoryEffectLedger } = await import("@scriptorium/runtime");
+    const store = new MemoryEffectLedger();
+    const [schedule] = bindToTurn(reminderTools(store), { question: "q", askedBy: "slack:U1", channel: "C1", threadTs: "1.0" });
+    expect(await schedule!.run({ channel: "C_OTHER", at: new Date(Date.now() + 3_600_000).toISOString(), text: "x" })).toMatch(/^NOT_ALLOWED/);
+    expect(await schedule!.run({ channel: "C1", at: "2020-01-01T00:00:00Z", text: "x" })).toMatch(/^NOT_ALLOWED: that time has already passed/);
+    expect(await schedule!.run({ channel: "C1", at: new Date(Date.now() + 40 * 24 * 3_600_000).toISOString(), text: "x" })).toMatch(/at most 30 days/);
+    await schedule!.run({ channel: "C1", at: new Date(Date.now() + 60_000).toISOString(), text: "stand-up" }, { approval: { id: "ap-1" } });
+    const { due, stale } = await dueReminders(store, Date.now() + 2 * 24 * 3_600_000);
+    expect(due).toEqual([]);
+    expect(stale.map((reminder) => reminder.text)).toEqual(["stand-up"]);
+  });
+});
+
 describe("plans", () => {
   it("a plan with a step that needs its own approval is refused before any card is posted", async () => {
     const core = await createTeammate(config(), vault, slack as never, "UBOT");

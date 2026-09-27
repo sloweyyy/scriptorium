@@ -1,6 +1,6 @@
 import { extractWikilinks, type ToolSpec, type Vault } from "@scriptorium/core";
 import { z } from "zod";
-import { retrievalBody, type VaultIndex } from "./search";
+import { isPrivateNote, retrievalBody, type VaultIndex } from "./search";
 
 /**
  * Curator's grounded-Q&A contract — the whole of it, in one file.
@@ -123,7 +123,7 @@ export function qaTools(vault: Vault, index: VaultIndex): ToolSpec[] {
         "Inventory of the whole knowledge vault: how many notes it holds, what each folder is for, and every note's path and title. Use this for any question about the knowledge base itself rather than about the product — how many notes there are, what subjects are covered, what is in a folder, or whether a topic is documented at all.",
       inputSchema: z.object({}),
       run: async () => {
-        const notes = await vault.listNotes();
+        const notes = (await vault.listNotes()).filter((relPath) => !isPrivateNote(relPath));
         const folders = new Map<string, string[]>();
         for (const relPath of notes) {
           const folder = relPath.includes("/") ? relPath.slice(0, relPath.indexOf("/")) : ".";
@@ -160,6 +160,7 @@ export function qaTools(vault: Vault, index: VaultIndex): ToolSpec[] {
       description: "Read one note's full content by its vault-relative path exactly as returned by search_vault.",
       inputSchema: z.object({ path: z.string().describe("Vault-relative path, with or without the .md suffix.") }),
       run: async ({ path: relPath }) => {
+        if (isPrivateNote(relPath.replace(/\\/g, "/"))) return `NOT_ALLOWED: ${relPath} is not readable through retrieval.`;
         try {
           const note = await vault.readNote(relPath.endsWith(".md") ? relPath : `${relPath}.md`);
           // Truncate AFTER the status banner, never through it — see `retrievalBody`.

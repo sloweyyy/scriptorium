@@ -472,6 +472,42 @@ describe("spend caps", () => {
   });
 });
 
+describe("triage of new Jira tickets", () => {
+  it("triages opted-in projects once per ticket, never its own tickets, within the hourly cap", async () => {
+    const comments: Array<{ issue: string; body: string; op?: string }> = [];
+    const jira = {
+      accountId: "tm-1",
+      client: {
+        addComment: async (issue: string, body: string, options: { op?: string } = {}) => (comments.push({ issue, body, op: options.op }), { id: String(comments.length), body, created: "now" }),
+        findCommentByOp: async (_key: string, op: string) => comments.find((comment) => comment.op === op),
+      } as never,
+    };
+    const triage = { ...config(), teammate: { ...config().teammate, jiraProjects: ["BEA", "DOC"], triageProjects: ["BEA"], triagePerHour: 2 } } as AppConfig;
+    const core = await createTeammate(triage, vault, slack as never, "UBOT", jira);
+    script = { calls: [], reply: "NOT_IN_KB: acceptance criteria" };
+    await core.onJiraCreated({ issueKey: "BEA-1", reporterId: "human-1" });
+    await core.onJiraCreated({ issueKey: "BEA-1", reporterId: "human-1" }); // a redelivery
+    await core.onJiraCreated({ issueKey: "DOC-5", reporterId: "human-1" }); // not opted in
+    await core.onJiraCreated({ issueKey: "BEA-2", reporterId: "tm-1" }); // its own ticket
+    await core.onJiraCreated({ issueKey: "BEA-3", reporterId: "human-1" });
+    await core.onJiraCreated({ issueKey: "BEA-4", reporterId: "human-1" }); // over 2 an hour
+    await settle(core);
+    expect(comments.map((comment) => comment.issue).sort()).toEqual(["BEA-1", "BEA-3"]);
+    expect(await fs.readFile(path.join(tmpRoot, "audit.jsonl"), "utf8")).toContain("triage rate cap for BEA reached");
+  });
+
+  it("the hourly cap rolls", async () => {
+    const { HourlyCap } = await import("@scriptorium/agents");
+    let now = 0;
+    const cap = new HourlyCap(1, () => now);
+    expect(cap.take("BEA")).toBe(true);
+    expect(cap.take("BEA")).toBe(false);
+    expect(cap.take("OPS")).toBe(true);
+    now = 3_600_001;
+    expect(cap.take("BEA")).toBe(true);
+  });
+});
+
 describe("assigned on Jira", () => {
   it("checks readiness and replies on the ticket when the ticket is assigned to it — once, and only to it", async () => {
     const comments: Array<{ body: string; op?: string }> = [];

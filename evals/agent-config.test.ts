@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { ToolSpec } from "@scriptorium/core";
 import { MemoryApprovalStore } from "@scriptorium/policy";
 import { assembleAgent, loadSkills, type AgentConfig } from "@scriptorium/runtime";
-import { teammateConfig } from "../apps/agents/src/agents/teammate";
+import { teammateConfig } from "@scriptorium/agents";
 
 /**
  * Agents are configuration (ADR-001 slice 5a). What an agent may do is one readable

@@ -4,10 +4,13 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@scriptorium/connectors": "workspace:*",
     "@scriptorium/core": "workspace:*",
     "@scriptorium/curator": "workspace:*",
     "@scriptorium/jira": "workspace:*",
+    "@scriptorium/policy": "workspace:*",
     "@scriptorium/publish": "workspace:*",
+    "@scriptorium/runtime": "workspace:*",
     "@scriptorium/scribe": "workspace:*",
     "@slack/bolt": "^5.0.0",
     "@slack/web-api": "^7.10.0",

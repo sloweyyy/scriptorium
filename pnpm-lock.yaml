@@ -59,6 +59,9 @@ importers:
 
   apps/agents:
     dependencies:
+      '@scriptorium/connectors':
+        specifier: workspace:*
+        version: link:../../packages/connectors
       '@scriptorium/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -68,9 +71,15 @@ importers:
       '@scriptorium/jira':
         specifier: workspace:*
         version: link:../../packages/jira
+      '@scriptorium/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
       '@scriptorium/publish':
         specifier: workspace:*
         version: link:../../packages/publish
+      '@scriptorium/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
       '@scriptorium/scribe':
         specifier: workspace:*
         version: link:../../packages/scribe

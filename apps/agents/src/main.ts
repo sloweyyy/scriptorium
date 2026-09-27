@@ -75,14 +75,13 @@ if (jiraReady(config.jira)) {
   try {
     // The Teammate's own Jira account, if it has one: Scribe must not read its conversation
     // (questions to it, answers from it) as feedback on a draft.
-    const teammateJiraId =
+    // A lookup, not a value: if it fails at boot, Scribe holds comments and retries rather
+    // than assuming there is no Teammate.
+    const teammateJira =
       config.teammate.atlassianEmail && config.teammate.atlassianToken
-        ? await jiraClient({ ...config.jira, email: config.teammate.atlassianEmail, apiToken: config.teammate.atlassianToken })
-            .myself()
-            .then((me) => me.accountId)
-            .catch(() => undefined)
+        ? jiraClient({ ...config.jira, email: config.teammate.atlassianEmail, apiToken: config.teammate.atlassianToken })
         : undefined;
-    scribe = await startScribeJira(config, vault, { otherAgentIds: teammateJiraId ? [teammateJiraId] : [] });
+    scribe = await startScribeJira(config, vault, { otherAgentIds: teammateJira ? async () => [(await teammateJira.myself()).accountId] : [] });
     stops.push(() => scribe?.stop());
   } catch (error) {
     console.error(`[scribe] jira poller failed to start: ${error instanceof Error ? error.message : error}`);

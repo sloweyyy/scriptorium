@@ -35,14 +35,14 @@ console.log(
   }`,
 );
 
-// A fresh container has an empty vault. Restore it from the docs repo before anything
+// A fresh container has an empty vault. Restore it from the vault repo before anything
 // answers a question, so Curator can cite notes this instance never watched being written.
 if (docsRepoReady(config.docsRepo)) {
   try {
     const restored = await hydrateVaultFromDocsRepo(config, vault);
     if (restored.length) {
       await updateMoc(vault);
-      console.log(`[scriptorium] restored ${restored.length} note(s) from ${config.docsRepo.slug ?? "the docs repo"}`);
+      console.log(`[scriptorium] restored ${restored.length} note(s) from ${config.docsRepo.vaultSlug ?? "the vault repo"}`);
     }
   } catch (error) {
     console.warn(`[scriptorium] vault restore skipped: ${error instanceof Error ? error.message : error}`);

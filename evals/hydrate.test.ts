@@ -80,10 +80,14 @@ function config(): AppConfig {
     docsRepo: {
       url: remote,
       base: "main",
+      // One remote playing both roles, named explicitly: what these tests pin is restore
+      // and publish behaviour, not the split. The split has its own tests below.
+      vaultUrl: remote,
       internalBranch: "vault-live",
       commitName: "scriptorium agent",
       commitEmail: "agent@example.invalid",
       workDir: path.join(tmpRoot, "docs-repo"),
+      vaultWorkDir: path.join(tmpRoot, "vault-repo"),
     },
     jira: {
       label: "doc-request",
@@ -172,9 +176,9 @@ describe("boot restore", () => {
     ]);
   });
 
-  it("does nothing when no docs repo is configured", async () => {
+  it("does nothing when no vault repo is configured", async () => {
     const settings = config();
-    const restored = await hydrateVaultFromDocsRepo({ ...settings, docsRepo: { ...settings.docsRepo, url: undefined } }, vault);
+    const restored = await hydrateVaultFromDocsRepo({ ...settings, docsRepo: { ...settings.docsRepo, vaultUrl: undefined } }, vault);
     expect(restored).toEqual([]);
   });
 });

@@ -192,6 +192,24 @@ describe("ingress", { timeout: 15_000, retry: 1 }, () => {
     // The agent's own publish branch pushes here constantly; only the base branch matters.
     expect(docsChanges).toEqual([]);
   });
+
+  it("accepts the base branch of the docs repo by name", async () => {
+    const body = JSON.stringify({ ref: "refs/heads/main", repository: { full_name: "O/R" }, commits: [{ modified: ["docs/a.md"] }] });
+    const response = await fetch(`${base}/github/webhook`, { method: "POST", headers: signed(body), body });
+    expect(response.status).toBe(202);
+    await settle();
+    expect(docsChanges).toHaveLength(1);
+  });
+
+  it("ignores a push from any other repository, the vault repo included", async () => {
+    // The vault repo's pushes are the agent's own. Syncing them back would stamp every
+    // internal note as human-edited and push it again, in a loop.
+    const body = JSON.stringify({ ref: "refs/heads/main", repository: { full_name: "o/vault" }, commits: [{ modified: ["internal/index.md"] }] });
+    const response = await fetch(`${base}/github/webhook`, { method: "POST", headers: signed(body), body });
+    expect(response.status).toBe(202);
+    await settle();
+    expect(docsChanges).toEqual([]);
+  });
 });
 
 describe("ingress primitives", () => {

@@ -276,7 +276,11 @@ describe("direct messages", () => {
     await on.onDirectMessage({ channel: "D1", channel_type: "im", ts: "2.0", user: "U1", text: "when are digests sent?" });
     await on.onDirectMessage({ channel: "D1", channel_type: "im", ts: "3.0", user: "U1", text: "edited", subtype: "message_changed" });
     await on.onDirectMessage({ channel: "D1", channel_type: "im", ts: "4.0", bot_id: "B9", text: "bot says hi" });
+    await on.onDirectMessage({ channel: "D2", channel_type: "im", ts: "5.0", user: "U2", text: "when are digests sent? (screenshot attached)", subtype: "file_share" });
     await settle(on);
+    // The screenshot DM is a question too.
+    expect(posted.filter((message) => message.channel === "D2")).toHaveLength(1);
+    posted.splice(posted.findIndex((message) => message.channel === "D2"), 1);
     expect(posted).toHaveLength(1);
     expect(posted[0]).toMatchObject({ channel: "D1" });
     expect(posted[0]?.text).toContain("docs/digest-emails");

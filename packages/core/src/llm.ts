@@ -68,11 +68,28 @@ export type ImageMediaType = "image/png" | "image/jpeg" | "image/webp" | "image/
  * `run` takes `unknown` on purpose: it validates with `inputSchema` itself, so arguments
  * arriving from either dialect are checked in exactly one place.
  */
+/**
+ * What the platform tells a tool about the call beyond its arguments. Set by the policy
+ * layer only: a tool never learns who approved it from its own input, which the model wrote.
+ */
+export interface ToolRunContext {
+  /** `approvedBy` is a display name (for commit messages); `approvedById` is the account. */
+  approval?: { id: string; approvedBy?: string; approvedById?: string };
+}
+
 export interface ToolSpec {
   name: string;
   description: string;
   inputSchema: z.ZodObject;
-  run(input: unknown): Promise<string>;
+  run(input: unknown, context?: ToolRunContext): Promise<string>;
+  /**
+   * The records this call actually fetched — `docs/x`, `confluence:123`, `jira:DOC-7` —
+   * derived from the validated input or from JSON the tool itself built, never from the
+   * CONTENT it returned. Grounding checks citations against this set, so a page, comment
+   * or thread that merely contains the text "jira:DOC-99" cannot pass as evidence for it.
+   * A tool without it contributes no evidence.
+   */
+  records?(input: unknown, output: string): string[];
 }
 
 export interface ImageInput {

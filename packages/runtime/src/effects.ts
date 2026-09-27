@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -54,11 +54,28 @@ export class MemoryEffectLedger implements EffectLedger {
   }
 }
 
-/** One JSON file, rewritten atomically; writes are serialized within the process. */
-export class FileEffectLedger implements EffectLedger {
-  private chain: Promise<unknown> = Promise.resolve();
+/**
+ * Writes are serialised per FILE, not per instance: the poller, the Teammate and the
+ * staleness watch each open a ledger on the same `effects.json`, and three independent
+ * chains racing one read-modify-write lost "done" records — an effect then ran twice.
+ */
+const fileChains = new Map<string, Promise<unknown>>();
 
-  constructor(private readonly file: string) {}
+/** One JSON file, rewritten atomically; writes are serialized per file within the process. */
+export class FileEffectLedger implements EffectLedger {
+  private readonly file: string;
+
+  constructor(file: string) {
+    this.file = path.resolve(file);
+  }
+
+  private get chain(): Promise<unknown> {
+    return fileChains.get(this.file) ?? Promise.resolve();
+  }
+
+  private set chain(next: Promise<unknown>) {
+    fileChains.set(this.file, next);
+  }
 
   private async load(): Promise<Record<string, EffectRecord>> {
     try {
@@ -79,7 +96,7 @@ export class FileEffectLedger implements EffectLedger {
       const all = await this.load();
       all[record.op] = record;
       await fs.mkdir(path.dirname(this.file), { recursive: true });
-      const tmp = `${this.file}.${process.pid}.tmp`;
+      const tmp = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
       await fs.writeFile(tmp, JSON.stringify(all, null, 2));
       await fs.rename(tmp, this.file);
     });
@@ -109,7 +126,24 @@ export interface OnceResult<T> {
   replayed: boolean;
 }
 
-export async function once<T>(ledger: EffectLedger, op: string, act: () => Promise<T>, options: OnceOptions<T> = {}): Promise<OnceResult<T>> {
+/**
+ * In-process single flight per (ledger, op). Without it, two concurrent calls for the same
+ * op both read "no record" and both act — the ledger only stops the retries that come
+ * AFTER a record lands. The second caller now waits for the first and replays its result.
+ */
+const inFlight = new WeakMap<EffectLedger, Map<string, Promise<OnceResult<unknown>>>>();
+
+export function once<T>(ledger: EffectLedger, op: string, act: () => Promise<T>, options: OnceOptions<T> = {}): Promise<OnceResult<T>> {
+  let running = inFlight.get(ledger);
+  if (!running) inFlight.set(ledger, (running = new Map()));
+  const current = running.get(op);
+  if (current) return current.then((first) => ({ result: first.result as T, replayed: true }));
+  const attempt = onceUnshared(ledger, op, act, options).finally(() => running.delete(op));
+  running.set(op, attempt as Promise<OnceResult<unknown>>);
+  return attempt;
+}
+
+async function onceUnshared<T>(ledger: EffectLedger, op: string, act: () => Promise<T>, options: OnceOptions<T>): Promise<OnceResult<T>> {
   const existing = await ledger.get(op);
   if (existing?.status === "done") return { result: existing.result as T, replayed: true };
 

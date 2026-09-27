@@ -99,3 +99,44 @@ describe("Curator on the platform loop", () => {
     await expect(answerQuestion(vault, "Which severities exist?")).rejects.toMatchObject({ failure: "truncated" });
   });
 });
+
+describe("what a session cost", () => {
+  it("sums every round, counting cached reads and cache writes as input", async () => {
+    const { sumUsage } = await import("@scriptorium/runtime");
+    const usage = sumUsage("anthropic", [
+      { input_tokens: 50, cache_read_input_tokens: 4_800, cache_creation_input_tokens: 0, output_tokens: 212 },
+      { input_tokens: 30, cache_read_input_tokens: 4_800, cache_creation_input_tokens: 120, output_tokens: 90 },
+      undefined,
+    ]);
+    expect(usage).toEqual({ provider: "anthropic", rounds: 3, input: 9_800, cacheRead: 9_600, cacheWrite: 120, output: 302 });
+  });
+
+  it("reports usage from an iterated tool runner, and asks the first-party API to cache", async () => {
+    const rounds = [
+      { stop_reason: "tool_use", usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 900 }, content: [] },
+      { stop_reason: "end_turn", usage: { input_tokens: 12, output_tokens: 40, cache_read_input_tokens: 900, cache_creation_input_tokens: 0 }, content: text("Done.") },
+    ];
+    let params: Record<string, unknown> | undefined;
+    const core = await import("@scriptorium/core");
+    const spy = vi.spyOn(core, "anthropic").mockReturnValue({
+      beta: {
+        messages: {
+          toolRunner: (p: Record<string, unknown>) => {
+            params = p;
+            return {
+              async *[Symbol.asyncIterator]() {
+                yield* rounds;
+              },
+              done: async () => rounds.at(-1),
+            };
+          },
+        },
+      },
+    } as never);
+    let reported: unknown;
+    expect(await runSession({ ...options, onUsage: (usage) => (reported = usage) })).toBe("Done.");
+    expect(reported).toMatchObject({ rounds: 2, input: 1_822, cacheRead: 900, cacheWrite: 900, output: 45 });
+    expect(params?.cache_control).toEqual({ type: "ephemeral" });
+    spy.mockRestore();
+  });
+});

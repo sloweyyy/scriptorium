@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import type { JiraSettings } from "@scriptorium/core";
+import { parseComments, parseIssue, parseIssues, parseMyself } from "./schemas";
 import type { JiraAttachment, JiraComment, JiraIssue, JiraRemoteLink, JiraTransition, JiraUser } from "./types";
 
 /** Entity-property key an op-keyed comment carries. */
@@ -87,7 +88,7 @@ export class JiraClient {
 
   /** The authenticated bot account — used to ignore the agent's own comments. */
   async myself(): Promise<JiraUser> {
-    return this.get<JiraUser>("/rest/api/2/myself");
+    return parseMyself(await this.get<unknown>("/rest/api/2/myself"));
   }
 
   /**
@@ -107,9 +108,48 @@ export class JiraClient {
    * credential and no new configuration.
    */
   async confluencePage(pageId: string): Promise<{ title: string; storage: string }> {
-    const endpoint = `/wiki/rest/api/content/${encodeURIComponent(pageId)}?expand=body.storage`;
-    const page = await this.get<{ title?: string; body?: { storage?: { value?: string } } }>(endpoint);
+    // A page id is digits. Anything else is a URL fragment someone typed, not a page.
+    if (!/^\d+$/.test(pageId)) throw new JiraError(400, "/wiki/api/v2/pages", `not a Confluence page id: ${pageId}`);
+    // v2 first: the v1 content GET is gone from Atlassian's current spec. v1 stays as the
+    // fallback for sites that still serve it, tried only when v2 is not there at all.
+    const v2 = `/wiki/api/v2/pages/${pageId}?body-format=storage`;
+    const response = await this.call(v2);
+    if (response.status !== 404 && response.status !== 410) {
+      const page = await this.readJson<{ title?: string; body?: { storage?: { value?: string } } }>(response, v2);
+      return { title: page.title ?? `Confluence page ${pageId}`, storage: page.body?.storage?.value ?? "" };
+    }
+    const v1 = `/wiki/rest/api/content/${pageId}?expand=body.storage`;
+    const page = await this.get<{ title?: string; body?: { storage?: { value?: string } } }>(v1);
     return { title: page.title ?? `Confluence page ${pageId}`, storage: page.body?.storage?.value ?? "" };
+  }
+
+  /**
+   * Every issue matching `jql`, page by page, up to `limit`. The poller needs the whole set:
+   * one page of 50 in `updated ASC` order silently dropped the most recently touched tickets
+   * once a project held more than 50 open ones — the ones a human is working right now.
+   * `/search/jql` pages by `nextPageToken`; the legacy `/search` by `startAt`.
+   */
+  async searchAllIssues(jql: string, limit = 1_000): Promise<JiraIssue[]> {
+    const pageSize = 100;
+    const all: JiraIssue[] = [];
+    let nextPageToken: string | undefined;
+    // Resolves (and caches) which search endpoint this site speaks — once.
+    if (!this.searchPath) await this.searchIssues(jql, 1);
+    for (let page = 0; all.length < limit; page += 1) {
+      const legacy = this.searchPath === "/rest/api/2/search";
+      const query = new URLSearchParams({ jql, maxResults: String(pageSize), fields: ISSUE_FIELDS.join(",") });
+      if (legacy) query.set("startAt", String(page * pageSize));
+      else if (nextPageToken) query.set("nextPageToken", nextPageToken);
+      else if (page > 0) break;
+      const endpoint = `${this.searchPath}?${query.toString()}`;
+      const data = await this.readJson<{ issues?: JiraIssue[]; nextPageToken?: string; isLast?: boolean; total?: number }>(await this.call(endpoint), this.searchPath as string);
+      const issues = parseIssues(data.issues);
+      all.push(...issues);
+      nextPageToken = data.nextPageToken;
+      const done = legacy ? issues.length < pageSize || (data.total !== undefined && all.length >= data.total) : data.isLast !== false || !nextPageToken;
+      if (done || !issues.length) break;
+    }
+    return all.slice(0, limit);
   }
 
   /**
@@ -130,13 +170,13 @@ export class JiraClient {
       }
       const data = await this.readJson<{ issues?: JiraIssue[] }>(response, path);
       this.searchPath = path;
-      return data.issues ?? [];
+      return parseIssues(data.issues);
     }
     throw lastError ?? new JiraError(404, "/rest/api/2/search", "no usable search endpoint");
   }
 
   async getIssue(key: string): Promise<JiraIssue> {
-    return this.get<JiraIssue>(`/rest/api/2/issue/${encodeURIComponent(key)}?fields=${ISSUE_FIELDS.join(",")}`);
+    return parseIssue(await this.get<unknown>(`/rest/api/2/issue/${encodeURIComponent(key)}?fields=${ISSUE_FIELDS.join(",")}`));
   }
 
   /** Who last moved the issue into `statusName` — the approver of record for the audit log. */
@@ -172,7 +212,7 @@ export class JiraClient {
     const data = await this.get<{ comments?: JiraComment[] }>(
       `/rest/api/2/issue/${encodeURIComponent(key)}/comment?orderBy=created&maxResults=${maxResults}${expand}`,
     );
-    return data.comments ?? [];
+    return parseComments(data.comments);
   }
 
   /**
@@ -275,10 +315,12 @@ export class JiraClient {
     description: string;
     issueType: string;
     labels?: string[];
+    /** Defaults to the client's project. */
+    project?: string;
   }): Promise<{ key: string; url: string }> {
     const created = await this.post<{ key: string }>("/rest/api/2/issue", {
       fields: {
-        project: { key: this.projectKey },
+        project: { key: input.project ?? this.projectKey },
         summary: input.summary,
         description: input.description,
         issuetype: { name: input.issueType },

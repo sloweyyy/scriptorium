@@ -1,0 +1,145 @@
+import { audit, docsRepoReady } from "@scriptorium/core";
+import { organizePublishedDoc } from "@scriptorium/curator";
+import { issueStatus, type JiraIssue } from "@scriptorium/jira";
+import { publishDoc } from "@scriptorium/scribe";
+import { publishApprovedDoc } from "../docs-repo";
+import { announcePublished } from "../slack-notify";
+import { moveTo, say, type Ctx } from "./context";
+import { proposeLesson } from "./lessons";
+
+export async function runPublish(
+  ctx: Ctx,
+  issue: JiraIssue,
+  approvedBy: string,
+  options: { quietWhenPublished?: boolean } = {},
+): Promise<void> {
+  const key = issue.key;
+  const known = ctx.state.get(key);
+
+  // Approving twice (comment then transition, or the reverse) is normal — say nothing.
+  // But three facts are separate here, and conflating any two produced a real failure:
+  // "a doc was published", "the docs repo has it", and "the CURRENT draft is the one
+  // that was published". A revision after a publish makes the third false while the
+  // first two stay true — and keying the guards on the first alone locked every revised
+  // draft out of publishing forever, with advice (`draft`) that would have discarded
+  // the very feedback that caused the revision.
+  const alreadyPublished = Boolean(known?.publishedPath) && known?.draftPublished !== false;
+
+  // The column is corrected before either early return below, because how much of the work
+  // was already done is not something the board should reflect: an approval on a ticket
+  // whose doc is published belongs in the approved column, whether this call publishes it,
+  // retries a failed push, or finds nothing left to do. Both guards used to sit above the
+  // move, so a ticket that went back through In Progress and In Review for a revision and
+  // was then re-approved stayed in In Review with nothing left to review.
+  if (alreadyPublished) await moveTo(ctx, key, ctx.config.jira.approvedStatus, issueStatus(issue));
+
+  if (alreadyPublished && known?.docsPushed) {
+    if (!options.quietWhenPublished) {
+      await say(ctx, key, `Already published to \`${known.publishedPath}\`. Reply with feedback and I'll revise — approving the revision publishes the new version.`);
+    }
+    return;
+  }
+
+  // Approving with nothing to publish is never silent: a reviewer whose first move is
+  // dragging the ticket to Approved must be told why nothing happened.
+  let relPath = known?.publishedPath;
+
+  if (alreadyPublished && relPath) {
+    await say(ctx, key, `The vault copy of \`${relPath}\` is already published — retrying the docs-repo push only.`);
+  } else {
+    const draft = await ctx.state.readDraft(key);
+    if (!draft) {
+      await say(
+        ctx,
+        key,
+        "I have no draft on this ticket yet, so there is nothing to publish. Attach the PRD as a `.md` file and comment `draft`.",
+      );
+      return;
+    }
+    relPath = await publishDoc({
+    vault: ctx.vault,
+    auditFile: ctx.config.auditFile,
+    repoRoot: ctx.config.repoRoot,
+    markdown: draft,
+    approvedBy,
+    sourcePrd: known?.sourcePrd,
+    appliedLessons: known?.appliedLessons,
+    slug: known?.docSlug,
+    // The join key for the GitHub -> Jira round trip. Without it a human edit to a
+    // published doc has no ticket to be reported on.
+    jiraIssue: key,
+  });
+  await organizePublishedDoc(ctx.vault, relPath);
+  // docsPushed resets here: a republished revision has NOT reached the repo yet, and a
+  // stale true would let the next approve report success for a push that never happened.
+  await ctx.state.patch(key, { publishedPath: relPath, draftPublished: true, docsPushed: false });
+  // Approved and written, so the column says so before the egress — which may fail.
+  await moveTo(ctx, key, ctx.config.jira.approvedStatus, issueStatus(issue));
+
+  await say(
+    ctx,
+    key,
+    [
+      `**Published** — approved by ${approvedBy}.`,
+      "",
+      `- Vault note: \`${relPath}\``,
+      "- Curator has cross-linked it to the PRD and refreshed `index.md`",
+      "- Committed to git with the approver recorded — that commit is the audit trail",
+      "",
+        "Ask Curator about it in Slack; it will answer from this note and cite it.",
+      ].join("\n"),
+    );
+  }
+
+  // Egress: push the allowlisted trees to the docs repo and open the PR whose merge
+  // publishes. Never fatal — a doc approved in Jira and written to the vault stays
+  // approved and written even if GitHub is unreachable.
+  try {
+    const outcome = await publishApprovedDoc(ctx.config, ctx.vault, {
+      issueKey: key,
+      issueUrl: ctx.client.issueUrl(key),
+      slug: known?.docSlug ?? relPath.replace(/^docs\//, "").replace(/\.md$/, ""),
+      relPath,
+      approvedBy,
+      appliedLessons: known?.appliedLessons,
+    });
+    await say(ctx, key, outcome.comment);
+    // Only a real push clears the retry flag; a refusal or a conflict must stay retryable.
+    // Except when no docs repo is configured at all: then no push will ever exist, the
+    // egress is vacuously complete, and leaving the flag unset would make every later
+    // approve republish the same draft instead of saying "already published".
+    if (outcome.published || !docsRepoReady(ctx.config.docsRepo)) await ctx.state.patch(key, { docsPushed: true });
+    await audit(ctx.config.auditFile, {
+      type: outcome.published ? "docs.pushed" : "docs.push.refused",
+      actor: approvedBy,
+      issue: key,
+      relPath,
+      pullRequest: outcome.pullRequestUrl,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // The ticket gets the first line; the logs get all of it. Reporting a production
+    // failure only into a Jira comment left nothing to diagnose from.
+    console.warn(`[scribe] ${key}: docs-repo push failed:\n${message}`);
+    await say(
+      ctx,
+      key,
+      `⚠️ Published to the vault, but pushing to the docs repo failed:\n\n\`${message.split("\n")[0]}\`\n\nComment \`approve\` again to retry the push — the vault copy stays published.`,
+    );
+  }
+
+  // The announcement and the lesson proposal are a different matter from the column:
+  // those already happened on the first approval, and repeating them is noise.
+  if (alreadyPublished) return;
+
+  await announcePublished(ctx.config, {
+    relPath,
+    feature: known?.docSlug ?? relPath,
+    issueKey: key,
+    issueUrl: ctx.client.issueUrl(key),
+    approvedBy,
+    appliedLessons: known?.appliedLessons,
+  });
+
+  await proposeLesson(ctx, key, approvedBy);
+}

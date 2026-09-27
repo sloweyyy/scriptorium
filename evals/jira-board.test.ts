@@ -45,7 +45,13 @@ interface StubComment {
   body: string;
   created: string;
   author: { accountId: string; displayName: string };
+  properties?: unknown;
 }
+
+/** Drop the response to the next comment POST after storing it. */
+let loseNextCommentResponse = false;
+/** Fail the Nth comment POST from now WITHOUT storing it (a plain network error). */
+let failCommentPostIn = 0;
 
 let tmpRoot: string;
 let vault: Vault;
@@ -84,6 +90,7 @@ function config(): AppConfig {
     port: 8080,
     scribe: {},
     curator: {},
+    teammate: { channels: [], jiraProjects: [], confluenceSpaces: [], digestWeekday: 1, digestHour: 9 },
     slack: {},
     sites: {},
     webhook: {},
@@ -124,14 +131,21 @@ function stubJira(): void {
     if (url.includes("/search")) return json({ issues: [issue] });
     if (url.includes("/comment") && method === "GET") return json({ comments });
     if (url.includes("/comment") && method === "POST") {
-      const body = JSON.parse(String(init?.body ?? "{}")) as { body: string };
+      if (failCommentPostIn > 0 && --failCommentPostIn === 0) throw new TypeError("fetch failed: connect ECONNRESET");
+      const body = JSON.parse(String(init?.body ?? "{}")) as { body: string; properties?: unknown };
       const posted: StubComment = {
         id: `bot-${comments.length + 1}`,
         body: body.body,
         created: new Date().toISOString(),
         author: { accountId: "bot-1", displayName: "Scribe" },
+        ...(body.properties ? { properties: body.properties } : {}),
       };
       comments.push(posted);
+      // Jira stored it; the response never arrives. The case exactly-once exists for.
+      if (loseNextCommentResponse) {
+        loseNextCommentResponse = false;
+        throw new TypeError("fetch failed: socket hang up");
+      }
       return json(posted);
     }
     if (url.includes("/transitions") && method === "GET") {
@@ -163,7 +177,9 @@ function stubJira(): void {
 }
 
 function human(id: string, body: string): StubComment {
-  return { id, body, created: "2026-08-20T12:00:00.000+0000", author: { accountId: "human-1", displayName: "Reviewer" } };
+  // Stamped when posted, like Jira: whether an approval is older than the draft it approves is
+  // decided on these times.
+  return { id, body, created: new Date().toISOString(), author: { accountId: "human-1", displayName: "Reviewer" } };
 }
 
 beforeEach(async () => {
@@ -614,5 +630,174 @@ describe("the Slack approve button", () => {
 
     await handle.approve("DOC-1", "Pat (slack:U1)", draftFingerprint(CLEAN_DRAFT));
     expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(1);
+  });
+});
+
+describe("who may approve on Jira", () => {
+  it("with approvers configured, a non-approver's `approve` is refused and nothing publishes", async () => {
+    const settings = config();
+    settings.jira.approvers = ["pm-1"];
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+
+    comments.push(human("h1", "approve"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T13:00:00.000+0000" } };
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+    expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(0);
+    expect(comments.at(-1)?.body).toContain("Only the configured approvers");
+  });
+
+  it("a board move nobody can attribute is not an approval", async () => {
+    const settings = config();
+    const stateDir = settings.jira.stateDir;
+    await fs.mkdir(path.join(stateDir, "drafts"), { recursive: true });
+    await fs.writeFile(path.join(stateDir, "drafts", "DOC-1.md"), CLEAN_DRAFT);
+    await fs.writeFile(
+      path.join(stateDir, "jira-state.json"),
+      JSON.stringify({ version: 1, issues: { "DOC-1": { hasDraft: true, engaged: true, docSlug: "incident-timeline-embed", sourceFingerprint: "seeded", processedComments: [], lastStatus: "In Review", lastUpdated: "2026-08-20T10:00:00.000+0000" } } }),
+    );
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Done" }, updated: "2026-08-20T15:00:00.000+0000" } };
+    changelog = [];
+
+    const run = await startScribeJira(settings, vault);
+    run.stop();
+    expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(0);
+    expect(comments.at(-1)?.body).toContain("couldn't tell who approved");
+  });
+});
+
+describe("a lesson learned on one ticket shapes the next (TODO #6)", () => {
+  const RULE = "Always state the timezone for any scheduled time.";
+
+  async function learnOnDoc1(decision: "approve lesson" | "reject lesson" | null): Promise<void> {
+    const { DISTILL_SYSTEM_PROMPT } = await import("@scriptorium/scribe");
+    vi.mocked(generateText).mockImplementation(async (options: GenerateOptions) =>
+      options.system === DISTILL_SYSTEM_PROMPT ? `LESSON: ${RULE}` : CLEAN_DRAFT,
+    );
+    const settings = config();
+    let clock = 13;
+    const tick = async (...bodies: string[]) => {
+      bodies.forEach((body, index) => comments.push(human(`h${clock}-${index}`, body)));
+      issue = { ...issue, fields: { ...(issue.fields as object), updated: `2026-08-20T${clock++}:00:00.000+0000` } };
+      (await startScribeJira(settings, vault)).stop();
+    };
+    (await startScribeJira(settings, vault)).stop();
+    await tick("always state which timezone the send time uses");
+    await tick("approve");
+    if (decision) await tick(decision);
+  }
+
+  async function draftDoc2(): Promise<string> {
+    vi.mocked(generateText).mockClear();
+    comments = [];
+    issue = { ...issue, key: "DOC-2", id: "2", fields: { ...(issue.fields as object), summary: "Document digest emails", status: { name: "To Do" }, updated: "2026-08-21T09:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    const draftCall = vi.mocked(generateText).mock.calls.find(([options]) => !String((options as GenerateOptions).system).includes("review one piece of feedback"));
+    return String((draftCall?.[0] as GenerateOptions | undefined)?.prompt ?? "");
+  }
+
+  it("an approved lesson from DOC-1 is in DOC-2's draft prompt, and reported as applied", async () => {
+    await learnOnDoc1("approve lesson");
+    const prompt = await draftDoc2();
+    expect(prompt).toContain(RULE);
+    expect(comments.some((comment) => comment.body.includes("L-001"))).toBe(true);
+  });
+
+  it("a lesson left proposed, or rejected, never reaches DOC-2", async () => {
+    await learnOnDoc1(null);
+    expect(await draftDoc2()).not.toContain(RULE);
+  });
+
+  it("a rejected lesson never reaches DOC-2", async () => {
+    await learnOnDoc1("reject lesson");
+    expect(await draftDoc2()).not.toContain(RULE);
+  });
+});
+
+describe("designs the model cannot take", () => {
+  it("drafts without an oversized image, and names it instead of failing the whole ticket", async () => {
+    const huge = { id: "att-big", filename: "full-page-4k.png", mimeType: "image/png", size: 12_000_000, content: "https://example.atlassian.net/rest/api/2/attachment/content/att-big" };
+    const fine = { id: "att-ok", filename: "form.png", mimeType: "image/png", size: 200_000, content: "https://example.atlassian.net/rest/api/2/attachment/content/att-ok" };
+    issue = { ...issue, fields: { ...(issue.fields as object), attachment: [huge, fine] } };
+    const run = await startScribeJira(config(), vault);
+    run.stop();
+
+    const draftCall = vi.mocked(generateText).mock.calls[0]?.[0] as GenerateOptions;
+    expect(draftCall.images).toHaveLength(1);
+    const draftComment = comments.find((comment) => comment.body.includes("full-page-4k.png"));
+    expect(draftComment?.body).toMatch(/over 3\.8 MB/);
+    expect(comments.some((comment) => comment.body.includes("I hit an error"))).toBe(false);
+  });
+});
+
+describe("a crash or an error mid-batch loses nothing and repeats nothing (H4)", () => {
+  const tickWith = async (settings: AppConfig, ...bodies: string[]) => {
+    bodies.forEach((body, index) => comments.push(human(`c${comments.length}-${index}`, body)));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: new Date(Date.now() + comments.length * 1000).toISOString() } };
+    (await startScribeJira(settings, vault)).stop();
+  };
+
+  it("feedback + approve with a failing revise: both survive to the next poll, and the old approval is held", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    vi.mocked(generateText).mockRejectedValueOnce(new Error("model overloaded"));
+    await tickWith(settings, "shorten the intro", "approve");
+    expect(comments.filter((comment) => comment.body.includes("Revised draft"))).toHaveLength(0);
+
+    await tickWith(settings);
+    const bodies = comments.map((comment) => comment.body);
+    expect(bodies.filter((body) => body.includes("Revised draft"))).toHaveLength(1);
+    // The approve was typed before this revision existed: held, not published.
+    expect(bodies.some((body) => body.includes("haven't seen yet"))).toBe(true);
+    expect(bodies.filter((body) => body.includes("*Published* —"))).toHaveLength(0);
+  });
+
+  it("a reply whose response was lost is found on retry, not posted twice", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    loseNextCommentResponse = true;
+    await tickWith(settings, "help");
+    await tickWith(settings);
+    // First sight posts HELP + "Reading this ticket now…"; the answer to `help` is HELP alone.
+    const answers = comments.filter(
+      (comment) => comment.author.accountId === "bot-1" && comment.body.includes("How to work with me") && !comment.body.includes("Reading this ticket now"),
+    );
+    expect(loseNextCommentResponse).toBe(false);
+    expect(answers).toHaveLength(1);
+  });
+
+  it("a command that keeps failing is set aside after three tries, with a note", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    vi.mocked(generateText).mockRejectedValue(new Error("model overloaded"));
+    await tickWith(settings, "draft");
+    await tickWith(settings);
+    await tickWith(settings);
+    expect(comments.some((comment) => comment.body.includes("I tried that 3 times"))).toBe(true);
+    const before = comments.length;
+    await tickWith(settings);
+    // Set aside means set aside: no fourth attempt, no new noise.
+    expect(comments.length).toBe(before);
+    vi.mocked(generateText).mockReset();
+    vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
+  });
+});
+
+describe("a command retried after the feedback before it landed", () => {
+  it("still posts the command's own reply — the revision's comment is not mistaken for it", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    // The revision's comment posts; the help reply after it fails outright.
+    failCommentPostIn = 2;
+    comments.push(human("f1", "shorten the intro"), human("c1", "help"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: new Date(Date.now() + 1000).toISOString() } };
+    (await startScribeJira(settings, vault)).stop();
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: new Date(Date.now() + 2000).toISOString() } };
+    (await startScribeJira(settings, vault)).stop();
+
+    const bodies = comments.filter((comment) => comment.author.accountId === "bot-1").map((comment) => comment.body);
+    expect(bodies.filter((body) => body.includes("Revised draft"))).toHaveLength(1);
+    expect(bodies.filter((body) => body.includes("How to work with me") && !body.includes("Reading this ticket now"))).toHaveLength(1);
   });
 });

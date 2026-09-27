@@ -1,5 +1,5 @@
 import path from "node:path";
-import { docSlug, type Vault } from "@scriptorium/core";
+import { approvalSignature, approvalSigningKey, approvalTerms, approvalVerified, docSlug, type Vault } from "@scriptorium/core";
 
 const LESSONS_DIR = "_lessons";
 
@@ -12,7 +12,7 @@ const LESSONS_DIR = "_lessons";
  * circulation (see `nextLessonId`), so the next proposal wore a number a human had already
  * ruled on.
  */
-export type LessonStatus = "proposed" | "approved" | "rejected";
+export type LessonStatus = "proposed" | "approved" | "rejected" | "revoked";
 
 /**
  * A lesson is what "learning" means here: a reviewed, versioned markdown rule with
@@ -26,6 +26,12 @@ export interface Lesson {
   relPath: string;
   author?: string;
   sourceThread?: string;
+  /**
+   * An optional deterministic test of the rule, so "applied" can mean "obeyed", not only
+   * "was in the prompt". `present`: the draft must match; `absent`: it must not. Regex,
+   * case-insensitive. A rule without one is reported `unchecked` — honestly.
+   */
+  check?: { pattern: string; expect: "present" | "absent" };
 }
 
 /**
@@ -55,7 +61,7 @@ export async function findLessonByText(vault: Vault, text: string): Promise<Less
  * direction: `proposed` never shapes a draft.
  */
 function readStatus(raw: unknown): LessonStatus {
-  return raw === "approved" ? "approved" : raw === "rejected" ? "rejected" : "proposed";
+  return raw === "approved" ? "approved" : raw === "rejected" ? "rejected" : raw === "revoked" ? "revoked" : "proposed";
 }
 
 export async function listLessons(vault: Vault, options: { status?: LessonStatus } = {}): Promise<Lesson[]> {
@@ -67,11 +73,14 @@ export async function listLessons(vault: Vault, options: { status?: LessonStatus
     const lesson: Lesson = {
       id,
       scope: String(note.frontmatter.scope ?? "global"),
-      status: readStatus(note.frontmatter.status),
+      // Approved only if the approval verifies (when a key is configured): an unsigned or
+      // tampered "approved" rule is a proposal, whatever route it took into the vault.
+      status: readStatus(note.frontmatter.status) === "approved" && !approvalVerified(note.frontmatter, note.body) ? "proposed" : readStatus(note.frontmatter.status),
       text: note.body,
       relPath,
       author: typeof note.frontmatter.author === "string" ? note.frontmatter.author : undefined,
       sourceThread: typeof note.frontmatter.source_thread === "string" ? note.frontmatter.source_thread : undefined,
+      check: readCheck(note.frontmatter),
     };
     if (!options.status || lesson.status === options.status) lessons.push(lesson);
   }
@@ -126,15 +135,17 @@ export async function saveLesson(vault: Vault, input: NewLesson): Promise<Lesson
 }
 
 /** Lessons are gated too — a human decides what the system is allowed to learn. */
-export async function approveLesson(vault: Vault, id: string, approvedBy: string): Promise<Lesson | undefined> {
+export async function approveLesson(vault: Vault, id: string, approvedBy: string, signingKey = approvalSigningKey()): Promise<Lesson | undefined> {
   const lesson = (await listLessons(vault)).find((candidate) => candidate.id === id);
   if (!lesson) return undefined;
   const note = await vault.readNote(lesson.relPath);
+  const terms = approvalTerms(note.frontmatter);
   await vault.writeNote(lesson.relPath, note.body, {
     ...note.frontmatter,
     status: "approved",
     approved_by: approvedBy,
     approved_at: new Date().toISOString(),
+    ...(signingKey ? { approval_sig: approvalSignature(signingKey, { id, status: "approved", body: note.body, approvedBy, terms }) } : {}),
   });
   return { ...lesson, status: "approved" };
 }
@@ -154,4 +165,77 @@ export async function rejectLesson(vault: Vault, id: string, rejectedBy: string)
     rejected_at: new Date().toISOString(),
   });
   return { ...lesson, status: "rejected" };
+}
+
+/**
+ * May this decision be taken on this lesson, from this place? Pure, so every surface asks
+ * the same question.
+ *
+ * - A lesson is decided where it was proposed. `approve lesson L-004` typed on any other
+ *   ticket used to work, so anyone who could comment anywhere could turn a proposal into a
+ *   house rule for every future draft.
+ * - A human's "no" is not overturned by a comment. Rejected stays rejected, and revisiting it
+ *   is a new proposal. Approved → rejected is allowed: withdrawing a rule is always safe.
+ */
+export function lessonDecisionCheck(
+  lesson: Lesson,
+  decision: "approve" | "reject" | "revoke",
+  whereDecided: string,
+): { ok: true } | { ok: false; reason: string } {
+  // Withdrawing a rule in force is always safe, so it can be done from wherever the rule
+  // is noticed misbehaving — but only a rule in force can be withdrawn.
+  if (decision === "revoke") {
+    return lesson.status === "approved" ? { ok: true } : { ok: false, reason: `Lesson ${lesson.id} is ${lesson.status}, not in force, so there is nothing to revoke.` };
+  }
+  if (lesson.status === "revoked") return { ok: false, reason: `Lesson ${lesson.id} was revoked. If it should apply again, give the feedback again and it will be proposed fresh.` };
+  if (lesson.sourceThread && lesson.sourceThread !== whereDecided) {
+    return { ok: false, reason: `Lesson ${lesson.id} was proposed on ${lesson.sourceThread}. Decide it there.` };
+  }
+  if (decision === "approve" && lesson.status === "rejected") {
+    return { ok: false, reason: `Lesson ${lesson.id} was rejected by a human, and a comment won't overturn that. If it should apply after all, give the feedback again and it will be proposed fresh.` };
+  }
+  if (decision === "approve" && lesson.status === "approved") return { ok: false, reason: `Lesson ${lesson.id} is already approved.` };
+  if (decision === "reject" && lesson.status === "rejected") return { ok: false, reason: `Lesson ${lesson.id} is already rejected.` };
+  return { ok: true };
+}
+
+/**
+ * Withdraw a rule that is in force. The note stays, marked `revoked` with who and when —
+ * the record of what the system once followed is part of the audit, and deleting the file
+ * would erase it.
+ */
+export async function revokeLesson(vault: Vault, id: string, revokedBy: string): Promise<Lesson | undefined> {
+  const lesson = (await listLessons(vault)).find((candidate) => candidate.id === id);
+  if (!lesson) return undefined;
+  const note = await vault.readNote(lesson.relPath);
+  await vault.writeNote(lesson.relPath, note.body, { ...note.frontmatter, status: "revoked", revoked_by: revokedBy, revoked_at: new Date().toISOString() });
+  return { ...lesson, status: "revoked" };
+}
+
+function readCheck(frontmatter: Record<string, unknown>): Lesson["check"] {
+  const present = frontmatter.check_present;
+  const absent = frontmatter.check_absent;
+  if (typeof present === "string" && present) return { pattern: present, expect: "present" };
+  if (typeof absent === "string" && absent) return { pattern: absent, expect: "absent" };
+  return undefined;
+}
+
+export type LessonVerdict = "honored" | "violated" | "unchecked";
+
+/**
+ * Did the draft obey each house rule? A check that is not a valid regex is `unchecked`,
+ * never a crash: a typo in a lesson file must not stop every draft.
+ */
+export function checkLessons(markdown: string, lessons: readonly Lesson[]): Array<{ id: string; verdict: LessonVerdict }> {
+  return lessons.map((lesson) => {
+    if (!lesson.check) return { id: lesson.id, verdict: "unchecked" as const };
+    let matched: boolean;
+    try {
+      matched = new RegExp(lesson.check.pattern, "i").test(markdown);
+    } catch {
+      return { id: lesson.id, verdict: "unchecked" as const };
+    }
+    const honored = lesson.check.expect === "present" ? matched : !matched;
+    return { id: lesson.id, verdict: honored ? ("honored" as const) : ("violated" as const) };
+  });
 }

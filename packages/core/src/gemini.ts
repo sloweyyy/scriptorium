@@ -248,3 +248,45 @@ export async function runGeminiToolLoop({
 
   throw new Error(`Gemini tool loop hit its ${maxRounds}-round cap without producing an answer.`);
 }
+
+/**
+ * Text embeddings on Vertex (`gemini-embedding-001` unless `GEMINI_EMBEDDING_MODEL` says
+ * otherwise), for hybrid retrieval. One text per request — the model's limit — at a small
+ * fixed concurrency; `taskType` tells the model whether it is embedding a document or a query.
+ */
+export async function geminiEmbed(
+  texts: readonly string[],
+  taskType: "RETRIEVAL_DOCUMENT" | "RETRIEVAL_QUERY",
+  accessToken?: string,
+): Promise<number[][]> {
+  const project = process.env.VERTEX_PROJECT_ID?.trim();
+  if (!project) throw new Error("VERTEX_PROJECT_ID is required for Gemini embeddings.");
+  const region = process.env.VERTEX_REGION?.trim() || "global";
+  const host = region === "global" ? "aiplatform.googleapis.com" : `${region}-aiplatform.googleapis.com`;
+  const model = process.env.GEMINI_EMBEDDING_MODEL?.trim() || "gemini-embedding-001";
+  const url = `https://${host}/v1/projects/${project}/locations/${region}/publishers/google/models/${model}:predict`;
+  const token = accessToken ?? (await auth.getAccessToken());
+
+  const embedOne = async (text: string): Promise<number[]> => {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "x-goog-user-project": project },
+      body: JSON.stringify({ instances: [{ content: text.slice(0, 8_000), task_type: taskType }] }),
+    });
+    const data = (await response.json()) as { predictions?: Array<{ embeddings?: { values?: number[] } }>; error?: { message?: string } };
+    const values = data.predictions?.[0]?.embeddings?.values;
+    if (!response.ok || !values?.length) throw new Error(`Gemini embeddings ${response.status}: ${data.error?.message ?? "no vector returned"}`);
+    return values;
+  };
+
+  const out: number[][] = new Array(texts.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < texts.length) {
+      const index = next++;
+      out[index] = await embedOne(texts[index] as string);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, texts.length) }, worker));
+  return out;
+}

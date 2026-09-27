@@ -105,3 +105,26 @@ describe("jira op-keyed comments", () => {
     expect(await client.findCommentByOp("DOC-1", "other")).toBeUndefined();
   });
 });
+
+describe("once, concurrently", () => {
+  it("two simultaneous calls for the same op act once; the second replays the first", async () => {
+    const ledger = new MemoryEffectLedger();
+    let acts = 0;
+    const [a, b] = await Promise.all([once(ledger, "op-x", async () => ++acts), once(ledger, "op-x", async () => ++acts)]);
+    expect(acts).toBe(1);
+    expect([a.replayed, b.replayed].sort()).toEqual([false, true]);
+    expect(a.result).toBe(b.result);
+  });
+});
+
+describe("ledgers sharing a file", () => {
+  it("three ledger instances on one file, writing at once, lose no record", async () => {
+    const file = path.join(tmpRoot, "shared.json");
+    const ledgers = [new FileEffectLedger(file), new FileEffectLedger(file), new FileEffectLedger(file)];
+    await Promise.all(
+      Array.from({ length: 21 }, (_, n) => ledgers[n % 3]!.put({ op: `op-${n}`, status: "done", startedAt: "t" })),
+    );
+    const reopened = new FileEffectLedger(file);
+    for (let n = 0; n < 21; n += 1) expect((await reopened.get(`op-${n}`))?.status).toBe("done");
+  });
+});

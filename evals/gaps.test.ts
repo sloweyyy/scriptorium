@@ -116,3 +116,31 @@ describe("a gap note that outlives its container", () => {
     expect(await nextGapId(vault)).toBe("G-001");
   });
 });
+
+describe("the same gap, asked twice", () => {
+  it("files one note and one ticket, and records who else asked", async () => {
+    const fs = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { Vault } = await import("@scriptorium/core");
+    const { fileGapNote } = await import("@scriptorium/curator");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "scriptorium-gapdup-"));
+    const vault = new Vault(root);
+    await vault.ensure();
+    const tickets: string[] = [];
+    const openTicket = async () => (tickets.push("DOC-9"), { key: "DOC-9", url: "https://x/DOC-9" });
+    const auditFile = path.join(root, "audit.jsonl");
+
+    const first = await fileGapNote(vault, { question: "Does Beacon support SSO?", missing: "SSO", askedBy: "U1", auditFile, openTicket });
+    const again = await fileGapNote(vault, { question: "does beacon support SSO", missing: "SSO", askedBy: "U2", auditFile, openTicket });
+    expect(again).toMatchObject({ relPath: first.relPath, duplicate: true, ticket: { key: "DOC-9" } });
+    expect(await vault.listNotes("_gaps")).toHaveLength(1);
+    expect(tickets).toHaveLength(1);
+    expect((await vault.readNote(first.relPath)).frontmatter.also_asked_by).toEqual(["U2"]);
+
+    // A different question is a different gap.
+    await fileGapNote(vault, { question: "Can I export incidents as CSV?", missing: "export", askedBy: "U1", auditFile, openTicket });
+    expect(await vault.listNotes("_gaps")).toHaveLength(2);
+    await fs.rm(root, { recursive: true, force: true });
+  });
+});

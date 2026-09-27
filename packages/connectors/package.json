@@ -10,6 +10,9 @@
   "dependencies": {
     "@scriptorium/core": "workspace:*",
     "@scriptorium/jira": "workspace:*",
-    "zod": "^4.4.3"
+    "@scriptorium/policy": "workspace:*",
+    "@scriptorium/runtime": "workspace:*",
+    "@slack/web-api": "^8.1.1",
+    "zod": "^4.6.5"
   }
 }

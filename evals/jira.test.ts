@@ -12,6 +12,7 @@ import {
   splitAtLastOwnComment,
   type JiraComment,
 } from "@scriptorium/jira";
+import { newestFirst, prdFrontmatter, safeDesignName } from "@scriptorium/agents";
 
 function comment(body: string, accountId = "human-1", id = "1"): JiraComment {
   return { id, body, created: new Date().toISOString(), author: { accountId, displayName: "Reviewer" } };
@@ -286,5 +287,118 @@ describe("jira client", () => {
   it("surfaces Jira's error body instead of a bare status code", async () => {
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ errorMessages: ["Issue does not exist"] }), { status: 404 }));
     await expect(client().getIssue("DOC-404")).rejects.toThrow(/Issue does not exist/);
+  });
+});
+
+describe("which PRD attachment is the PRD", () => {
+  it("prefers the newest upload over a stale one still attached", () => {
+    const at = (filename: string, created: string) => ({ id: filename, filename, mimeType: "text/markdown", content: "", created });
+    const picked = newestFirst([at("prd.md", "2026-08-20T10:00:00.000+0000"), at("prd-fixed.md", "2026-08-21T09:00:00.000+0000")]);
+    expect(picked.map((attachment) => attachment.filename)).toEqual(["prd-fixed.md", "prd.md"]);
+  });
+});
+
+describe("untrusted ticket input stays input", () => {
+  it("keeps only the fields a PRD legitimately carries", () => {
+    const kept = prdFrontmatter({ feature: "Digest", audience: "admins", user_goal: "one email", source_url: "https://evil.example", kind: "doc", status: "published", approved_by: "CEO" });
+    expect(kept).toEqual({ feature: "Digest", audience: "admins", user_goal: "one email" });
+  });
+
+  it("names a design by its media type, never by what the uploader typed", () => {
+    expect(safeDesignName("approve.md", "image/png", "digest-design-1")).toBe("approve.png");
+    expect(safeDesignName("../../docs/Evil Name.JPG", "image/jpeg", "x")).toBe("evil-name.jpg");
+    expect(safeDesignName("...", "image/webp", "digest-design-2")).toBe("digest-design-2.webp");
+    expect(safeDesignName(undefined, "image/gif", "digest-design-3")).toBe("digest-design-3.gif");
+  });
+});
+
+describe("mayApproveOnJira", () => {
+  it("never approves an unknown account or the agent itself, and honours the approver list", async () => {
+    const { mayApproveOnJira } = await import("@scriptorium/agents");
+    expect(mayApproveOnJira({}, "bot", undefined).ok).toBe(false);
+    expect(mayApproveOnJira({}, "bot", "bot").ok).toBe(false);
+    expect(mayApproveOnJira({}, "bot", "anyone").ok).toBe(true);
+    expect(mayApproveOnJira({ approvers: ["pm"] }, "bot", "anyone").ok).toBe(false);
+    expect(mayApproveOnJira({ approvers: ["pm"] }, "bot", "pm").ok).toBe(true);
+  });
+});
+
+describe("reading a PRD out of Confluence", () => {
+  it("uses the v2 pages API, falls back to v1 only when v2 is absent, and rejects a non-numeric id", async () => {
+    const { JiraClient } = await import("@scriptorium/jira");
+    const hits: string[] = [];
+    let v2Exists = true;
+    vi.stubGlobal("fetch", async (input: string) => {
+      const url = String(input);
+      hits.push(url.replace("https://example.atlassian.net", ""));
+      if (url.includes("/api/v2/pages/") && !v2Exists) return new Response("", { status: 404 });
+      return new Response(JSON.stringify({ title: "PRD", body: { storage: { value: "<p>x</p>" } } }), { status: 200 });
+    });
+    const client = new JiraClient({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", projectKey: "DOC" });
+    expect(await client.confluencePage("123")).toEqual({ title: "PRD", storage: "<p>x</p>" });
+    expect(hits).toEqual(["/wiki/api/v2/pages/123?body-format=storage"]);
+    v2Exists = false;
+    hits.length = 0;
+    await client.confluencePage("123");
+    expect(hits).toEqual(["/wiki/api/v2/pages/123?body-format=storage", "/wiki/rest/api/content/123?expand=body.storage"]);
+    await expect(client.confluencePage("../admin")).rejects.toThrow(/not a Confluence page id/);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("the poller sees every matching ticket", () => {
+  const issueN = (n: number) => ({ id: String(n), key: `DOC-${n}`, fields: { summary: `t${n}` } });
+
+  it("pages /search/jql by nextPageToken past the first 100", async () => {
+    const { JiraClient } = await import("@scriptorium/jira");
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: string) => {
+      const url = new URL(String(input));
+      calls.push(url.searchParams.get("nextPageToken") ?? "-");
+      const token = url.searchParams.get("nextPageToken");
+      const max = Number(url.searchParams.get("maxResults"));
+      const start = token ? Number(token) : 0;
+      const issues = Array.from({ length: Math.min(max, 230 - start) }, (_, i) => issueN(start + i));
+      const next = start + issues.length;
+      return new Response(JSON.stringify({ issues, ...(next < 230 ? { nextPageToken: String(next), isLast: false } : { isLast: true }) }), { status: 200 });
+    });
+    const client = new JiraClient({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", projectKey: "DOC" });
+    const all = await client.searchAllIssues("project = DOC");
+    expect(all).toHaveLength(230);
+    expect(all.at(-1)?.key).toBe("DOC-229");
+    vi.unstubAllGlobals();
+  });
+
+  it("pages the legacy /search by startAt", async () => {
+    const { JiraClient } = await import("@scriptorium/jira");
+    vi.stubGlobal("fetch", async (input: string) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/search/jql")) return new Response("", { status: 404 });
+      const start = Number(url.searchParams.get("startAt") ?? 0);
+      const max = Number(url.searchParams.get("maxResults"));
+      const issues = Array.from({ length: Math.max(0, Math.min(max, 150 - start)) }, (_, i) => issueN(start + i));
+      return new Response(JSON.stringify({ issues, total: 150 }), { status: 200 });
+    });
+    const client = new JiraClient({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", projectKey: "DOC" });
+    expect(await client.searchAllIssues("project = DOC")).toHaveLength(150);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("Jira's JSON is checked where it enters", () => {
+  it("fails loudly, naming the field, when a load-bearing field is missing", async () => {
+    const { parseComments, parseIssue, parseMyself } = await import("@scriptorium/jira");
+    expect(() => parseMyself({ displayName: "Scribe" })).toThrow(/account: accountId/);
+    expect(() => parseIssue({ id: "1", fields: {} })).toThrow(/issue: key/);
+    expect(() => parseComments([{ body: "hi", created: "now" }])).toThrow(/comment list: 0\.id/);
+  });
+
+  it("is lenient about everything it does not depend on", async () => {
+    const { parseComments, parseIssue } = await import("@scriptorium/jira");
+    const issue = parseIssue({ id: "1", key: "DOC-7", fields: { summary: null, customfield_10020: [{ x: 1 }] }, expand: "x" });
+    expect(issue.fields.summary).toBe("");
+    expect((issue.fields as unknown as Record<string, unknown>).customfield_10020).toEqual([{ x: 1 }]);
+    expect(parseComments([{ id: "5", body: null, created: "2026-01-01", author: null }])).toEqual([{ id: "5", body: "", created: "2026-01-01", author: undefined }]);
+    expect(parseComments(undefined)).toEqual([]);
   });
 });

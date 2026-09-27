@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfluenceConnector, cqlString } from "@scriptorium/connectors";
+import { MemoryEffectLedger } from "@scriptorium/runtime";
 
 /**
  * The Confluence connector's two safety rules: spaces are allow-listed for reads too, and
@@ -82,5 +83,114 @@ describe("confluence connector", () => {
       return new Response(JSON.stringify({ id: "101", title: "T", spaceId: "1", body: {} }));
     });
     await expect(connector().readPage("101")).rejects.toThrow(/unexpected shape: body\.storage/);
+  });
+});
+
+describe("confluence writes", () => {
+  let pages: Record<string, { title: string; spaceId: string; version: number; message?: string; body?: string }>;
+  let loseNext: boolean;
+
+  beforeEach(() => {
+    pages = { "101": { title: "Maintenance windows", spaceId: "1", version: 3 }, "202": { title: "Salaries 2026", spaceId: "2", version: 1 } };
+    loseNext = false;
+    vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+      const url = decodeURIComponent(String(input));
+      const method = init?.method ?? "GET";
+      const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200 });
+      if (url.includes("/api/v2/spaces?keys=")) return json({ results: [{ id: 1, key: "BEACON" }] });
+      if (url.includes("/api/v2/pages?space-id=")) {
+        const title = new URL(String(input)).searchParams.get("title");
+        return json({ results: Object.entries(pages).filter(([, page]) => page.title === title).map(([id, page]) => ({ id, title: page.title })) });
+      }
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (method === "POST" && url.endsWith("/api/v2/pages")) {
+        const id = String(300 + Object.keys(pages).length);
+        pages[id] = { title: body.title, spaceId: String(body.spaceId), version: 1, body: body.body.value };
+        if (loseNext) { loseNext = false; throw new TypeError("socket hang up"); }
+        return json({ id, title: body.title, spaceId: body.spaceId, version: { number: 1 } });
+      }
+      const id = url.match(/\/api\/v2\/pages\/(\d+)/)?.[1];
+      if (id && pages[id] && method === "PUT") {
+        pages[id] = { ...pages[id]!, version: body.version.number, message: body.version.message, body: body.body.value };
+        if (loseNext) { loseNext = false; throw new TypeError("socket hang up"); }
+        return json({ id, title: body.title, spaceId: pages[id]!.spaceId, version: { number: body.version.number } });
+      }
+      if (id && pages[id]) return json({ id, title: pages[id]!.title, spaceId: pages[id]!.spaceId, version: { number: pages[id]!.version, message: pages[id]!.message } });
+      return new Response("nope", { status: 404 });
+    });
+  });
+
+  const writer = (ledger = new MemoryEffectLedger()) =>
+    new ConfluenceConnector({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", allowedSpaceKeys: ["BEACON"], ledger });
+
+  it("creates a page once, even when the response is lost after Confluence created it", async () => {
+    const ledger = new MemoryEffectLedger();
+    loseNext = true;
+    await expect(writer(ledger).createPage({ space: "BEACON", title: "Digest emails", markdown: "# Digest\n\nOne a day." })).rejects.toThrow();
+    const retry = await writer(ledger).createPage({ space: "BEACON", title: "Digest emails", markdown: "# Digest\n\nOne a day." });
+    expect(retry.created).toBe(false);
+    expect(Object.values(pages).filter((page) => page.title === "Digest emails")).toHaveLength(1);
+    // Sent as Confluence wiki markup.
+    expect(pages[retry.id]?.body).toContain("h1. Digest");
+  });
+
+  it("refuses to write outside the allowed spaces", async () => {
+    await expect(writer().createPage({ space: "HR", title: "x", markdown: "x" })).rejects.toThrow(/outside/);
+    await expect(writer().updatePage({ id: "202", markdown: "x" })).rejects.toThrow(/outside/);
+    expect(pages["202"]!.version).toBe(1);
+  });
+
+  it("updates to version + 1 exactly once, with the op in the version message", async () => {
+    const ledger = new MemoryEffectLedger();
+    loseNext = true;
+    await expect(writer(ledger).updatePage({ id: "101", markdown: "Windows are 4 hours." })).rejects.toThrow();
+    expect(await writer(ledger).updatePage({ id: "101", markdown: "Windows are 4 hours." })).toEqual({ version: 4, updated: false });
+    expect(pages["101"]!.version).toBe(4);
+    expect(pages["101"]!.message).toMatch(/^scriptorium op /);
+  });
+
+  it("offers no write tools without a ledger", () => {
+    const readOnly = new ConfluenceConnector({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", allowedSpaceKeys: ["BEACON"] });
+    expect(readOnly.tools().map((tool) => tool.name)).toEqual(["confluence_search", "confluence_read_page"]);
+    expect(writer().tools().map((tool) => tool.name)).toContain("confluence_update_page");
+  });
+});
+
+describe("a failed space lookup", () => {
+  it("is retried on the next call, not cached as a failure until restart", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", async (input: string) => {
+      const url = decodeURIComponent(String(input));
+      if (url.includes("/api/v2/spaces?keys=")) {
+        calls += 1;
+        return calls === 1 ? new Response("down", { status: 503 }) : new Response(JSON.stringify({ results: [{ id: 1, key: "BEACON" }] }));
+      }
+      return new Response(JSON.stringify({ results: [] }));
+    });
+    const c = new ConfluenceConnector({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", allowedSpaceKeys: ["BEACON"] });
+    await expect(c.search("x")).rejects.toThrow(/503/);
+    expect(await c.search("x")).toEqual([]);
+  });
+});
+
+describe("separately approved identical writes", () => {
+  it("a page reverted A→B→A under three approvals is updated three times", async () => {
+    const pages: Record<string, { version: number; message?: string }> = { "101": { version: 1 } };
+    vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+      const url = decodeURIComponent(String(input));
+      if (url.includes("/api/v2/spaces?keys=")) return new Response(JSON.stringify({ results: [{ id: 1, key: "BEACON" }] }));
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (init?.method === "PUT") {
+        pages["101"] = { version: body.version.number, message: body.version.message };
+        return new Response(JSON.stringify({ id: "101", title: "T", spaceId: "1", version: { number: body.version.number } }));
+      }
+      return new Response(JSON.stringify({ id: "101", title: "T", spaceId: "1", version: { number: pages["101"]!.version, message: pages["101"]!.message } }));
+    });
+    const ledger = new MemoryEffectLedger();
+    const c = new ConfluenceConnector({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", allowedSpaceKeys: ["BEACON"], ledger });
+    await c.updatePage({ id: "101", markdown: "A", approvalId: "ap-1" });
+    await c.updatePage({ id: "101", markdown: "B", approvalId: "ap-2" });
+    expect((await c.updatePage({ id: "101", markdown: "A", approvalId: "ap-3" })).updated).toBe(true);
+    expect(pages["101"]!.version).toBe(4);
   });
 });

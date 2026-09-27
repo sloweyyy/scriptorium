@@ -17,6 +17,13 @@ The split sits exactly where the permission boundary is — Scribe may author pr
 under a human gate; Curator may never author, only organize and retrieve. Author ≠ archivist
 ≠ approver.
 
+**And underneath both, a governed-teammate platform.** Scribe and Curator are the first
+jobs; the engine is general. A third agent, the **Teammate**, answers from Confluence, Jira
+and the vault with citations in Slack, turns a thread into a ticket, and checks a ticket for
+readiness. The same guarantees hold for every agent: every tool call passes one policy check,
+every write waits for a named approver, and every factual answer cites a record a tool
+actually returned. See [The platform](#the-platform).
+
 ---
 
 ## The two repositories
@@ -114,6 +121,75 @@ picks that up on the other surface with nobody prompting it. That round trip has
 question asked in Slack, ticket opened, draft posted, doc published — and the gap notes that
 are still open are visible on the internal site.
 
+## The platform
+
+The docs pipeline's guarantees, generalized so any agent inherits them. An agent is
+configuration — identity, a tool → tier map, skills, triggers — not a new bot.
+
+```
+ Slack · Jira · Confluence · GitHub · cron
+        │  verify signature · normalize
+        ▼
+  AgentEvent ──▶ Gate (every refusal logged with its reason)
+        ▼
+  one lane per conversation (thread · ticket · page · PR), parallel across them
+        ▼
+  agent = config + skills/*.md ──▶ runSession (Claude | Gemini, fails closed)
+        ▼
+  POLICY: allow · approve · deny — per agent, per tool
+        │                         └──▶ approval card (Slack) → named approver → run once
+        ▼
+  connectors (allow-listed, reads included) · exactly-once effects (op-keys)
+        ▼
+  grounding check: no retrieved citation → no claim   ·   audit log + git
+```
+
+| Guarantee | Where it is enforced |
+|---|---|
+| Every tool call passes one policy check; unlisted tools are denied and not even offered | `packages/policy` (`runUnderPolicy`, `guard`), `packages/runtime/src/agent.ts` |
+| An approval belongs to a named, listed human, is single-use, and covers only the exact arguments shown | `packages/policy/src/approvals.ts` |
+| No citation, no claim — for vault notes, `confluence:<id>` and `jira:<KEY>` alike | `packages/curator/src/qa-contract.ts` (`enforceGrounding`) |
+| A capped, truncated, refused or empty model turn is an error with a reason, never half an answer | `packages/runtime/src/session.ts` |
+| A crash between "did it" and "recorded it" never doubles a write | `packages/runtime/src/effects.ts` + op-keys on Jira comments / Slack replies |
+| Connectors see only allow-listed projects, spaces and channels; the model writes words, never JQL/CQL | `packages/connectors` |
+| Tool output is data, never instructions — in every agent's system prompt, whatever its skills say | `packages/runtime/src/agent.ts` |
+
+The full threat model, layer by layer and with the eval behind each control, is in
+[`docs/security-model.md`](docs/security-model.md); the invariants and package map in
+[`docs/architecture.md`](docs/architecture.md); adding a skill, tool, connector or agent in
+[`docs/extending.md`](docs/extending.md); operating it in [`docs/runbook.md`](docs/runbook.md).
+
+**The Teammate** (`apps/agents/src/teammate-bot.ts`, `slack-manifests/teammate.yaml`) is the
+general agent on it. Skills are markdown in [`skills/`](skills/). It answers only in
+`TEAMMATE_SLACK_CHANNELS`, and every write — a Jira comment or issue, a Confluence page, a
+memory — posts an approval card that a `TEAMMATE_APPROVERS` click carries out exactly once.
+
+| Job | How |
+|---|---|
+| Cited answers across the vault, Confluence and Jira | `answer-with-citations`; uncited claims are refused, misses become gap tickets (deduped) |
+| Thread → Jira ticket | `thread-to-ticket`; reads the thread it was asked in, proposes the issue on a card |
+| Is this ticket ready? | `readiness-check`; verdict plus what is missing, cited |
+| Remember this | `remember`; scoped memory (person / channel / global), human-approved, never reaches published docs |
+| Weekly digest | `weekly-digest`; what moved in Jira and which doc gaps opened, posted once per week to `TEAMMATE_DIGEST_CHANNEL` |
+| Docs into Confluence | `confluence_create_page` / `confluence_update_page`, approve-tier, allowed spaces only |
+
+**What keeps the docs honest after they ship.** A published doc records its PRD's hash; if
+the PRD changes later, the ticket it was approved on gets one notice per change. A house rule
+can carry a check (`check_present` / `check_absent`), so a draft shows `L-001 ✓, L-002 ✗`
+— applied is not the same as obeyed — and `revoke lesson L-00N` withdraws a rule on the
+record. With `SCRIPTORIUM_SIGNING_KEY` set, approvals are signed and a restore from the
+docs repo cannot forge one.
+
+**MCP.** `pnpm mcp` serves the vault read-only over stdio — `search_vault`, `read_note`,
+`vault_overview`, and a grounded `ask` — for Claude Code, Claude Desktop or an IDE:
+
+```bash
+claude mcp add scriptorium -- pnpm --dir /path/to/scriptorium mcp
+```
+
+**Tracing.** Every agent reply ends with its run id; `pnpm trace 3f2a9c1b` prints what that
+run did — trigger, policy decisions, tool calls, approvals, reply — from the audit log.
+
 ## Why it is built this way
 
 - **Learning = human-gated lessons, not fine-tuning.** Feedback that generalizes becomes a
@@ -167,7 +243,7 @@ agent never pushes `main`.
 
 ## What is verified, and how
 
-**202 scripted checks, none of which need a model or a credential:** `git clone`,
+**379 scripted checks, none of which need a model or a credential:** `git clone`,
 `pnpm install`, `pnpm eval`, green (`RUN_LLM_EVALS=1` adds five live grounded-Q&A checks on
 whichever provider is configured). They cover the guardrails rather than the prose — contract
 refusal, the lint, the ledger and its restart behaviour, the board transitions, the publish
@@ -210,7 +286,11 @@ refusal rule live in one shared module. Switching back is one line of configurat
 | `packages/scribe` | contract → draft → lint → revise → publish; lesson store + distiller |
 | `packages/curator` | inbox watcher, organizer/MOC, BM25 index, tool-runner Q&A, gap notes |
 | `packages/jira` | REST v2 client, wiki-markup translation, comment commands, poller state |
-| `apps/agents` | the surfaces: Jira poller (Scribe) + Socket-Mode bots (Curator, thin Scribe) |
+| `packages/policy` | allow / approve / deny per agent and tool; approvals bound to the exact arguments |
+| `packages/runtime` | event model, gate, per-conversation queue, exactly-once effects, the fail-closed session loop, agents-as-config |
+| `packages/connectors` | Confluence, Jira and Slack as allow-listed agent tools; the Slack approval card |
+| `skills/` | what agents know how to do, as reviewable markdown |
+| `apps/agents` | the surfaces: Jira poller (Scribe), Socket-Mode bots (Curator, Teammate, thin Scribe), the MCP server |
 | `vault/` | the knowledge vault — open it in Obsidian |
 | `samples/` | fictional "Beacon" PRDs + wireframes for the demo |
 | `evals/` | scripted checks for every guardrail |
@@ -240,7 +320,7 @@ Checks:
 
 ```bash
 pnpm typecheck
-pnpm eval                     # 202 checks, no API key needed
+pnpm eval                     # 379 checks, no API key needed
 RUN_LLM_EVALS=1 pnpm eval     # + live grounded-Q&A checks
 ```
 

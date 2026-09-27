@@ -1,3 +1,4 @@
+import { mayApproveInSlack, parseApprovalButtonValue } from "./slack-approval";
 import type { AppConfig, Vault } from "@scriptorium/core";
 import { checkContract, formatContractQuestions } from "@scriptorium/scribe";
 import { App } from "@slack/bolt";
@@ -47,33 +48,42 @@ export async function startScribeBot(config: AppConfig, _vault: Vault, jira?: Sc
   // it lives in Scribe's identity because Curator may never approve product claims.
   app.action("approve_doc", async ({ ack, body, respond, client }) => {
     await ack();
-    // The button carries the issue key in `value`, so the handler needs no state of its own.
-    const key = (body as { actions?: Array<{ value?: string }> }).actions?.[0]?.value;
-    const userId = (body as { user?: { id?: string; username?: string } }).user;
+    const target = parseApprovalButtonValue((body as { actions?: Array<{ value?: string }> }).actions?.[0]?.value);
+    const user = (body as { user?: { id?: string; username?: string } }).user;
 
-    if (!key || !jira) {
+    if (!target || !jira) {
       await respond({ text: "I can't publish from here — the Jira surface isn't running on this host.", replace_original: false });
       return;
     }
 
-    // Record a human name, not a Slack id: the approver ends up in a git commit message.
-    let approver = userId?.username ?? userId?.id ?? "a Slack user";
+    // Who pressed it is the whole question. A refusal leaves the card in place: someone
+    // who IS an approver may still use it.
+    const allowed = mayApproveInSlack(config.scribe.approvers ?? [], user?.id);
+    if (!allowed.ok) {
+      await respond({ text: allowed.reason, response_type: "ephemeral", replace_original: false });
+      return;
+    }
+
+    // A human name for the git commit, with the Slack id beside it: names change, ids don't.
+    let name = user?.username ?? "a Slack user";
     try {
-      if (userId?.id) {
-        const profile = await client.users.info({ user: userId.id });
-        approver = profile.user?.real_name ?? profile.user?.name ?? approver;
+      if (user?.id) {
+        const profile = await client.users.info({ user: user.id });
+        name = profile.user?.real_name ?? profile.user?.name ?? name;
       }
     } catch {
       // Name lookup is a nicety; never block a publish on it.
     }
+    const approver = `${name} (slack:${user?.id})`;
 
     try {
-      await jira.approve(key, approver);
-      await respond({ text: `Published ${key} — approved by ${approver}. Details are on the ticket.`, replace_original: false });
+      await jira.approve(target.issueKey, approver, target.draft);
+      // Decided: replace the card so its button cannot be pressed a second time.
+      await respond({ text: `Published ${target.issueKey} — approved by ${approver}. Details are on the ticket.`, replace_original: true });
     } catch (error) {
       await respond({
-        text: `Couldn't publish ${key}: ${error instanceof Error ? error.message : String(error)}`,
-        replace_original: false,
+        text: `Couldn't publish ${target.issueKey}: ${error instanceof Error ? error.message : String(error)}`,
+        replace_original: /draft has changed/.test(String(error)),
       });
     }
   });

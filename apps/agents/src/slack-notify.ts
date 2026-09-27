@@ -1,3 +1,4 @@
+import { approvalButtonValue } from "./slack-approval";
 import type { AppConfig } from "@scriptorium/core";
 import { WebClient } from "@slack/web-api";
 
@@ -57,14 +58,16 @@ export interface DraftAnnouncement {
   feature: string;
   lintSummary: string;
   appliedLessons?: string[];
+  /** The draft this card is for. The button approves exactly this text, never a later one. */
+  draftMarkdown: string;
 }
 
 /**
  * Draft-ready message WITH approval buttons, posted by Scribe's own app.
  *
- * The buttons carry the issue key in `value`, so the action handler needs no state of its
- * own — and the click still lands in the same `runPublish` the ticket's `approve` comment
- * reaches. One gate, two doorways.
+ * The button carries the issue key AND a fingerprint of the draft it announces, so a click
+ * approves that draft and no other — and it still lands in the same `runPublish` the
+ * ticket's `approve` comment reaches. One gate, two doorways.
  */
 export async function announceDraftForApproval(config: AppConfig, input: DraftAnnouncement): Promise<boolean> {
   const token = config.scribe.botToken;
@@ -95,7 +98,7 @@ export async function announceDraftForApproval(config: AppConfig, input: DraftAn
               style: "primary",
               text: { type: "plain_text", text: "Approve & publish" },
               action_id: "approve_doc",
-              value: input.issueKey,
+              value: approvalButtonValue(input.issueKey, input.draftMarkdown),
               // A publish is not undoable from Slack, so make the click deliberate.
               confirm: {
                 title: { type: "plain_text", text: "Publish this doc?" },

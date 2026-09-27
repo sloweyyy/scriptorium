@@ -1,4 +1,4 @@
-import { audit, slugify, type Vault } from "@scriptorium/core";
+import { audit, docSlug, type Vault } from "@scriptorium/core";
 import { updateMoc } from "./organizer";
 
 export interface GapTicket {
@@ -60,7 +60,7 @@ export async function nextGapId(vault: Vault): Promise<string> {
  */
 export async function fileGapNote(vault: Vault, input: GapInput): Promise<GapResult> {
   const id = await nextGapId(vault);
-  const relPath = `_gaps/${id}-${slugify(input.question.slice(0, 50))}.md`;
+  const relPath = `_gaps/${id}-${docSlug(input.question, 8, 50)}.md`;
 
   const body = [
     "**Question the vault could not answer:**",

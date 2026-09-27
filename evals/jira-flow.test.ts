@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Vault, type AppConfig } from "@scriptorium/core";
+import { docSlug, Vault, type AppConfig } from "@scriptorium/core";
 import { startScribeJira } from "@scriptorium/agents";
 
 /**
@@ -615,5 +615,30 @@ describe("prd in confluence", () => {
     expect(refusal).toBeDefined();
     expect(refusal).toContain("the attachment");
     expect(refusal).not.toContain("Confluence");
+  });
+});
+
+describe("a PRD whose feature is a sentence", () => {
+  it("seeds the PRD under the capped doc slug, pinned so the organizer keeps it", async () => {
+    // A gap ticket's PRD often carries the asker's question as `feature`. The doc is
+    // published under docSlug(feature) and `sourcePrd` points at prd/<that slug>; the seeded
+    // PRD has to carry the same slug or the organizer re-derives an 80-character one.
+    const feature = "Users can export their dashboard view as a PDF file so they can share it with stakeholders";
+    issue = {
+      ...issue,
+      fields: {
+        ...(issue.fields as object),
+        description: prdInJira(`feature: ${feature}`, "audience: admins", "user_goal: share a dashboard"),
+      },
+    };
+
+    const stop = await startScribeJira(config(), vault);
+    stop.stop();
+
+    const slug = docSlug(feature);
+    expect(slug).toBe("users-can-export-their-dashboard-view-as-a");
+    const seeded = await vault.readNote(`_inbox/${slug}.md`);
+    expect(seeded.frontmatter.slug).toBe(slug);
+    expect(seeded.frontmatter.kind).toBe("prd");
   });
 });

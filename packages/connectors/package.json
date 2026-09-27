@@ -1,5 +1,5 @@
 {
-  "name": "@scriptorium/curator",
+  "name": "@scriptorium/connectors",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,11 +8,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.128.0",
     "@scriptorium/core": "workspace:*",
-    "chokidar": "^5.0.0",
-    "minisearch": "^7.2.0",
-    "zod": "^4.4.3",
-    "@scriptorium/runtime": "workspace:*"
+    "@scriptorium/jira": "workspace:*",
+    "zod": "^4.4.3"
   }
 }

@@ -5,7 +5,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { geminiModel, loadConfig, slugify, Vault, type ImageInput } from "@scriptorium/core";
+import { docSlug, geminiModel, loadConfig, Vault, type ImageInput } from "@scriptorium/core";
 import { checkContract, draftDoc, formatContractQuestions, formatLintFindings } from "@scriptorium/scribe";
 
 const [prdPath, ...imagePaths] = process.argv.slice(2);
@@ -52,7 +52,7 @@ console.log("\n----- lint -----");
 console.log(formatLintFindings(result.lint));
 console.log(`applied lessons: ${result.appliedLessons.join(", ") || "(none yet)"}`);
 
-const slug = slugify(String(contract.frontmatter.feature));
+const slug = docSlug(String(contract.frontmatter.feature));
 const outPath = path.join("out", `draft-${slug}.md`);
 await fs.mkdir("out", { recursive: true });
 await fs.writeFile(outPath, result.markdown + "\n");

@@ -16,6 +16,8 @@ function envNumber(name: string, fallback: number): number {
 export interface SlackAppTokens {
   botToken?: string;
   appToken?: string;
+  /** Slack user ids allowed to approve from this app's buttons. Empty: nobody. */
+  approvers?: string[];
 }
 
 export interface JiraSettings {
@@ -202,6 +204,7 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
     scribe: {
       botToken: env("SCRIBE_SLACK_BOT_TOKEN"),
       appToken: env("SCRIBE_SLACK_APP_TOKEN"),
+      approvers: (env("SCRIBE_SLACK_APPROVERS") ?? "").split(",").map((id) => id.trim()).filter(Boolean),
     },
     curator: {
       botToken: env("CURATOR_SLACK_BOT_TOKEN"),

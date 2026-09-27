@@ -224,6 +224,27 @@ export async function startCuratorBot(config: AppConfig, vault: Vault): Promise<
         return;
       }
 
+      if (answer.ungrounded) {
+        // The model answered without a note to stand on. Posting it would be a claim with
+        // no citation — the one thing Curator exists not to do — and filing it as a gap
+        // would open a ticket on the strength of an improvisation. Say so, and stop.
+        const lines = [
+          "*I couldn't tie an answer to any note in the knowledge base* — so I won't state one.",
+          "Try naming the feature or screen you mean, or ask me what the vault covers.",
+        ];
+        await say({
+          thread_ts: threadTs,
+          text: lines.join("\n"),
+          blocks: [
+            { type: "section", text: { type: "mrkdwn", text: lines.join("\n") } },
+            ...contextBlocks("No citation, no claim."),
+          ] as never,
+        });
+        await react.remove("eyes");
+        await react.add("grey_question");
+        return;
+      }
+
       // Resolved after the answer, not during it: where a note can be READ is a property of
       // publication, and has no business influencing what the model retrieved.
       const links = citationLinks(await resolveCitations(vault, config, answer.citations));

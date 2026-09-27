@@ -4,15 +4,16 @@ import {
   audit,
   commitVault,
   defaultJql,
+  docSlug,
   docsRepoReady,
   parseMarkdown,
-  slugify,
   type AppConfig,
   type ImageInput,
   type Vault,
 } from "@scriptorium/core";
 import { organizePublishedDoc } from "@scriptorium/curator";
 import { publishApprovedDoc, pushInternalPlane } from "./docs-repo";
+import { draftFingerprint } from "./slack-approval";
 import { announceDraftForApproval, announcePublished } from "./slack-notify";
 import {
   confluencePageIdFromUrl,
@@ -463,6 +464,8 @@ async function seedVault(ctx: Ctx, slug: string, feature: string, source: PrdSou
       ...frontmatter,
       kind: "prd",
       feature,
+      // Pinned so the organizer files it under the same slug the doc is published as.
+      slug,
       jira_issue: issueKey,
       source_ticket: ctx.client.issueUrl(issueKey),
     });
@@ -596,7 +599,7 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
   }
 
   const feature = String(contract.frontmatter.feature ?? issue.fields.summary);
-  const slug = slugify(feature);
+  const slug = docSlug(feature);
   await seedVault(ctx, slug, feature, source, key);
 
   // Working: say so on the board before the slow part, not after — and take the ticket,
@@ -646,6 +649,7 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
     feature,
     lintSummary: formatLintFindings(result.lint).split("\n").join(" · "),
     appliedLessons: result.appliedLessons,
+    draftMarkdown: result.markdown,
   });
 
   await audit(ctx.config.auditFile, {
@@ -691,7 +695,7 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
   for (const item of feedback) await ctx.state.appendFeedback(key, item);
 
   const known = ctx.state.get(key);
-  const slug = known?.docSlug ?? slugify(issue.fields.summary);
+  const slug = known?.docSlug ?? docSlug(issue.fields.summary);
   await ctx.client.uploadAttachment(key, `draft-${slug}.md`, result.markdown, "text/markdown");
   await say(
     ctx,
@@ -741,7 +745,7 @@ async function runWake(ctx: Ctx, issue: JiraIssue): Promise<void> {
       ctx,
       key,
       [
-        `I'm here. There's a draft on this ticket already (attached as \`draft-${known.docSlug ?? slugify(issue.fields.summary)}.md\`).`,
+        `I'm here. There's a draft on this ticket already (attached as \`draft-${known.docSlug ?? docSlug(issue.fields.summary)}.md\`).`,
         "",
         "Send feedback in plain English and I'll revise it, or comment `approve` to publish it to the vault. `help` lists everything.",
       ].join("\n"),
@@ -1138,12 +1142,26 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
   if (untouched) return;
   const comments = await ctx.client.listComments(key);
   const pendingFeedback: string[] = [];
+  // Set once this tick rewrites the draft. An approval that arrives in the same poll was
+  // given to the PREVIOUS version — the reviewer has not seen the one it would publish.
+  let revisedThisTick = false;
 
   const flushFeedback = async (): Promise<void> => {
     if (!pendingFeedback.length) return;
     const batch = [...pendingFeedback];
     pendingFeedback.length = 0;
     await runRevise(ctx, issue, batch);
+    revisedThisTick = true;
+  };
+
+  /** Approval of a draft nobody has seen is not approval: post it, and ask again. */
+  const holdUnseenRevision = async (): Promise<void> => {
+    await say(
+      ctx,
+      key,
+      "I revised the draft from the feedback that came in with this approval, so the version above is one you haven't seen yet — nothing is published. Read it, then comment `approve` (or move the ticket to Approved) to publish it.",
+    );
+    await audit(ctx.config.auditFile, { type: "jira.approve.held", actor: "scribe", issue: key, reason: "unseen-revision" });
   };
 
   for (const comment of comments) {
@@ -1178,13 +1196,24 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
         await flushFeedback();
         await say(ctx, key, HELP);
         break;
+      case "unclear":
+        // Neither published nor rewritten: a near-miss on the one irreversible command gets
+        // a question, and the reviewer's next comment decides.
+        await flushFeedback();
+        await say(
+          ctx,
+          key,
+          `That reads like an approval, so I haven't published or changed anything yet. If you meant it, comment exactly \`${command.suggestion}\`. If it was feedback, rephrase it without starting on "approve" and I'll revise.`,
+        );
+        break;
       case "draft":
         await flushFeedback();
         await runDraft(ctx, issue, { force: true });
         break;
       case "approve-doc":
         await flushFeedback();
-        await runPublish(ctx, issue, authorName(comment));
+        if (revisedThisTick) await holdUnseenRevision();
+        else await runPublish(ctx, issue, authorName(comment));
         break;
       case "approve-lesson":
         await flushFeedback();
@@ -1215,6 +1244,11 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
     // fail-closed rule is "no human approval, no publish", and this is where it is held.
     if (mover?.accountId && mover.accountId === ctx.botAccountId) {
       console.warn(`[scribe] ${key}: ignoring my own transition to "${ctx.config.jira.approvedStatus}" — not a human approval`);
+    } else if (revisedThisTick) {
+      // Dragged to Approved while feedback was still being applied: the column was set
+      // for the old draft. Put it back in review with the new one.
+      await holdUnseenRevision();
+      await moveTo(ctx, key, ctx.config.jira.inReviewStatus, ctx.state.get(key)?.lastStatus);
     } else {
       await runPublish(ctx, issue, mover?.name ?? "a Jira approver", { quietWhenPublished: true });
     }
@@ -1252,7 +1286,8 @@ export interface ScribeJiraHandle {
   /** Post a comment on a ticket from outside the poller (e.g. a GitHub event). */
   comment(issueKey: string, markdown: string): Promise<void>;
   /** Approve and publish from another surface (e.g. a Slack button). Same gate, second doorway. */
-  approve(issueKey: string, approvedBy: string): Promise<void>;
+  /** `draft` is the fingerprint the Slack card was posted for; a changed draft refuses. */
+  approve(issueKey: string, approvedBy: string, draft?: string): Promise<void>;
 }
 
 export async function startScribeJira(config: AppConfig, vault: Vault): Promise<ScribeJiraHandle> {
@@ -1310,11 +1345,18 @@ export async function startScribeJira(config: AppConfig, vault: Vault): Promise<
     async comment(issueKey: string, markdown: string): Promise<void> {
       await say(ctx, issueKey, markdown);
     },
-    async approve(issueKey: string, approvedBy: string): Promise<void> {
+    async approve(issueKey: string, approvedBy: string, draft?: string): Promise<void> {
       // Re-fetch, then take the exact path an `approve` comment takes — including the
-      // fail-closed checks. A button must not be a shortcut around any of them.
-      const issue = await client.getIssue(issueKey);
-      await runPublish(ctx, issue, approvedBy);
+      // fail-closed checks. A button must not be a shortcut around any of them, and it
+      // takes the same per-issue lock, so it cannot race a tick that is revising.
+      await withIssueLock(ctx, issueKey, async () => {
+        const current = await ctx.state.readDraft(issueKey);
+        if (draft && (!current || draftFingerprint(current) !== draft)) {
+          throw new Error("the draft has changed since this card was posted. Review the latest draft on the ticket and approve it there");
+        }
+        const issue = await client.getIssue(issueKey);
+        await runPublish(ctx, issue, approvedBy);
+      });
     },
   };
 }

@@ -122,6 +122,8 @@ export interface TeammateSettings extends SlackAppTokens {
   githubAppId?: string;
   githubAppKey?: string;
   githubRepos: string[];
+  /** Where an automatic PR check posts its summary and the approval card for its comment. */
+  prChannel?: string;
   /** Channel for the weekly digest. Unset: no digest. */
   digestChannel?: string;
   /** When it goes out, UTC: weekday 1–7 (Mon–Sun) and hour. Default Monday 09:00. */
@@ -273,6 +275,7 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       githubAppId: env("TEAMMATE_GITHUB_APP_ID"),
       githubAppKey: env("TEAMMATE_GITHUB_APP_KEY"),
       githubRepos: list(env("TEAMMATE_GITHUB_REPOS")),
+      prChannel: env("TEAMMATE_PR_CHANNEL"),
       digestChannel: env("TEAMMATE_DIGEST_CHANNEL"),
       digestWeekday: envNumber("TEAMMATE_DIGEST_WEEKDAY", 1),
       digestHour: envNumber("TEAMMATE_DIGEST_HOUR", 9),

@@ -126,6 +126,8 @@ export interface TeammateCore {
   onApprovalClick(action: string, payload: ApprovalClickPayload): Promise<string | undefined>;
   /** The weekly digest, if due and not yet posted this week. */
   checkDigest(now?: Date): Promise<void>;
+  /** A pull request to check against its ticket (from the GitHub webhook). */
+  onPullRequest(input: { repo: string; number: number; author?: string; deliveryId?: string }): Promise<void>;
   drain(deadlineMs: number): Promise<boolean>;
 }
 
@@ -155,7 +157,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const available = new Set([...connectorTools.map((tool) => tool.name), "vault_overview", "search_vault", "read_note", "memory_save"]);
   const hostConfig = { ...agentConfig, tools: Object.fromEntries(Object.entries(agentConfig.tools).filter(([name]) => available.has(name))) };
   const envelope = envelopeOf(hostConfig);
-  const approvalChannel = new SlackApprovalChannel(slack, config.slack.notifyChannel);
+  // Requests that did not start in a Slack thread (a PR check) put their card in the PR channel.
+  const approvalChannel = new SlackApprovalChannel(slack, settings.prChannel ?? config.slack.notifyChannel);
   const guardDepsFor = (key: string): GuardDeps => ({ store, channel: approvalChannel, auditFile: config.auditFile, key });
   const turnDeps = (key: string) => ({ vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config), signingKey: config.signingKey });
 
@@ -168,6 +171,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const queue = new KeyedQueue(
     async (key, events) => {
       for (const event of events) await withRun(async () => {
+        if (event.kind === "github.pull_request") return checkPullRequest(key, event);
         const { channel, threadTs, text, ts } = event.payload as { channel: string; threadTs: string; text: string; ts: string };
         // One failing turn is answered and logged; it never drops the rest of the batch —
         // those deliveries are already marked seen, so Slack's redelivery would not bring them back.
@@ -204,6 +208,18 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       },
     },
   );
+
+  /** The pr-check skill, run for a PR the webhook handed over; the card goes to the PR channel. */
+  async function checkPullRequest(key: string, event: AgentEvent): Promise<void> {
+    const { repo, number } = event.payload as { repo: string; number: number };
+    const channel = settings.prChannel as string;
+    const reply = await runTeammateTurn(
+      { question: `Check pull request github:${repo}/pull/${number} against the Jira ticket it implements, and propose one advisory comment.`, askedBy: event.actor.id },
+      turnDeps(key),
+    ).catch((error: unknown) => ({ kind: "refused" as const, text: `I couldn't check it: ${error instanceof Error ? error.message : String(error)}` }));
+    await slack.chat.postMessage({ channel, text: `*PR check* — github:${repo}/pull/${number}\n${formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken })}` });
+    await audit(config.auditFile, { type: `teammate.pr.${reply.kind}`, actor: "teammate", key, repo, number }).catch(() => undefined);
+  }
 
   const digestChannel = settings.digestChannel && settings.channels.includes(settings.digestChannel) ? settings.digestChannel : undefined;
   if (settings.digestChannel && !digestChannel) console.warn(`[teammate] TEAMMATE_DIGEST_CHANNEL ${settings.digestChannel} is not in TEAMMATE_SLACK_CHANNELS — no digest`);
@@ -263,11 +279,34 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       );
     },
 
+    async onPullRequest({ repo, number, author, deliveryId }) {
+      // Only allowed repos, and only with somewhere to put the result and the card.
+      if (!settings.prChannel || !settings.githubRepos.map((allowed) => allowed.toLowerCase()).includes(repo.toLowerCase())) {
+        await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: keys.githubPull(repo, number), reason: "PR checks are not configured for this repo" }).catch(() => undefined);
+        return;
+      }
+      const event: AgentEvent = {
+        id: deliveryId ?? `${repo}#${number}`,
+        source: "github",
+        key: keys.githubPull(repo, number),
+        kind: "github.pull_request",
+        actor: { id: `github:${author ?? "unknown"}` },
+        payload: { repo, number },
+        receivedAt: new Date().toISOString(),
+      };
+      const verdict = gate.check(event);
+      if (!verdict.accepted) {
+        await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: event.key, reason: verdict.reason }).catch(() => undefined);
+        return;
+      }
+      queue.push(event);
+    },
+
     drain: (deadlineMs) => queue.drain(deadlineMs),
   };
 }
 
-export async function startTeammateBot(config: AppConfig, vault: Vault): Promise<() => Promise<void>> {
+export async function startTeammateBot(config: AppConfig, vault: Vault): Promise<{ stop: () => Promise<void>; core: TeammateCore }> {
   const settings = config.teammate;
   const app = new App({ token: settings.botToken, appToken: settings.appToken, socketMode: true });
   const identity = await app.client.auth.test();
@@ -290,9 +329,12 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
 
   await app.start();
   console.log(`[teammate] ⚡ connected (socket mode) — ${settings.channels.length} channel(s)`);
-  return async () => {
-    clearInterval(digestTimer);
-    await core.drain(8_000);
-    await app.stop();
+  return {
+    core,
+    stop: async () => {
+      clearInterval(digestTimer);
+      await core.drain(8_000);
+      await app.stop();
+    },
   };
 }

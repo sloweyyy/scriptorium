@@ -264,3 +264,32 @@ describe("run viewer", () => {
     }
   });
 });
+
+describe("pull request webhooks", () => {
+  it("hands opened, reopened and ready-for-review PRs to the Teammate — never drafts or other actions", async () => {
+    const { pullRequestFrom } = await import("@scriptorium/agents");
+    const pr = (action: string, draft = false) => ({ action, pull_request: { number: 12, draft, user: { login: "dev" } }, repository: { full_name: "Org/App" } });
+    expect(pullRequestFrom("pull_request", pr("opened"))).toEqual({ repo: "org/app", number: 12, author: "dev" });
+    expect(pullRequestFrom("pull_request", pr("ready_for_review"))).toMatchObject({ number: 12 });
+    expect(pullRequestFrom("pull_request", pr("opened", true))).toBeUndefined();
+    expect(pullRequestFrom("pull_request", pr("closed"))).toBeUndefined();
+    expect(pullRequestFrom("push", pr("opened"))).toBeUndefined();
+  });
+
+  it("a signed pull_request delivery reaches the hook once", async () => {
+    const seen: Array<{ repo: string; number: number }> = [];
+    const hooked = startIngress({ config: config(), hooks: { pullRequest: async (input) => void seen.push(input) } });
+    await new Promise<void>((resolve) => hooked.once("listening", resolve));
+    const at = `http://127.0.0.1:${(hooked.address() as AddressInfo).port}`;
+    try {
+      const body = JSON.stringify({ action: "opened", pull_request: { number: 7, user: { login: "dev" } }, repository: { full_name: "org/app" } });
+      const headers = { ...signed(body), "x-github-event": "pull_request", "x-github-delivery": "pr-1" };
+      await fetch(`${at}/github/webhook`, { method: "POST", headers, body });
+      await fetch(`${at}/github/webhook`, { method: "POST", headers, body });
+      await settle();
+      expect(seen).toMatchObject([{ repo: "org/app", number: 7 }]);
+    } finally {
+      await new Promise<void>((resolve) => hooked.close(() => resolve()));
+    }
+  });
+});

@@ -21,6 +21,12 @@ export interface ApprovalRequest {
   agent: string;
   tool: string;
   argsHash: string;
+  /**
+   * The exact arguments that were shown for approval. Kept so an approval can be carried
+   * out when it is given — the model that asked has long since finished its turn — and so
+   * a card can show precisely what is being approved.
+   */
+  args?: unknown;
   /** Human-readable summary of the action, shown on the approval card. */
   summary: string;
   /** Where the request lives (e.g. `jira:issue:DOC-1`) — the approval surface for it. */
@@ -110,6 +116,7 @@ export async function requestApproval(
     agent: input.agent,
     tool: input.tool,
     argsHash: hash,
+    args: input.args,
     summary: input.summary,
     key: input.key,
     requestedBy: input.requestedBy,

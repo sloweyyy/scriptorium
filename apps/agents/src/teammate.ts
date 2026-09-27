@@ -112,6 +112,8 @@ export interface TeammateDeps {
   signingKey?: string;
   /** Told what each run cost (all rounds), after the audit line is written. */
   onUsage?: (usage: SessionUsage) => void;
+  /** Told each tool as it starts — so a surface can show what the agent is doing. */
+  onTool?: (name: string) => void;
 }
 
 export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): Promise<TeammateReply> {
@@ -132,6 +134,11 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
     ...tool,
     run: async (input: unknown) => {
       used.add(tool.name);
+      try {
+        deps.onTool?.(tool.name);
+      } catch {
+        // Progress is decoration; it never decides a turn.
+      }
       const result = await tool.run(input);
       retrieved.push(result);
       for (const fetched of tool.records?.(input, result) ?? []) records.add(fetched);

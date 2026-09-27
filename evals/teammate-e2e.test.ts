@@ -36,6 +36,7 @@ interface Posted { channel: string; thread_ts?: string; text: string; blocks?: u
 let tmpRoot: string;
 let vault: Vault;
 let posted: Posted[];
+let progressUpdates: string[] = [];
 
 /** Posted messages, as they read NOW: an update replaces the text of the message it targets. */
 const slack = {
@@ -45,6 +46,7 @@ const slack = {
       return { ok: true, ts: `9.${posted.length}` };
     },
     update: async (args: { ts: string; text: string; blocks?: unknown[] }) => {
+      if (args.text.startsWith("🔎")) progressUpdates.push(args.text);
       const index = Number(args.ts.split(".")[1]) - 1;
       if (posted[index]) posted[index] = { ...posted[index]!, text: args.text, blocks: args.blocks };
       return { ok: true };
@@ -74,6 +76,7 @@ beforeEach(async () => {
   await vault.ensure();
   await vault.writeNote("docs/digest-emails.md", "# Digest emails\n\nSent at 09:00 in the subscriber's timezone.", { feature: "Digest emails" });
   posted = [];
+  progressUpdates = [];
 });
 
 afterEach(async () => {
@@ -96,6 +99,7 @@ describe("teammate, end to end", () => {
     expect(JSON.stringify(posted[0]?.blocks)).toContain("https://docs.example/digest-emails");
     // The "looking into it" acknowledgement became the answer; none is left behind.
     expect(posted.some((message) => message.text.includes("Looking into it"))).toBe(false);
+    expect(progressUpdates).toContain("🔎 Searching our docs…");
     const audit = await fs.readFile(path.join(tmpRoot, "audit.jsonl"), "utf8");
     expect(audit).toContain('"type":"teammate.ignored"');
   });

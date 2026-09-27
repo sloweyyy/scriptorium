@@ -132,6 +132,25 @@ export function helpText(settings: { approvers?: readonly string[]; channels: re
   ].join("\n");
 }
 
+/** What the agent is doing, in the words a person would use, for the progress line. */
+const TOOL_PROGRESS: Record<string, string> = {
+  search_vault: "Searching our docs",
+  read_note: "Reading a doc",
+  vault_overview: "Looking at what the docs cover",
+  confluence_search: "Searching Confluence",
+  confluence_read_page: "Reading a Confluence page",
+  jira_search: "Searching Jira",
+  jira_recent: "Checking recent Jira activity",
+  jira_children: "Reading the epic's issues",
+  jira_get_issue: "Reading a Jira issue",
+  slack_read_thread: "Reading the thread",
+  github_get_pull: "Reading the pull request",
+};
+
+export function progressText(tool: string): string {
+  return `🔎 ${TOOL_PROGRESS[tool] ?? "Working on it"}…`;
+}
+
 export function formatReply(reply: TeammateReply, runId?: string, viewer?: { baseUrl?: string; token?: string }): string {
   const body = toSlackMrkdwn(reply.text);
   const ticket = reply.kind === "gap" && reply.ticket ? `\nRequest: <${reply.ticket.url}|${reply.ticket.key}>` : "";
@@ -241,9 +260,17 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
             await deliver("I've reached today's usage limit for this channel, so I'm not answering until tomorrow (UTC). An admin can raise `TEAMMATE_DAILY_TOKENS`.");
             return;
           }
+          // Show what it is doing, at most every 2s (chat.update is rate-limited).
+          let lastProgress = 0;
+          const onTool = (tool: string): void => {
+            const now = Date.now();
+            if (!placeholder?.ts || now - lastProgress < 2_000) return;
+            lastProgress = now;
+            void slack.chat.update({ channel, ts: placeholder.ts, text: progressText(tool) }).catch(() => undefined);
+          };
           const reply = await runTeammateTurn(
             { question: text, askedBy: event.actor.id, channel, threadTs, context },
-            { ...turnDeps(key), onUsage: (usage) => budget.add(channel, usage.input + usage.output) },
+            { ...turnDeps(key), onUsage: (usage) => budget.add(channel, usage.input + usage.output), onTool },
           );
           const textOut = formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken });
           // An answer's sources are the point of the product: render them as links, the way

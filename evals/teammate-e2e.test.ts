@@ -386,6 +386,32 @@ describe("admin controls", () => {
     expect(await vault.listNotes("_memory")).toHaveLength(1);
   });
 
+  it("an admin delegates an away approver to a stand-in, until a date, and can end it", async () => {
+    const admins = { ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig;
+    const core = await createTeammate(admins, vault, slack as never, "UBOT");
+    const until = new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10);
+    expect(await core.onSlashCommand({ channel: "C1", user: "UADMIN", text: `admin delegate <@UPM|priya> <@UALT> ${until}`, commandId: "d1" })).toContain("<@UALT> can approve what <@UPM> can");
+    expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: `admin delegate UPM U1 ${until}`, commandId: "d2" })).toMatch(/^Only Teammate admins/);
+
+    const ask = async (user: string, ts: string) => {
+      script = { calls: [{ name: "memory_save", input: { text: `Note from ${user}.`, scope: "channel:C1" } }], reply: "Asked." };
+      const again = await createTeammate(admins, vault, slack as never, "UBOT");
+      await again.onMention({ channel: "C1", ts, user, text: "<@UBOT> remember this" });
+      await settle(again);
+      const card = [...posted].reverse().find((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION))!;
+      return JSON.stringify(card.blocks).match(/"value":"([0-9a-f-]{36})"/)?.[1] as string;
+    };
+    const click = (id: string, user: string) => createTeammate(admins, vault, slack as never, "UBOT").then((fresh) => fresh.onApprovalClick(APPROVE_ACTION, { actions: [{ value: id }], user: { id: user, username: user }, channel: { id: "C1" }, message: { ts: "9.1" } }));
+
+    const byU1 = await ask("U1", "3.0");
+    expect(await click(byU1, "UALT")).toBeUndefined(); // the stand-in approves
+    expect(await vault.listNotes("_memory")).toHaveLength(1);
+    expect(await click(await ask("U2", "4.0"), "U_NOBODY")).toMatch(/^Not recorded/);
+    expect(await core.onSlashCommand({ channel: "C1", user: "UADMIN", text: "admin status", commandId: "d3" })).toContain("standing in: <@UALT> for <@UPM>");
+    expect(await core.onSlashCommand({ channel: "C1", user: "UADMIN", text: "admin undelegate UPM", commandId: "d4" })).toBe("Delegation from <@UPM> ended.");
+    expect(await click(await ask("U3", "5.0"), "UALT")).toMatch(/^Not recorded/);
+  });
+
   it("a tool an admin switched off is not offered, and an approval for it isn't carried out", async () => {
     const admins = { ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig;
     const core = await createTeammate(admins, vault, slack as never, "UBOT");

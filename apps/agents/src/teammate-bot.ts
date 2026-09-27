@@ -25,7 +25,7 @@ import { ASKING_SUBTYPES, capQuestion, formatReply, helpText, isHelpRequest, men
 import { sharesScribeAccount, teammateConnectorTools } from "./teammate-bot/tools";
 import { outcomeMessages } from "./teammate-bot/outcome";
 import { homeBlocks } from "./teammate-bot/home";
-import { OPEN, applyAdminCommand, narrowTools, readControl, writeControl, type Control } from "./teammate-bot/control";
+import { OPEN, applyAdminCommand, narrowTools, readControl, withDelegations, writeControl, type Control } from "./teammate-bot/control";
 import { REMINDER_EVENT_TYPE, dueReminders, markReminder, reminderText, reminderTools } from "./teammate-bot/reminders";
 
 export * from "./teammate-bot/messages";
@@ -428,6 +428,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
 
     async homeView(userId) {
       const me = `slack:${userId}`;
+      await refreshControl(); // delegations decide who sees what's waiting
       const now = Date.now();
       const requests = (await store.all()).filter((request) => request.agent === envelope.agent);
       // Only what THIS person may approve: the same rule the click is checked against.
@@ -435,7 +436,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         (request) =>
           request.status === "pending" &&
           Date.parse(request.expiresAt) > now &&
-          mayApprove(envelope, envelope.tools[request.tool] ?? { tier: "deny" }, { accountId: me }, request.requestedBy).ok,
+          mayApprove(withDelegations(envelope, current), withDelegations(envelope, current).tools[request.tool] ?? { tier: "deny" }, { accountId: me }, request.requestedBy).ok,
       );
       const withLinks = await Promise.all(
         waiting.slice(0, 20).map(async (request) => {
@@ -524,6 +525,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
 
     async onApprovalClick(action, payload) {
       const requestId = payload.actions?.[0]?.value ?? "";
+      if (action === REJECT_ACTION) await refreshControl(); // a stand-in may decline, too
       // Carrying out is a write: paused, or with its tool switched off, nothing is decided or
       // done and the request stays as it was. A rejection is always allowed.
       if (action !== REJECT_ACTION) {
@@ -542,12 +544,13 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         // listed approver's say-so to run it again.
         const request = (await store.all()).find((candidate) => candidate.id === requestId);
         if (!request || request.status !== "approved") return "Nothing to retry: it was already carried out, rejected or expired.";
-        const allowed = mayApprove(envelope, envelope.tools[request.tool] ?? { tier: "deny" }, payload.user?.id ? { accountId: `slack:${payload.user.id}` } : undefined, request.requestedBy);
+        const delegated = withDelegations(envelope, current);
+        const allowed = mayApprove(delegated, delegated.tools[request.tool] ?? { tier: "deny" }, payload.user?.id ? { accountId: `slack:${payload.user.id}` } : undefined, request.requestedBy);
         if (!allowed.ok) return `Not retried: ${allowed.reason}.`;
         await carryOut(request, payload.user?.id, payload.user?.username, where);
         return undefined;
       }
-      const decided = await handleApprovalClick(slack, store, (agent) => (agent === envelope.agent ? envelope : undefined), {
+      const decided = await handleApprovalClick(slack, store, (agent) => (agent === envelope.agent ? withDelegations(envelope, current) : undefined), {
         action,
         requestId,
         userId: payload.user?.id,

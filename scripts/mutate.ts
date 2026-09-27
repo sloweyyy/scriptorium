@@ -86,6 +86,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/control.test.ts"],
   },
   {
+    control: "a delegation ends by itself",
+    file: "apps/agents/src/teammate-bot/control.ts",
+    find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",
+    replace: "  const active = control.delegations ?? [];",
+    evals: ["evals/control.test.ts"],
+  },
+  {
     control: "paused, the Teammate answers and carries out nothing",
     file: "apps/agents/src/teammate-bot.ts",
     find: "        if ((await refreshControl()).paused) {\n          await audit(",

@@ -107,7 +107,10 @@ from anywhere in Slack:
 - `/teammate admin deny <tool>`: that one tool is off, even for approvals already given.
   `allow <tool>` turns it back on.
 - `/teammate admin readonly on`: it answers, but proposes no changes.
-- `/teammate admin status`: what is switched off, by whom, and when.
+- `/teammate admin delegate @away @standin YYYY-MM-DD`: while an approver is away, the stand-in
+  may approve what they could, until that date (at most 60 days). The stand-in still can't
+  approve their own requests. `undelegate @away` ends it early.
+- `/teammate admin status`: what is switched off, who is standing in, by whom, and when.
 
 The controls are a signed file in the state dir, `control.json`. A control file that can't
 be read or doesn't verify counts as **paused**. Delete it (with the service running) to

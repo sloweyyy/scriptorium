@@ -23,6 +23,23 @@ export interface GuardDeps {
   summarize?: (tool: string, input: unknown) => string;
 }
 
+/**
+ * What an approver reads on the card: one line per argument, each capped. Raw JSON buried a
+ * page body's first line under escapes, and a long one pushed the card past Slack's block
+ * limit — a card that cannot be posted cannot be approved. The cap never changes what runs:
+ * the approval is bound to the full arguments by hash, and the card shows that hash.
+ */
+export function summarizeArgs(input: unknown, perField = 400, total = 2_400): string {
+  const entries = input && typeof input === "object" && !Array.isArray(input) ? Object.entries(input as Record<string, unknown>) : [["input", input] as const];
+  const lines = entries.map(([key, value]) => {
+    const text = typeof value === "string" ? value : JSON.stringify(value);
+    const oneLine = (text ?? "").replace(/\s+/g, " ").trim();
+    return `• ${key}: ${oneLine.length > perField ? `${oneLine.slice(0, perField)}… (+${oneLine.length - perField} chars)` : oneLine}`;
+  });
+  const joined = lines.join("\n");
+  return joined.length > total ? `${joined.slice(0, total)}…` : joined;
+}
+
 export type Outcome =
   | { kind: "ran"; result: string; approval?: ApprovalRequest }
   | { kind: "denied"; reason: string }
@@ -63,7 +80,7 @@ export async function runUnderPolicy(envelope: Envelope, tool: ToolSpec, input: 
     agent: envelope.agent,
     tool: tool.name,
     args: input,
-    summary: deps.summarize?.(tool.name, input) ?? `${tool.name} ${JSON.stringify(input)}`,
+    summary: deps.summarize?.(tool.name, input) ?? summarizeArgs(input),
     key: deps.key,
     requestedBy: deps.requestedBy,
     rule: verdict.rule ?? { tier: "approve" },

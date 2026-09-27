@@ -133,7 +133,7 @@ export function approvalBlocks(request: ApprovalRequest): unknown[] {
         { type: "button", style: "danger", text: { type: "plain_text", text: "Reject" }, action_id: REJECT_ACTION, value: request.id },
       ],
     },
-    { type: "context", elements: [{ type: "mrkdwn", text: `Request ${request.id} · approves exactly this action, once · expires ${request.expiresAt}` }] },
+    { type: "context", elements: [{ type: "mrkdwn", text: `Request ${request.id} · approves exactly these arguments (sha256 ${request.argsHash.slice(0, 12)}…), once · expires ${request.expiresAt}` }] },
   ];
 }
 

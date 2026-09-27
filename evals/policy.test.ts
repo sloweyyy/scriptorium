@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { ToolSpec } from "@scriptorium/core";
 import {
   FileApprovalStore,
+  executeApproved,
   MemoryApprovalStore,
   argsHash,
   decideApproval,
@@ -168,5 +169,29 @@ describe("guard, as a model sees it", () => {
     expect(await guarded.run(DRAFT)).toMatch(/^APPROVAL_PENDING: .*NOT been done/);
     expect(await guard(envelope, drop, deps()).run({})).toMatch(/^DENIED:/);
     expect(runs).toHaveLength(0);
+  });
+});
+
+describe("carrying out an approval", () => {
+  it("runs the stored arguments once when approved, and nothing before or after", async () => {
+    const store = new MemoryApprovalStore();
+    const outcome = await runUnderPolicy(envelope, publish, DRAFT, deps(store));
+    if (outcome.kind !== "pending") throw new Error("expected pending");
+    expect((await executeApproved(envelope, [publish], outcome.request.id, deps(store))).kind).toBe("not-runnable");
+
+    await decideApproval(store, envelope, outcome.request.id, "approved", { accountId: "pm-1" });
+    expect((await executeApproved(envelope, [publish], outcome.request.id, deps(store))).kind).toBe("ran");
+    expect(runs).toEqual([DRAFT]);
+    expect((await executeApproved(envelope, [publish], outcome.request.id, deps(store))).kind).toBe("not-runnable");
+    expect(runs).toHaveLength(1);
+  });
+
+  it("will not carry out another agent's approval", async () => {
+    const store = new MemoryApprovalStore();
+    const outcome = await runUnderPolicy(envelope, publish, DRAFT, deps(store));
+    if (outcome.kind !== "pending") throw new Error("expected pending");
+    await decideApproval(store, envelope, outcome.request.id, "approved", { accountId: "pm-1" });
+    const other: Envelope = { ...envelope, agent: "curator" };
+    expect((await executeApproved(other, [publish], outcome.request.id, deps(store))).kind).toBe("not-runnable");
   });
 });

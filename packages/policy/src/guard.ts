@@ -103,3 +103,24 @@ export function guard(envelope: Envelope, tool: ToolSpec, deps: GuardDeps): Tool
     },
   };
 }
+
+/**
+ * Carry out an approved request, now. The agent that asked finished its turn when it got
+ * APPROVAL_PENDING; the approval arrives later, from a human, on a card. This runs the same
+ * tool with the stored arguments, through `runUnderPolicy`, so it spends that approval,
+ * exactly once, and is audited like any other call. Anything but a live approved request
+ * for a tool this envelope still holds is a no-op with a reason.
+ */
+export async function executeApproved(
+  envelope: Envelope,
+  tools: readonly ToolSpec[],
+  requestId: string,
+  deps: GuardDeps,
+): Promise<Outcome | { kind: "not-runnable"; reason: string }> {
+  const request = (await deps.store.all()).find((candidate) => candidate.id === requestId);
+  if (!request || request.status !== "approved") return { kind: "not-runnable", reason: `request ${requestId} is not an approved, unspent request` };
+  if (request.agent !== envelope.agent) return { kind: "not-runnable", reason: `request ${requestId} belongs to ${request.agent}` };
+  const tool = tools.find((candidate) => candidate.name === request.tool);
+  if (!tool) return { kind: "not-runnable", reason: `no tool ${request.tool} on this host` };
+  return runUnderPolicy(envelope, tool, request.args, { ...deps, key: request.key, requestedBy: request.requestedBy });
+}

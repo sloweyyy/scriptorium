@@ -65,14 +65,31 @@ export interface JiraCommentEvent {
   authorId?: string;
 }
 
+/**
+ * Atlassian Document Format → the wiki-ish text the rest of the pipeline reads. Webhooks
+ * registered through the REST API (and some automation payloads) send comment bodies as
+ * ADF, not a string; a mention node becomes `[~accountid:<id>]`, exactly as v2 text has it.
+ */
+export function adfToText(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  const n = node as { type?: string; text?: string; attrs?: { id?: string }; content?: unknown[] };
+  if (n.type === "text") return n.text ?? "";
+  if (n.type === "mention") return n.attrs?.id ? `[~accountid:${n.attrs.id}]` : "";
+  if (n.type === "hardBreak") return "\n";
+  const inner = (n.content ?? []).map(adfToText).join("");
+  return n.type === "paragraph" || n.type === "heading" || n.type === "listItem" ? `${inner}\n` : inner;
+}
+
 /** A `comment_created` webhook as the fields the Teammate needs; anything else is not one. */
 export function jiraCommentFrom(payload: unknown): JiraCommentEvent | undefined {
   const body = payload as { webhookEvent?: string; issue?: { key?: string }; comment?: { id?: string | number; body?: unknown; author?: { accountId?: string } } };
   if (body.webhookEvent !== "comment_created") return undefined;
   const issueKey = body.issue?.key;
   const commentId = body.comment?.id;
-  if (typeof issueKey !== "string" || commentId === undefined || typeof body.comment?.body !== "string") return undefined;
-  return { issueKey, commentId: String(commentId), body: body.comment.body, authorId: body.comment.author?.accountId };
+  const raw = body.comment?.body;
+  const text = typeof raw === "string" ? raw : raw && typeof raw === "object" ? adfToText(raw).trim() : undefined;
+  if (typeof issueKey !== "string" || commentId === undefined || !text) return undefined;
+  return { issueKey, commentId: String(commentId), body: text, authorId: body.comment?.author?.accountId };
 }
 
 /** The pull-request events worth a review: opened, reopened, or taken out of draft. */

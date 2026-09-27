@@ -302,3 +302,16 @@ describe("jira comment webhooks", () => {
     expect(jiraCommentFrom({ webhookEvent: "comment_created", issue: { key: "DOC-7" }, comment: { id: 1 } })).toBeUndefined();
   });
 });
+
+describe("ADF comment bodies", () => {
+  it("are read, mentions included, instead of being dropped", async () => {
+    const { jiraCommentFrom } = await import("@scriptorium/agents");
+    const adf = { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: "tm-1", text: "@Teammate" } }, { type: "text", text: " when do digests go out?" }] }] };
+    expect(jiraCommentFrom({ webhookEvent: "comment_created", issue: { key: "DOC-1" }, comment: { id: "9", body: adf, author: { accountId: "h1" } } })).toEqual({
+      issueKey: "DOC-1",
+      commentId: "9",
+      body: "[~accountid:tm-1] when do digests go out?",
+      authorId: "h1",
+    });
+  });
+});

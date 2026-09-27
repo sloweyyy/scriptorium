@@ -8,7 +8,7 @@ import type { AgentConfig } from "@scriptorium/runtime";
  * `selfAccountIds` and approver lists are filled from config at boot (see `teammateConfig`),
  * because account ids are per-workspace, not per-codebase.
  */
-export function teammateConfig(input: { selfAccountIds: string[]; approvers: string[] }): AgentConfig {
+export function teammateConfig(input: { selfAccountIds: string[]; approvers: string[]; people?: string[][] }): AgentConfig {
   const write = { tier: "approve" as const, approvers: input.approvers, separateDuties: true };
   return {
     name: "Teammate",
@@ -36,5 +36,6 @@ export function teammateConfig(input: { selfAccountIds: string[]; approvers: str
       memory_save: { ...write, separateDuties: false },
     },
     triggers: ["slack.mention", "slack.dm", "cron.digest"],
+    ...(input.people?.length ? { people: input.people } : {}),
   };
 }

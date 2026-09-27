@@ -47,6 +47,16 @@ export interface SlackMention {
 }
 
 /** A Slack `app_mention` as the platform's event. Pure, so the mapping is pinned by evals. */
+/**
+ * The longest question a turn takes. A pasted log or a 30k-character comment is not a
+ * question, and every character of it is paid for on every model round.
+ */
+export const MAX_QUESTION_CHARS = 4_000;
+
+export function capQuestion(text: string): string {
+  return text.length > MAX_QUESTION_CHARS ? `${text.slice(0, MAX_QUESTION_CHARS)}\n\n[…the rest of this message (${text.length - MAX_QUESTION_CHARS} characters) was cut off]` : text;
+}
+
 export function mentionToEvent(mention: SlackMention): AgentEvent<{ channel: string; threadTs: string; text: string; ts: string }> {
   const threadTs = mention.thread_ts ?? mention.ts;
   return {
@@ -55,7 +65,7 @@ export function mentionToEvent(mention: SlackMention): AgentEvent<{ channel: str
     key: keys.slackThread(mention.channel, threadTs),
     kind: "slack.mention",
     actor: { id: `slack:${mention.user ?? mention.bot_id ?? "unknown"}`, isBot: Boolean(mention.bot_id) },
-    payload: { channel: mention.channel, threadTs, text: stripMentions(mention.text), ts: mention.ts },
+    payload: { channel: mention.channel, threadTs, text: capQuestion(stripMentions(mention.text)), ts: mention.ts },
     receivedAt: new Date().toISOString(),
   };
 }
@@ -238,8 +248,21 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const store = new FileApprovalStore(path.join(stateDir, "approvals.json"));
   const ledger = new FileEffectLedger(path.join(stateDir, "effects.json"));
   const connectorTools = teammateConnectorTools(config, slack, ledger);
+
+  // A turn is in memory only: a restart mid-answer (a deploy, a crash) loses it, and its
+  // "Looking into it…" would stay forever. Each open placeholder is on the ledger; on boot,
+  // any left open is closed with an honest notice instead.
+  const turnOp = (channel: string, ts: string) => opKey("teammate.turn", channel, ts);
+  for (const record of await ledger.inProgress().catch(() => [])) {
+    const meta = record.meta as { kind?: string; channel?: string; ts?: string } | undefined;
+    if (meta?.kind !== "teammate.turn" || !meta.channel || !meta.ts) continue;
+    const closed = await slack.chat
+      .update({ channel: meta.channel, ts: meta.ts, text: "⚠️ I restarted before I finished this, so it wasn't answered and nothing was changed. Please ask again." })
+      .catch(() => undefined);
+    if (closed?.ok) await ledger.put({ ...record, status: "done", completedAt: new Date().toISOString() });
+  }
   const skills = await loadSkills(path.join(config.repoRoot, "skills"));
-  const agentConfig = teammateConfig({ selfAccountIds: [self], approvers: (settings.approvers ?? []).map((id) => `slack:${id}`) });
+  const agentConfig = teammateConfig({ selfAccountIds: [self], approvers: (settings.approvers ?? []).map((id) => `slack:${id}`), people: settings.people });
   // Restrict to the connectors actually configured here: a tool the host can't provide is not offered.
   const available = new Set([...connectorTools.map((tool) => tool.name), "vault_overview", "search_vault", "read_note", "memory_save"]);
   const hostConfig = { ...agentConfig, tools: Object.fromEntries(Object.entries(agentConfig.tools).filter(([name]) => available.has(name))) };
@@ -253,15 +276,26 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const guardDepsFor = (key: string): GuardDeps => ({ store, channel: approvalChannel, auditFile: config.auditFile, key });
   // Spend caps per channel per day, seeded from today's audit so a restart is not a reset.
   const budget = new DailyBudget(settings.dailyTokens);
-  budget.seed(parseAudit(await fs.readFile(config.auditFile, "utf8").catch(() => "")));
+  // Per scope, each DM is its own channel: N people each get the full cap. The total caps them all.
+  const total = new DailyBudget(settings.dailyTokensTotal);
+  const ALL = "*";
+  const usage = parseAudit(await fs.readFile(config.auditFile, "utf8").catch(() => ""));
+  budget.seed(usage);
+  total.seed(usage.map((line) => ({ ...line, scope: ALL })));
   const LIMIT_NOTICE = "I've reached today's usage limit here, so I'm not answering until tomorrow (UTC). An admin can raise `TEAMMATE_DAILY_TOKENS`.";
   /** Every surface a person can trigger spends against a cap: a channel, a Jira project, a repo. */
   const overBudget = async (key: string, scope: string): Promise<boolean> => {
-    if (!budget.exhausted(scope)) return false;
-    await audit(config.auditFile, { type: "teammate.budget.exhausted", actor: "teammate", key, scope }).catch(() => undefined);
+    const exhausted = budget.exhausted(scope) ? scope : total.exhausted(ALL) ? ALL : undefined;
+    if (!exhausted) return false;
+    await audit(config.auditFile, { type: "teammate.budget.exhausted", actor: "teammate", key, scope: exhausted }).catch(() => undefined);
     return true;
   };
-  const spendAgainst = (scope: string) => ({ onUsage: (usage: { input: number; output: number }) => budget.add(scope, usage.input + usage.output) });
+  const spendAgainst = (scope: string) => ({
+    onUsage: (usage: { input: number; output: number }) => {
+      budget.add(scope, usage.input + usage.output);
+      total.add(ALL, usage.input + usage.output);
+    },
+  });
   const turnDeps = (key: string) => ({ vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config), signingKey: config.signingKey });
 
   const gate = new Gate({
@@ -284,6 +318,10 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         const placeholder = !isHelpRequest(text)
           ? await slack.chat.postMessage({ channel, thread_ts: threadTs, text: "🔎 Looking into it…" }).catch(() => undefined)
           : undefined;
+        const open = placeholder?.ts
+          ? { op: turnOp(channel, placeholder.ts), status: "in-progress" as const, startedAt: new Date().toISOString(), meta: { kind: "teammate.turn", channel, ts: placeholder.ts } }
+          : undefined;
+        if (open) await ledger.put(open).catch(() => undefined);
         // Progress updates are fire-and-forget, so one can land AFTER the answer (a slow call,
         // or a 429 retried after its wait) and leave "Searching…" as the final word. Delivery
         // closes the gate and waits for any update already in flight.
@@ -292,14 +330,17 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         const deliver = async (message: string, blocks?: unknown[]): Promise<void> => {
           finished = true;
           await inFlight;
+          const close = async () => {
+            if (open) await ledger.put({ ...open, status: "done", completedAt: new Date().toISOString() }).catch(() => undefined);
+          };
           if (placeholder?.ts) {
             const updated = await slack.chat.update({ channel, ts: placeholder.ts, text: message, ...(blocks ? { blocks: blocks as never } : {}) }).catch(() => undefined);
-            if (updated?.ok) return;
+            if (updated?.ok) return close();
           }
           await slack.chat.postMessage({ channel, thread_ts: threadTs, text: message, ...(blocks ? { blocks: blocks as never } : {}) });
+          await close();
         };
         try {
-          const context = text ? await threadContext(slack, channel, threadTs, ts).catch(() => undefined) : undefined;
           if (isHelpRequest(text)) {
             await deliver(helpText(settings));
             return;
@@ -308,6 +349,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
             await deliver(LIMIT_NOTICE);
             return;
           }
+          const context = text ? await threadContext(slack, channel, threadTs, ts).catch(() => undefined) : undefined;
           // Show what it is doing, at most every 2s (chat.update is rate-limited).
           let lastProgress = 0;
           const onTool = (tool: string): void => {
@@ -589,7 +631,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         key: keys.jiraIssue(issueKey),
         kind: "jira.mention",
         actor: { id: `jira:${authorId ?? "unknown"}` },
-        payload: { issueKey, commentId, question: jiraToMarkdown(plainText(body)), restriction },
+        payload: { issueKey, commentId, question: capQuestion(jiraToMarkdown(plainText(body))), restriction },
         receivedAt: new Date().toISOString(),
       };
       const verdict = gate.check(event);

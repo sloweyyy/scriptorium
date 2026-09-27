@@ -23,7 +23,9 @@ Every one of these fails closed: unset means *less* is allowed, never more.
 | `TEAMMATE_PR_CHANNEL` | PRs are never checked automatically | a channel for PR-check summaries; each check's approval card threads under its summary |
 | `TEAMMATE_ALLOW_DMS` | a DM gets a one-time pointer to a channel, never an answer | `true`, to answer DMs (their cards still go to the notify channel) |
 | `TEAMMATE_MEMORY_DAYS` | memories lapse after 180 days | days; the expiry is signed with the approval |
+| `TEAMMATE_PEOPLE` | a request made on Jira or GitHub can be approved in Slack by the same person | each approver's Slack, Jira and GitHub accounts, linked (`slack:U1=jira:abc=github:dev; …`) |
 | `TEAMMATE_DAILY_TOKENS` | no spend cap | tokens per UTC day for each channel, Jira project and PR repo; over it the Teammate answers with a notice and no model call |
+| `TEAMMATE_DAILY_TOKENS_TOTAL` | no overall cap: each DM is its own scope, so N people each get the full per-scope cap | tokens per UTC day across everything |
 | `TRACE_TOKEN` + `PUBLIC_BASE_URL` | no run viewer, so replies show a bare run id | a long random token and the service URL |
 
 Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
@@ -59,7 +61,9 @@ Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
   the effect de-duplication are per-process. Two overlapping instances during a deploy is
   the one remaining way to double a write (see `docs/security-model.md`, known gaps).
 - **Drain on stop.** SIGTERM drains the queues for up to 8 seconds before exiting.
-  Unfinished work resumes on the next start from its durable state.
+  Unfinished work resumes on the next start from its durable state. A Slack question
+  still being answered is not resumed: on the next start its "Looking into it…" becomes
+  a notice asking the person to ask again.
 - **Never share an Atlassian token between agents.** Two agents on one token are one
   identity, and the permission boundary between them is gone.
 

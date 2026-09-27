@@ -17,6 +17,7 @@ import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
 import { gapTicketOpener } from "./gap-ticket";
 import { toSlackMrkdwn } from "./slack-format";
+import { digestDue, postDigestOnce } from "./digest";
 import { runTeammateTurn, type TeammateReply } from "./teammate";
 import { stripMentions } from "./util";
 
@@ -187,9 +188,45 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
     });
   }
 
+  // The weekly digest: checked hourly, posted once per ISO week (the effects ledger makes a
+  // restart or a second instance a no-op). Only into a channel the Teammate may post in.
+  let digestTimer: NodeJS.Timeout | undefined;
+  const digestChannel = settings.digestChannel;
+  if (digestChannel && settings.channels.includes(digestChannel) && config.hasModelAccess) {
+    const schedule = { weekday: settings.digestWeekday, hour: settings.digestHour };
+    const check = async (): Promise<void> => {
+      const now = new Date();
+      if (!digestDue(now, schedule)) return;
+      await withRun(() =>
+        postDigestOnce(
+          ledger,
+          digestChannel,
+          now,
+          async () => {
+            const reply = await runTeammateTurn(
+              { question: "Write this week's digest for the team.", askedBy: "cron:digest", channel: digestChannel },
+              { vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(keys.cron("digest")), auditFile: config.auditFile },
+            );
+            // A refusal is not a digest: throw, so the op stays open and the next hour retries.
+            if (reply.kind === "refused") throw new Error(`digest refused: ${reply.text}`);
+            return formatReply(reply, currentRunId());
+          },
+          async (text) => {
+            await app.client.chat.postMessage({ channel: digestChannel, text: `*Weekly digest*\n${text}` });
+          },
+        ),
+      ).catch((error) => console.warn(`[teammate] digest: ${error instanceof Error ? error.message : error}`));
+    };
+    digestTimer = setInterval(() => void check(), 60 * 60 * 1000);
+    void check();
+  } else if (digestChannel) {
+    console.warn(`[teammate] TEAMMATE_DIGEST_CHANNEL ${digestChannel} is not in TEAMMATE_SLACK_CHANNELS — no digest`);
+  }
+
   await app.start();
   console.log(`[teammate] ⚡ connected (socket mode) — ${settings.channels.length} channel(s), ${connectorTools.length} connector tool(s)`);
   return async () => {
+    if (digestTimer) clearInterval(digestTimer);
     await queue.drain(8_000);
     await app.stop();
   };

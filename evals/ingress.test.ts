@@ -37,7 +37,7 @@ function config(): AppConfig {
     port: 0,
     scribe: {},
     curator: {},
-    teammate: { channels: [], jiraProjects: [], confluenceSpaces: [] },
+    teammate: { channels: [], jiraProjects: [], confluenceSpaces: [], digestWeekday: 1, digestHour: 9 },
     slack: {},
     sites: {},
     webhook: { jiraSecret: JIRA_SECRET, githubSecret: GITHUB_SECRET, jiraHmacSecret: JIRA_HMAC },

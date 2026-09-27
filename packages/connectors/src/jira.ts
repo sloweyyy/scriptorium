@@ -58,6 +58,22 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
         }),
     },
     {
+      name: "jira_recent",
+      description: "List Jira issues updated in the last N days (only the projects you may use), newest first — for digests and status summaries.",
+      inputSchema: z.object({ days: z.number().int().min(1).max(14).describe("How far back, 1–14 days.") }),
+      run: (input) =>
+        refusalOr(async () => {
+          const { days } = z.object({ days: z.number().int().min(1).max(14) }).parse(input);
+          if (!projects.length) throw new JiraAccessError("No Jira projects are allowed for this agent.");
+          // `days` is validated as an integer, so it is safe to place in JQL; nothing else is.
+          const jql = `project in (${projects.map(jqlString).join(",")}) AND updated >= -${days}d ORDER BY updated DESC`;
+          const issues = await settings.client.searchIssues(jql, 30);
+          return JSON.stringify(
+            issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
+          );
+        }),
+    },
+    {
       name: "jira_get_issue",
       description: "Read one Jira issue: summary, status, description and its latest comments. Cite it as [[jira:<KEY>]].",
       inputSchema: z.object({ key: z.string().describe("Issue key, e.g. DOC-7.") }),

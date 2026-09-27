@@ -59,12 +59,17 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
   // Evidence for the grounding check: which tools ran, and what they returned.
   const used = new Set<string>();
   const retrieved: string[] = [];
+  const records = new Set<string>();
+  /** What each write tool reported — the ONLY text an uncited action reply may carry. */
+  const writeOutcomes: string[] = [];
   const tools = agent.tools.map((tool) => ({
     ...tool,
     run: async (input: unknown) => {
       used.add(tool.name);
       const result = await tool.run(input);
       retrieved.push(result);
+      for (const fetched of tool.records?.(input, result) ?? []) records.add(fetched);
+      if (WRITE_TOOLS.has(tool.name)) writeOutcomes.push(`${tool.name}: ${result.split("\n")[0]}`);
       return result;
     },
   }));
@@ -87,17 +92,25 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
     else throw error;
   }
 
-  const acted = [...used].some((name) => WRITE_TOOLS.has(name));
+  const acted = writeOutcomes.length > 0;
+  // Grounding is never switched off by a write: an attempted write only changes what an
+  // UNGROUNDED reply may say (see below), never whether a claim needs a citation.
   const judged = await enforceGrounding(deps.vault, parseQaAnswer(text, turn.question), {
-    usedOverview: used.has("vault_overview") || acted,
+    usedOverview: used.has("vault_overview"),
     retrieved,
+    records,
   });
 
   if (judged.gap) {
     const gap = await fileGapNote(deps.vault, { question: turn.question, missing: judged.gap, askedBy: turn.askedBy, auditFile: deps.auditFile, openTicket: deps.openTicket });
     return { kind: "gap", text: `Not in the knowledge base yet, so I won't guess. I've filed it as a documentation gap (${gap.relPath}).`, gapPath: gap.relPath, ticket: gap.ticket };
   }
-  if (judged.ungrounded) return { kind: "refused", text: "I couldn't tie an answer to any record I retrieved, so I won't state one. Try naming the feature, page or ticket you mean." };
+  if (judged.ungrounded) {
+    // A write happened (or was asked for): report exactly what the tools said about it, not
+    // the model's uncited prose around it — that prose is where an unsupported claim hides.
+    if (acted) return { kind: "action", text: writeOutcomes.map((outcome) => `• ${outcome}`).join("\n") };
+    return { kind: "refused", text: "I couldn't tie an answer to any record I retrieved, so I won't state one. Try naming the feature, page or ticket you mean." };
+  }
   if (acted && !judged.citations.length) return { kind: "action", text: judged.text };
   return { kind: "answer", text: judged.text, citations: judged.citations };
 }

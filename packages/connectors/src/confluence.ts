@@ -214,6 +214,7 @@ export class ConfluenceConnector {
           const { query } = z.object({ query: z.string().min(1) }).parse(input);
           return refusalOr(async () => JSON.stringify(await this.search(query)));
         },
+        records: (_input: unknown, output: string) => ownIds(output, (hit) => (typeof hit.id === "string" ? `confluence:${hit.id}` : undefined)),
       },
       {
         name: "confluence_read_page",
@@ -225,6 +226,12 @@ export class ConfluenceConnector {
             const page = await this.readPage(id);
             return `confluence:${page.id} — ${page.title} (space ${page.space})${page.url ? ` ${page.url}` : ""}\n\n${page.markdown}`;
           });
+        },
+        // The page read is evidence for ITSELF only — its id came from the validated input,
+        // and the output starts with it only when the read succeeded.
+        records: (input: unknown, output: string) => {
+          const id = (input as { id?: unknown })?.id;
+          return typeof id === "string" && output.startsWith(`confluence:${id} — `) ? [`confluence:${id}`] : [];
         },
       },
       ...(this.settings.ledger
@@ -256,6 +263,16 @@ export class ConfluenceConnector {
           ]
         : []),
     ];
+  }
+}
+
+/** Record ids out of JSON this connector built itself (never out of page content). */
+function ownIds(output: string, id: (hit: Record<string, unknown>) => string | undefined): string[] {
+  try {
+    const parsed = JSON.parse(output) as unknown;
+    return Array.isArray(parsed) ? parsed.flatMap((hit) => (hit && typeof hit === "object" ? [id(hit as Record<string, unknown>)].filter((value): value is string => Boolean(value)) : [])) : [];
+  } catch {
+    return [];
   }
 }
 

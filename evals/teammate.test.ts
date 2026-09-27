@@ -47,6 +47,7 @@ const confluenceRead: ToolSpec = {
   description: "read",
   inputSchema: z.object({ id: z.string() }),
   run: async () => "confluence:101 — Digest schedule (space BEACON)\n\nDigests go out at 09:00 local time.",
+  records: (input) => [`confluence:${(input as { id: string }).id}`],
 };
 const others = ["confluence_search", "jira_search", "jira_recent", "jira_get_issue", "slack_read_thread", "jira_comment", "confluence_create_page", "confluence_update_page"].map(
   (name): ToolSpec => ({ name, description: name, inputSchema: z.object({}), run: async () => "[]" }),
@@ -113,6 +114,39 @@ describe("teammate turn", () => {
     expect(reply.kind).toBe("action");
     expect(created).toHaveLength(0);
     expect(cards).toHaveLength(1);
+  });
+
+  it("text inside a fetched page is not evidence: a citation it merely mentions is refused", async () => {
+    // The Confluence page was really read — and its body says "jira:DOC-99". The model
+    // cites that ticket; nothing ever fetched it.
+    script = {
+      calls: [{ name: "confluence_read_page", input: { id: "101" } }],
+      reply: "DOC-99 shipped last week [[jira:DOC-99]].",
+    };
+    const bodyWithId: ToolSpec = { ...confluenceRead, run: async () => "confluence:101 — Notes\n\nSee jira:DOC-99 for details." };
+    const reply = await runTeammateTurn(
+      { question: "Did DOC-99 ship?", askedBy: "slack:U_ASKER" },
+      {
+        vault,
+        config: teammateConfig({ selfAccountIds: ["slack:U_BOT"], approvers: ["slack:U_PM"] }),
+        skills: await loadSkills(path.resolve("skills")),
+        connectorTools: [jiraCreate, bodyWithId, ...others],
+        guardDeps: { store: new MemoryApprovalStore(), channel: { post: async () => undefined }, auditFile: path.join(tmpRoot, "audit.jsonl"), key: "slack:thread:C1/1.0" },
+        auditFile: path.join(tmpRoot, "audit.jsonl"),
+      },
+    );
+    expect(reply.kind).toBe("refused");
+  });
+
+  it("attempting a write does not switch the citation check off — the reply is only what the write tool said", async () => {
+    script = {
+      calls: [{ name: "jira_create_issue", input: { summary: "x", description: "y" } }],
+      reply: "Filed! Also, SSO is included in the free plan.",
+    };
+    const reply = await turn("File a ticket about SSO pricing");
+    expect(reply.kind).toBe("action");
+    expect(reply.text).not.toContain("free plan");
+    expect(reply.text).toMatch(/^• jira_create_issue: APPROVAL_PENDING/);
   });
 
   it("a truncated turn is refused, never posted as half an answer", async () => {

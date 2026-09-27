@@ -56,6 +56,7 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
             issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name })),
           );
         }),
+      records: citeRecords,
     },
     {
       name: "jira_recent",
@@ -72,6 +73,7 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
             issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
           );
         }),
+      records: citeRecords,
     },
     {
       name: "jira_get_issue",
@@ -89,6 +91,10 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
             ...(comments.length ? ["", "Latest comments:", ...comments.map((comment) => `- ${comment.author?.displayName ?? "someone"}: ${jiraToMarkdown(comment.body).slice(0, 500)}`)] : []),
           ].join("\n");
         }),
+      records: (input, output) => {
+        const key = typeof (input as { key?: unknown })?.key === "string" ? String((input as { key: string }).key).trim().toUpperCase() : "";
+        return key && output.startsWith(`jira:${key} — `) ? [`jira:${key}`] : [];
+      },
     },
     {
       name: "jira_comment",
@@ -132,6 +138,15 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
   }
 
   return tools;
+}
+
+function citeRecords(_input: unknown, output: string): string[] {
+  try {
+    const parsed = JSON.parse(output) as unknown;
+    return Array.isArray(parsed) ? parsed.flatMap((hit) => (typeof hit?.cite === "string" && /^jira:[A-Z][A-Z0-9_]*-\d+$/.test(hit.cite) ? [hit.cite] : [])) : [];
+  } catch {
+    return [];
+  }
 }
 
 async function refusalOr(work: () => Promise<string>): Promise<string> {

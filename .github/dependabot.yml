@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Grouped weekly so dependency churn arrives as one reviewable PR, not a stream of them.
+  # Every bump goes through the same CI gate as any other change: frozen install,
+  # typecheck, and the full eval suite.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      # Majors are a decision (a deploy risk, not just a test risk), taken by a human.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

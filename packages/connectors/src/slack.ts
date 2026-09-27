@@ -26,6 +26,8 @@ import { z } from "zod";
 export const OP_EVENT_TYPE = "scriptorium_op";
 export const APPROVE_ACTION = "policy_approve";
 export const REJECT_ACTION = "policy_reject";
+/** Run an approved request again after its connector failed. Decides nothing new. */
+export const RETRY_ACTION = "policy_retry";
 
 export interface SlackToolSettings {
   client: SlackClient;
@@ -100,22 +102,44 @@ async function refusalOr(work: () => Promise<string>): Promise<string> {
   }
 }
 
-/** Where a request's card goes: its own thread when it came from Slack, else the fallback. */
-function cardTarget(request: ApprovalRequest, fallbackChannel?: string): { channel: string; thread_ts?: string } | undefined {
+/** Where approval cards go when the request did not start in a channel thread anyone can see. */
+export interface CardRouting {
+  /** Default: requests from Jira, from a DM, or from anywhere without a visible thread. */
+  fallbackChannel?: string;
+  /** Requests about a GitHub pull request. */
+  prChannel?: string;
+  /** The thread a conversation already has in its channel (a PR check's summary), if any. */
+  threadFor?: (key: string) => string | undefined;
+}
+
+/**
+ * Where a request's card goes. A channel thread keeps it in that thread. A DM does NOT —
+ * only the requester can see a DM, and the requester is rarely the approver — so it goes to
+ * the fallback channel, like a request from Jira. A PR goes to the PR channel, under the
+ * check's summary when there is one, so the card sits next to the reasoning it asks about.
+ */
+export function cardTarget(request: ApprovalRequest, routing: CardRouting): { channel: string; thread_ts?: string } | undefined {
   const thread = request.key.match(/^slack:thread:([^/]+)\/(.+)$/);
-  if (thread) return { channel: thread[1] as string, thread_ts: thread[2] };
-  return fallbackChannel ? { channel: fallbackChannel } : undefined;
+  if (thread && !(thread[1] as string).startsWith("D")) return { channel: thread[1] as string, thread_ts: thread[2] };
+  if (request.key.startsWith("github:pull:") && routing.prChannel) {
+    const threadTs = routing.threadFor?.(request.key);
+    return threadTs ? { channel: routing.prChannel, thread_ts: threadTs } : { channel: routing.prChannel };
+  }
+  return routing.fallbackChannel ? { channel: routing.fallbackChannel } : undefined;
 }
 
 export class SlackApprovalChannel implements ApprovalChannel {
+  private readonly routing: CardRouting;
   constructor(
     private readonly client: SlackClient,
-    /** For requests that did not start in Slack (a Jira-triggered write, say). */
-    private readonly fallbackChannel?: string,
-  ) {}
+    /** A channel id (the fallback for everything) or full routing. */
+    routing?: string | CardRouting,
+  ) {
+    this.routing = typeof routing === "string" ? { fallbackChannel: routing } : (routing ?? {});
+  }
 
   async post(request: ApprovalRequest): Promise<void> {
-    const target = cardTarget(request, this.fallbackChannel);
+    const target = cardTarget(request, this.routing);
     // Nowhere to show it means nobody can approve it: throw, and the tool does not run.
     if (!target) throw new Error("no Slack channel to post the approval card in");
     const posted = await this.client.chat.postMessage({ ...target, text: `Approval needed: ${escapeMrkdwn(request.tool)}`, blocks: approvalBlocks(request) as never });
@@ -132,12 +156,51 @@ export function escapeMrkdwn(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/**
+ * The action in words an approver can judge in a second. Built from the stored arguments
+ * (the ones the approval is bound to), not from anything the model phrased.
+ */
+export function describeRequest(request: ApprovalRequest): string {
+  const args = (request.args ?? {}) as Record<string, unknown>;
+  const text = (value: unknown, max = 120) => {
+    const flat = String(value ?? "").replace(/\s+/g, " ").trim();
+    return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+  };
+  switch (request.tool) {
+    case "jira_create_issue":
+      return `Create a Jira issue: “${text(args.summary)}”`;
+    case "jira_comment":
+      return `Comment on ${text(args.key, 40)}`;
+    case "confluence_create_page":
+      return `Create a Confluence page in ${text(args.space, 40)}: “${text(args.title)}”`;
+    case "confluence_update_page":
+      return `Replace the body of Confluence page ${text(args.id, 40)}${args.title ? ` (“${text(args.title)}”)` : ""}`;
+    case "memory_save":
+      return `Remember (${text(args.scope, 60)}): “${text(args.text, 200)}”`;
+    case "github_pr_comment":
+      return `Comment on pull request ${text(args.repo, 80)}#${text(args.number, 10)}`;
+    default:
+      return `Run ${request.tool}`;
+  }
+}
+
+function requesterMention(request: ApprovalRequest): string {
+  return request.requestedBy?.startsWith("slack:") ? `<@${request.requestedBy.slice("slack:".length)}>` : escapeMrkdwn(request.requestedBy ?? "someone");
+}
+
 export function approvalBlocks(request: ApprovalRequest): unknown[] {
   // Fenced as well as escaped: inside a code block nothing is formatted, linked or mentioned,
   // so what the approver reads is exactly the text that will run.
   const shown = escapeMrkdwn(request.summary).replace(/```/g, "ˋˋˋ");
+  const expires = Math.floor(Date.parse(request.expiresAt) / 1000);
   return [
-    { type: "section", text: { type: "mrkdwn", text: `*Approval needed* — ${escapeMrkdwn(request.agent)} wants to run \`${escapeMrkdwn(request.tool)}\`\n\`\`\`${shown}\`\`\`` } },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*Approval needed:* ${escapeMrkdwn(describeRequest(request))}\nRequested by ${requesterMention(request)} · *Approve*: done now, as ${escapeMrkdwn(request.agent)} · *Reject*: nothing happens\n\`\`\`${shown}\`\`\``,
+      },
+    },
     {
       type: "actions",
       elements: [
@@ -145,7 +208,16 @@ export function approvalBlocks(request: ApprovalRequest): unknown[] {
         { type: "button", style: "danger", text: { type: "plain_text", text: "Reject" }, action_id: REJECT_ACTION, value: request.id },
       ],
     },
-    { type: "context", elements: [{ type: "mrkdwn", text: `Request ${request.id} · approves exactly these arguments (sha256 ${request.argsHash.slice(0, 12)}…), once · expires ${request.expiresAt}` }] },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          // Slack renders the date in the reader's own timezone; the ISO form is the fallback.
+          text: `Approves exactly these arguments, once · ${Number.isFinite(expires) ? `<!date^${expires}^expires {date_short_pretty} {time}|expires ${request.expiresAt}>` : `expires ${escapeMrkdwn(request.expiresAt)}`} · request ${request.id.slice(0, 8)} · sha256 ${request.argsHash.slice(0, 12)}`,
+        },
+      ],
+    },
   ];
 }
 
@@ -157,6 +229,8 @@ export interface ApprovalClick {
   /** Where the card is, so it can be replaced once decided. */
   channel?: string;
   messageTs?: string;
+  /** The thread the card sits in, if any — where the requester is told the outcome. */
+  threadTs?: string;
 }
 
 /**
@@ -176,16 +250,26 @@ export async function handleApprovalClick(
 
   const decision = click.action === APPROVE_ACTION ? "approved" : "rejected";
   const result = await decideApproval(store, envelope, request.id, decision, click.userId ? { accountId: `slack:${click.userId}`, name: click.userName } : undefined);
-  if (!result.ok) return { ok: false, message: `Not recorded: ${result.reason}.` };
+  if (!result.ok) {
+    const approvers = (envelope.tools[request.tool]?.approvers ?? []).filter((id) => id.startsWith("slack:")).map((id) => `<@${id.slice("slack:".length)}>`);
+    return { ok: false, message: `Not recorded: ${result.reason}.${approvers.length ? ` Approvers for this: ${approvers.join(", ")}.` : ""}` };
+  }
 
   const verdict = decision === "approved" ? "✅ Approved" : "🚫 Rejected";
   if (click.channel && click.messageTs) {
     await client.chat.update({
       channel: click.channel,
       ts: click.messageTs,
-      text: `${verdict} by ${escapeMrkdwn(click.userName ?? click.userId ?? "")}: ${escapeMrkdwn(request.tool)}`,
-      blocks: [{ type: "section", text: { type: "mrkdwn", text: `${verdict} by <@${click.userId}> — \`${escapeMrkdwn(request.tool)}\`\n\`\`\`${escapeMrkdwn(request.summary).replace(/```/g, "ˋˋˋ")}\`\`\`` } }] as never,
+      text: `${verdict} by ${escapeMrkdwn(click.userName ?? click.userId ?? "")}: ${escapeMrkdwn(describeRequest(request))}`,
+      blocks: [{ type: "section", text: { type: "mrkdwn", text: `${verdict} by <@${click.userId}> — ${escapeMrkdwn(describeRequest(request))}\n\`\`\`${escapeMrkdwn(request.summary).replace(/```/g, "ˋˋˋ")}\`\`\`` } }] as never,
     });
+  }
+  // The person who asked hears the decision, where they asked. A rejection is final; an
+  // approval is followed by the result once it has been carried out.
+  if (click.channel && decision === "rejected") {
+    await client.chat
+      .postMessage({ channel: click.channel, thread_ts: click.threadTs ?? click.messageTs, text: `${requesterMention(request)} 🚫 <@${click.userId}> declined: ${escapeMrkdwn(describeRequest(request))}. Nothing was done.` })
+      .catch(() => undefined);
   }
   return { ok: true, message: `${verdict}.` };
 }

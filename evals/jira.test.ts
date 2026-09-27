@@ -402,3 +402,32 @@ describe("Jira's JSON is checked where it enters", () => {
     expect(parseComments(undefined)).toEqual([]);
   });
 });
+
+describe("other agents' conversation is not Scribe's", () => {
+  it("the Teammate's account is looked up until known — a failed lookup never means 'no other agent'", async () => {
+    const { knownAccounts } = await import("@scriptorium/agents");
+    let calls = 0;
+    const lookup = knownAccounts(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("HTTP 503");
+      return ["tm-1"];
+    });
+    await expect(lookup()).rejects.toThrow("503");
+    expect(await lookup()).toEqual(["tm-1"]);
+    expect(await lookup()).toEqual(["tm-1"]);
+    expect(calls).toBe(2);
+    expect(await knownAccounts(["a"])()).toEqual(["a"]);
+  });
+
+  it("a question to the Teammate, and the Teammate's answer, are never feedback on a draft", async () => {
+    const { parseCommand } = await import("@scriptorium/jira");
+    const drafted = { hasDraft: true, otherAgents: ["tm-1"] };
+    const c = (body: string, author = "human-1") => ({ id: "1", body, created: "now", author: { accountId: author, displayName: "X" } });
+    expect(parseCommand(c("[~accountid:tm-1] what does retention do?"), "bot-1", drafted)).toEqual({ kind: "ignore", reason: "addressed-to-another-agent" });
+    expect(parseCommand(c("Retention keeps 90 days [[docs/retention]].", "tm-1"), "bot-1", drafted)).toEqual({ kind: "ignore", reason: "other-agent" });
+    // Addressed to both, or to Scribe: still Scribe's.
+    expect(parseCommand(c("[~accountid:bot-1] [~accountid:tm-1] shorten the intro"), "bot-1", drafted).kind).toBe("feedback");
+    // Plain feedback with no mention at all stays feedback.
+    expect(parseCommand(c("shorten the intro"), "bot-1", drafted).kind).toBe("feedback");
+  });
+});

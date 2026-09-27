@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { docsRepoReady, jiraReady, linesForRun, parseAudit, runPage, type AppConfig } from "@scriptorium/core";
+import type { CommentRestriction } from "@scriptorium/jira";
 import { z } from "zod";
 
 /**
@@ -52,6 +53,94 @@ export interface IngressHooks {
   nudge?: (issueKey: string) => Promise<void>;
   /** A push landed on the docs repo's base branch; these repo-relative paths changed. */
   docsChanged?: (input: { paths: string[]; commit?: string; commitUrl?: string }) => Promise<void>;
+  /** A pull request opened (or became ready for review) on a source repo. */
+  pullRequest?: (input: { repo: string; number: number; author?: string; deliveryId?: string }) => Promise<void>;
+  /** A Jira comment was created — the Teammate answers it if it is mentioned. */
+  jiraComment?: (input: JiraCommentEvent) => Promise<void>;
+  /** A Jira issue was assigned to someone — the Teammate acts if it is the assignee. */
+  jiraAssigned?: (input: { issueKey: string; assigneeId: string; changeId: string }) => Promise<void>;
+}
+
+/** `jira:issue_updated` whose changelog moved the assignee: who to, and the change's id. */
+export function jiraAssignmentFrom(payload: unknown): { issueKey: string; assigneeId: string; changeId: string } | undefined {
+  const body = payload as { webhookEvent?: string; issue?: { key?: string }; changelog?: { id?: string | number; items?: Array<{ field?: string; fieldId?: string; to?: string | null }> } };
+  if (body.webhookEvent !== "jira:issue_updated" || typeof body.issue?.key !== "string") return undefined;
+  const change = body.changelog?.items?.find((item) => item.fieldId === "assignee" || item.field === "assignee");
+  if (!change?.to) return undefined;
+  return { issueKey: body.issue.key, assigneeId: change.to, changeId: String(body.changelog?.id ?? `${body.issue.key}:${change.to}`) };
+}
+
+export interface JiraCommentEvent {
+  issueKey: string;
+  commentId: string;
+  body: string;
+  authorId?: string;
+  /** Who may see the comment: a reply must be restricted the same way. */
+  restriction: CommentRestriction;
+}
+
+/**
+ * A comment's restriction from its webhook JSON: a role/group `visibility`, or JSM's
+ * internal flag (`jsdPublic: false`, or the `sd.public.comment` property). A visibility we
+ * cannot read is "unreadable": the comment is not answered, since a reply can't match it.
+ */
+export function commentRestriction(comment: unknown): CommentRestriction | "unreadable" {
+  const c = (comment ?? {}) as { visibility?: unknown; jsdPublic?: unknown; properties?: unknown };
+  const restriction: CommentRestriction = {};
+  if (c.visibility !== undefined && c.visibility !== null) {
+    const v = c.visibility as { type?: unknown; value?: unknown; identifier?: unknown };
+    if ((v.type !== "role" && v.type !== "group") || typeof v.value !== "string") return "unreadable";
+    restriction.visibility = { type: v.type, value: v.value, ...(typeof v.identifier === "string" ? { identifier: v.identifier } : {}) };
+  }
+  const internalProperty = Array.isArray(c.properties)
+    ? (c.properties as Array<{ key?: unknown; value?: { internal?: unknown } }>).some((property) => property.key === "sd.public.comment" && property.value?.internal === true)
+    : false;
+  if (c.jsdPublic === false || internalProperty) restriction.internal = true;
+  return restriction;
+}
+
+/**
+ * Atlassian Document Format → the wiki-ish text the rest of the pipeline reads. Webhooks
+ * registered through the REST API (and some automation payloads) send comment bodies as
+ * ADF, not a string; a mention node becomes `[~accountid:<id>]`, exactly as v2 text has it.
+ */
+export function adfToText(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  const n = node as { type?: string; text?: string; attrs?: { id?: string; url?: string }; content?: unknown[] };
+  if (n.type === "text") return n.text ?? "";
+  if (n.type === "mention") return n.attrs?.id ? `[~accountid:${n.attrs.id}]` : "";
+  // A pasted issue or page link becomes a smart card: keep its URL, or "is DOC-42 ready?" reads "is  ready?".
+  if (n.type === "inlineCard" || n.type === "blockCard") return n.attrs?.url ?? "";
+  if (n.type === "hardBreak") return "\n";
+  const inner = (n.content ?? []).map(adfToText).join("");
+  return n.type === "paragraph" || n.type === "heading" || n.type === "listItem" ? `${inner}\n` : inner;
+}
+
+/** A `comment_created` webhook as the fields the Teammate needs; anything else is not one. */
+export function jiraCommentFrom(payload: unknown): JiraCommentEvent | undefined {
+  const body = payload as { webhookEvent?: string; issue?: { key?: string }; comment?: { id?: string | number; body?: unknown; author?: { accountId?: string } } };
+  if (body.webhookEvent !== "comment_created") return undefined;
+  const issueKey = body.issue?.key;
+  const commentId = body.comment?.id;
+  const raw = body.comment?.body;
+  const text = typeof raw === "string" ? raw : raw && typeof raw === "object" ? adfToText(raw).trim() : undefined;
+  if (typeof issueKey !== "string" || commentId === undefined || !text) return undefined;
+  // A restriction we can't read: not answered at all, rather than answered in public.
+  const restriction = commentRestriction(body.comment);
+  if (restriction === "unreadable") return undefined;
+  return { issueKey, commentId: String(commentId), body: text, authorId: body.comment?.author?.accountId, restriction };
+}
+
+/** The pull-request events worth a review: opened, reopened, or taken out of draft. */
+export function pullRequestFrom(event: string | undefined, payload: unknown): { repo: string; number: number; author?: string } | undefined {
+  if (event !== "pull_request") return undefined;
+  const body = payload as { action?: string; pull_request?: { number?: number; draft?: boolean; user?: { login?: string } }; repository?: { full_name?: string } };
+  if (!["opened", "reopened", "ready_for_review"].includes(body.action ?? "")) return undefined;
+  if (body.pull_request?.draft) return undefined;
+  const repo = body.repository?.full_name?.toLowerCase();
+  const number = body.pull_request?.number;
+  if (!repo || !Number.isInteger(number)) return undefined;
+  return { repo, number: number as number, author: body.pull_request?.user?.login };
 }
 
 function readBody(request: IncomingMessage, limitBytes = 1_000_000): Promise<Buffer> {
@@ -249,6 +338,14 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
         }
         // Answer before working: Jira gives up in seconds, and the ledger makes a retry safe.
         send(response, 202, { accepted: true, issue: key, event });
+        const assignment = jiraAssignmentFrom(payload);
+        if (assignment && hooks.jiraAssigned) {
+          await hooks.jiraAssigned(assignment).catch((error: unknown) => console.warn(`[ingress] teammate assignment ${assignment.issueKey}: ${error instanceof Error ? error.message : error}`));
+        }
+        const jiraComment = jiraCommentFrom(payload);
+        if (jiraComment && hooks.jiraComment) {
+          await hooks.jiraComment(jiraComment).catch((error: unknown) => console.warn(`[ingress] teammate jira comment ${jiraComment.issueKey}: ${error instanceof Error ? error.message : error}`));
+        }
         if (hooks.nudge) {
           try {
             await hooks.nudge(key);
@@ -274,6 +371,18 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
         }
         if (!deliveries.firstTime(headerValue(request.headers["x-github-delivery"]))) {
           send(response, 202, { accepted: false, reason: "duplicate delivery" });
+          return;
+        }
+        const pull = pullRequestFrom(headerValue(request.headers["x-github-event"]), payload);
+        if (pull) {
+          send(response, 202, { accepted: Boolean(hooks.pullRequest), pullRequest: `${pull.repo}#${pull.number}` });
+          if (hooks.pullRequest) {
+            try {
+              await hooks.pullRequest({ ...pull, deliveryId: headerValue(request.headers["x-github-delivery"]) });
+            } catch (error) {
+              console.warn(`[ingress] pull request ${pull.repo}#${pull.number} failed: ${error instanceof Error ? error.message : error}`);
+            }
+          }
           return;
         }
         const { paths, ref, commit, commitUrl } = docsPathsFrom(payload);

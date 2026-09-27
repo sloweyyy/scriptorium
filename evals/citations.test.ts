@@ -35,7 +35,7 @@ function config(sites: { external?: string; internal?: string }): AppConfig {
     port: 8080,
     scribe: {},
     curator: {},
-    teammate: { channels: [], jiraProjects: [], confluenceSpaces: [], digestWeekday: 1, digestHour: 9 },
+    teammate: { channels: [], jiraProjects: [], confluenceSpaces: [], githubRepos: [], allowDms: false, digestWeekday: 1, digestHour: 9 },
     slack: {},
     sites,
     webhook: {},
@@ -161,5 +161,16 @@ describe("citations in the rendered answer", () => {
     const body = blocks[0]?.text?.text ?? "";
     expect(body).toContain("<https://example.com/a|docs/a>");
     expect(body).toContain("<https://example.com/a-longer|docs/a-longer>");
+  });
+});
+
+describe("records outside the vault", () => {
+  it("resolve to where they live: Jira, Confluence, GitHub", async () => {
+    const { externalRecordUrl } = await import("@scriptorium/agents");
+    const cfg = { jira: { baseUrl: "https://acme.atlassian.net/" } } as never;
+    expect(externalRecordUrl(cfg, "jira:DOC-7")).toBe("https://acme.atlassian.net/browse/DOC-7");
+    expect(externalRecordUrl(cfg, "confluence:123")).toBe("https://acme.atlassian.net/wiki/pages/viewpage.action?pageId=123");
+    expect(externalRecordUrl(cfg, "github:org/app/pull/12")).toBe("https://github.com/org/app/pull/12");
+    expect(externalRecordUrl(cfg, "docs/digest")).toBeNull();
   });
 });

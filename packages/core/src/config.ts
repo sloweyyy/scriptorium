@@ -111,6 +111,23 @@ export interface TeammateSettings extends SlackAppTokens {
   jiraProjects: string[];
   /** Confluence space keys it may search and read. */
   confluenceSpaces: string[];
+  /**
+   * The Teammate's OWN Atlassian account (a service account). Without it the Teammate may
+   * read Jira and Confluence with the shared token, but it may not write: two agents on one
+   * token are one identity, and every write would be attributed to the other agent.
+   */
+  atlassianEmail?: string;
+  atlassianToken?: string;
+  /** The Teammate's OWN GitHub App (not the docs repo's), and the repos it may read. */
+  githubAppId?: string;
+  githubAppKey?: string;
+  githubRepos: string[];
+  /** Where an automatic PR check posts its summary and the approval card for its comment. */
+  prChannel?: string;
+  /** Answer direct messages too (off by default: a DM is a channel nobody else can see). */
+  allowDms: boolean;
+  /** Model tokens per channel (or DM) per UTC day. Unset: unlimited. */
+  dailyTokens?: number;
   /** Channel for the weekly digest. Unset: no digest. */
   digestChannel?: string;
   /** When it goes out, UTC: weekday 1–7 (Mon–Sun) and hour. Default Monday 09:00. */
@@ -257,6 +274,14 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       channels: list(env("TEAMMATE_SLACK_CHANNELS")),
       jiraProjects: list(env("TEAMMATE_JIRA_PROJECTS")),
       confluenceSpaces: list(env("TEAMMATE_CONFLUENCE_SPACES")),
+      atlassianEmail: env("TEAMMATE_ATLASSIAN_EMAIL"),
+      atlassianToken: env("TEAMMATE_ATLASSIAN_TOKEN"),
+      githubAppId: env("TEAMMATE_GITHUB_APP_ID"),
+      githubAppKey: env("TEAMMATE_GITHUB_APP_KEY"),
+      githubRepos: list(env("TEAMMATE_GITHUB_REPOS")),
+      prChannel: env("TEAMMATE_PR_CHANNEL"),
+      allowDms: env("TEAMMATE_ALLOW_DMS") === "true",
+      dailyTokens: env("TEAMMATE_DAILY_TOKENS") ? Number(env("TEAMMATE_DAILY_TOKENS")) : undefined,
       digestChannel: env("TEAMMATE_DIGEST_CHANNEL"),
       digestWeekday: envNumber("TEAMMATE_DIGEST_WEEKDAY", 1),
       digestHour: envNumber("TEAMMATE_DIGEST_HOUR", 9),

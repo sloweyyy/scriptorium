@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AppConfig } from "@scriptorium/core";
-import { formatReply, mentionToEvent, teammateConnectorTools } from "@scriptorium/agents";
+import { formatReply, mentionToEvent, sharesScribeAccount, teammateConnectorTools } from "@scriptorium/agents";
 import type { SlackClient } from "@scriptorium/connectors";
 import { Gate } from "@scriptorium/runtime";
 import { MemoryEffectLedger } from "@scriptorium/runtime";
@@ -37,8 +37,19 @@ describe("teammate slack surface", () => {
   it("offers only the connectors configured on this host", () => {
     const slackOnly = teammateConnectorTools(config(), slack, new MemoryEffectLedger()).map((tool) => tool.name);
     expect(slackOnly).toEqual(["slack_read_thread", "slack_reply"]);
-    const withJira = teammateConnectorTools(config({}, true), slack, new MemoryEffectLedger()).map((tool) => tool.name);
-    expect(withJira).toEqual(expect.arrayContaining(["jira_search", "jira_create_issue", "confluence_search"]));
+    // The shared token reads; it never writes as the Teammate.
+    const shared = teammateConnectorTools(config({}, true), slack, new MemoryEffectLedger()).map((tool) => tool.name);
+    expect(shared).toEqual(expect.arrayContaining(["jira_search", "jira_get_issue", "confluence_search"]));
+    for (const write of ["jira_comment", "jira_create_issue", "confluence_create_page", "confluence_update_page"]) expect(shared).not.toContain(write);
+    // Its own service account: writes are offered (and still approve-tier in its envelope).
+    const own = teammateConnectorTools(config({ atlassianEmail: "teammate@example.com", atlassianToken: "t2" }, true), slack, new MemoryEffectLedger()).map((tool) => tool.name);
+    expect(own).toEqual(expect.arrayContaining(["jira_create_issue", "confluence_update_page"]));
+    // "Its own" account set to Scribe's is Scribe's identity: reads only, and no Jira surface.
+    const scribes = config({ atlassianEmail: " A@example.com", atlassianToken: "t2" }, true);
+    expect(sharesScribeAccount(scribes)).toBe(true);
+    const borrowed = teammateConnectorTools(scribes, slack, new MemoryEffectLedger()).map((tool) => tool.name);
+    for (const write of ["jira_comment", "jira_create_issue", "confluence_create_page", "confluence_update_page"]) expect(borrowed).not.toContain(write);
+    expect(sharesScribeAccount(config({ atlassianEmail: "teammate@example.com", atlassianToken: "t2" }, true))).toBe(false);
   });
 
   it("links the ticket a gap opened", () => {
@@ -64,6 +75,24 @@ describe("thread context", () => {
     // A top-level mention has no thread yet.
     expect(await threadContext(client, "C1", "1.2", "1.2")).toBeUndefined();
   });
+
+  it("in a long thread, keeps the parent and the latest messages — not the first page", async () => {
+    const { threadContext } = await import("@scriptorium/agents");
+    const all = Array.from({ length: 450 }, (_, i) => ({ ts: `1.${String(i).padStart(3, "0")}`, user: "U1", text: `msg ${i}` }));
+    const client = {
+      conversations: {
+        // Oldest first, 200 a page, like Slack.
+        replies: async ({ cursor }: { cursor?: string }) => {
+          const start = Number(cursor ?? 0);
+          const next = start + 200;
+          return { messages: all.slice(start, next), response_metadata: { next_cursor: next < all.length ? String(next) : "" } };
+        },
+      },
+      chat: {},
+    } as unknown as SlackClient;
+    const context = (await threadContext(client, "C1", "1.000", "1.449", 5))!.split("\n");
+    expect(context).toEqual(["<@U1>: msg 0", "<@U1>: msg 445", "<@U1>: msg 446", "<@U1>: msg 447", "<@U1>: msg 448"]);
+  });
 });
 
 describe("tools bound to the turn", () => {
@@ -79,5 +108,13 @@ describe("tools bound to the turn", () => {
     for (const scope of ["global", "channel:C1", "person:slack:U1"]) expect(await save!.run({ text: "x is y.", scope })).toBe("ok");
     for (const scope of ["channel:C2", "person:slack:U2"]) expect(await save!.run({ text: "x is y.", scope })).toMatch(/^NOT_ALLOWED/);
     expect(ran).toEqual(["slack_read_thread", "memory_save", "memory_save", "memory_save"]);
+  });
+});
+
+describe("progress", () => {
+  it("names what the agent is doing, in plain words", async () => {
+    const { progressText } = await import("@scriptorium/agents");
+    expect(progressText("confluence_search")).toBe("🔎 Searching Confluence…");
+    expect(progressText("something_new")).toBe("🔎 Working on it…");
   });
 });

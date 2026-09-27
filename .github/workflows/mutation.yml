@@ -1,0 +1,37 @@
+name: mutation
+# Guardrail mutation testing: each mutant sabotages one safety control; its eval must go red.
+# A survivor means a control could break silently with CI still green. Weekly, and whenever
+# a guardrail's code or its eval changes.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 5 * * 1"
+  pull_request:
+    paths:
+      - "packages/policy/**"
+      - "packages/runtime/src/effects.ts"
+      - "packages/runtime/src/session.ts"
+      - "packages/curator/src/qa*.ts"
+      - "packages/curator/src/search.ts"
+      - "packages/core/src/vault.ts"
+      - "packages/connectors/**"
+      - "apps/agents/src/teammate.ts"
+      - "apps/agents/src/teammate-bot.ts"
+      - "packages/jira/src/commands.ts"
+      - "packages/scribe/src/pipeline.ts"
+      - "scripts/mutate.ts"
+permissions:
+  contents: read
+jobs:
+  mutate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm mutate

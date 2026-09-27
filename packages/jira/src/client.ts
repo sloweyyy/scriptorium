@@ -1,10 +1,12 @@
 import { Buffer } from "node:buffer";
 import type { JiraSettings } from "@scriptorium/core";
 import { parseComments, parseIssue, parseIssues, parseMyself } from "./schemas";
-import type { JiraAttachment, JiraComment, JiraIssue, JiraRemoteLink, JiraTransition, JiraUser } from "./types";
+import type { CommentRestriction, JiraAttachment, JiraComment, JiraIssue, JiraRemoteLink, JiraTransition, JiraUser } from "./types";
 
 /** Entity-property key an op-keyed comment carries. */
 export const COMMENT_OP_PROPERTY = "scriptorium.op";
+/** Jira Service Management's internal-note flag, as a comment property. */
+export const JSM_PUBLIC_PROPERTY = "sd.public.comment";
 
 export interface JiraClientConfig {
   baseUrl: string;
@@ -220,9 +222,17 @@ export class JiraClient {
    * whether a write landed can be asked of Jira, not only of a local ledger that a crash
    * may have left behind (see `findCommentByOp`).
    */
-  async addComment(key: string, body: string, options: { op?: string } = {}): Promise<JiraComment> {
-    const properties = options.op ? [{ key: COMMENT_OP_PROPERTY, value: { op: options.op } }] : undefined;
-    return this.post<JiraComment>(`/rest/api/2/issue/${encodeURIComponent(key)}/comment`, { body, ...(properties ? { properties } : {}) });
+  async addComment(key: string, body: string, options: { op?: string; restriction?: CommentRestriction } = {}): Promise<JiraComment> {
+    const properties = [
+      ...(options.op ? [{ key: COMMENT_OP_PROPERTY, value: { op: options.op } }] : []),
+      ...(options.restriction?.internal ? [{ key: JSM_PUBLIC_PROPERTY, value: { internal: true } }] : []),
+    ];
+    const visibility = options.restriction?.visibility;
+    return this.post<JiraComment>(`/rest/api/2/issue/${encodeURIComponent(key)}/comment`, {
+      body,
+      ...(properties.length ? { properties } : {}),
+      ...(visibility ? { visibility } : {}),
+    });
   }
 
   /** The comment an op already produced, if Jira has it. */

@@ -112,3 +112,20 @@ describe("slack approval card", () => {
     expect(ran).toHaveLength(1);
   });
 });
+
+describe("the approval card cannot be dressed up by the text it shows", () => {
+  it("escapes Slack's control characters and fences the arguments, so links and mentions stay inert", async () => {
+    const { approvalBlocks, escapeMrkdwn } = await import("@scriptorium/connectors");
+    const request = {
+      id: "r1", agent: "Teammate", tool: "confluence_update_page", argsHash: "a".repeat(64), key: "k", requestedAt: "", expiresAt: "", status: "pending" as const,
+      summary: "• markdown: See <https://attacker.example/x|docs.beacon.example/guide> <!channel> ``` break out",
+    };
+    const text = JSON.stringify(approvalBlocks(request));
+    expect(text).not.toContain("<https://attacker");
+    expect(text).not.toContain("<!channel>");
+    expect(text).toContain("&lt;https://attacker.example/x|docs.beacon.example/guide&gt;");
+    // The fence can't be closed from inside.
+    expect((text.match(/```/g) ?? []).length).toBe(2);
+    expect(escapeMrkdwn("a & b")).toBe("a &amp; b");
+  });
+});

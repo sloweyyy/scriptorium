@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AppConfig } from "@scriptorium/core";
-import { formatReply, mentionToEvent, teammateConnectorTools } from "@scriptorium/agents";
+import { formatReply, mentionToEvent, sharesScribeAccount, teammateConnectorTools } from "@scriptorium/agents";
 import type { SlackClient } from "@scriptorium/connectors";
 import { Gate } from "@scriptorium/runtime";
 import { MemoryEffectLedger } from "@scriptorium/runtime";
@@ -44,6 +44,12 @@ describe("teammate slack surface", () => {
     // Its own service account: writes are offered (and still approve-tier in its envelope).
     const own = teammateConnectorTools(config({ atlassianEmail: "teammate@example.com", atlassianToken: "t2" }, true), slack, new MemoryEffectLedger()).map((tool) => tool.name);
     expect(own).toEqual(expect.arrayContaining(["jira_create_issue", "confluence_update_page"]));
+    // "Its own" account set to Scribe's is Scribe's identity: reads only, and no Jira surface.
+    const scribes = config({ atlassianEmail: " A@example.com", atlassianToken: "t2" }, true);
+    expect(sharesScribeAccount(scribes)).toBe(true);
+    const borrowed = teammateConnectorTools(scribes, slack, new MemoryEffectLedger()).map((tool) => tool.name);
+    for (const write of ["jira_comment", "jira_create_issue", "confluence_create_page", "confluence_update_page"]) expect(borrowed).not.toContain(write);
+    expect(sharesScribeAccount(config({ atlassianEmail: "teammate@example.com", atlassianToken: "t2" }, true))).toBe(false);
   });
 
   it("links the ticket a gap opened", () => {

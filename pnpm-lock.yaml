@@ -173,6 +173,9 @@ importers:
       '@scriptorium/core':
         specifier: workspace:*
         version: link:../core
+      '@scriptorium/policy':
+        specifier: workspace:*
+        version: link:../policy
 
   packages/scribe:
     dependencies:

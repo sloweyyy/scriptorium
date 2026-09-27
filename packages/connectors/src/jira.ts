@@ -130,7 +130,7 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
           // create and the ledger write can duplicate — the ledger still stops every retry
           // that happens after the record lands.
           const { result, replayed } = await once(settings.ledger, opKey("jira.create", project, digest(parsed.summary), digest(parsed.description)), () =>
-            settings.client.createIssue({ summary: parsed.summary, description: markdownToJira(parsed.description), issueType: settings.issueType ?? "Task" }),
+            settings.client.createIssue({ summary: parsed.summary, description: markdownToJira(parsed.description), issueType: settings.issueType ?? "Task", project }),
           );
           return `${replayed ? "Already created" : "Created"} jira:${result.key} ${result.url}`;
         }),

@@ -243,3 +243,37 @@ describe("who may approve when no list is given", () => {
     expect(mayApprove(open, { tier: "approve", approvers: ["*"] }, { accountId: "bot" }).ok).toBe(false);
   });
 });
+
+describe("approvals and failures", () => {
+  it("an action that fails gives its approval back, so a retry needs no second click", async () => {
+    const store = new MemoryApprovalStore();
+    let fail = true;
+    const flaky: ToolSpec = { ...publish, run: async (input) => { if (fail) throw new Error("HTTP 500"); runs.push(input); return "published"; } };
+    const pending = await runUnderPolicy(envelope, flaky, DRAFT, deps(store));
+    if (pending.kind !== "pending") throw new Error("expected pending");
+    await decideApproval(store, envelope, pending.request.id, "approved", { accountId: "pm-1" });
+    await expect(executeApproved(envelope, [flaky], pending.request.id, deps(store))).rejects.toThrow("HTTP 500");
+    fail = false;
+    expect((await executeApproved(envelope, [flaky], pending.request.id, deps(store))).kind).toBe("ran");
+    expect(runs).toHaveLength(1);
+  });
+
+  it("the same action asked in another conversation is its own request, with its own asker", async () => {
+    const store = new MemoryApprovalStore();
+    const a = await runUnderPolicy(envelope, publish, DRAFT, deps(store, { key: "slack:thread:C1/1.0", requestedBy: "u1" }));
+    const b = await runUnderPolicy(envelope, publish, DRAFT, deps(store, { key: "slack:thread:C2/2.0", requestedBy: "u2" }));
+    if (a.kind !== "pending" || b.kind !== "pending") throw new Error("expected pending");
+    expect(a.request.id).not.toBe(b.request.id);
+    expect(posted).toHaveLength(2);
+    expect(b.request.requestedBy).toBe("u2");
+  });
+
+  it("carrying out an approval never files a new request", async () => {
+    const store = new MemoryApprovalStore();
+    const pending = await runUnderPolicy(envelope, publish, DRAFT, deps(store));
+    if (pending.kind !== "pending") throw new Error("expected pending");
+    // Not approved yet: executing it is refused, and no second card appears.
+    expect((await executeApproved(envelope, [publish], pending.request.id, deps(store))).kind).toBe("not-runnable");
+    expect(posted).toHaveLength(1);
+  });
+});

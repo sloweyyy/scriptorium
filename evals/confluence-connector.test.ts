@@ -155,3 +155,20 @@ describe("confluence writes", () => {
     expect(writer().tools().map((tool) => tool.name)).toContain("confluence_update_page");
   });
 });
+
+describe("a failed space lookup", () => {
+  it("is retried on the next call, not cached as a failure until restart", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", async (input: string) => {
+      const url = decodeURIComponent(String(input));
+      if (url.includes("/api/v2/spaces?keys=")) {
+        calls += 1;
+        return calls === 1 ? new Response("down", { status: 503 }) : new Response(JSON.stringify({ results: [{ id: 1, key: "BEACON" }] }));
+      }
+      return new Response(JSON.stringify({ results: [] }));
+    });
+    const c = new ConfluenceConnector({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", allowedSpaceKeys: ["BEACON"] });
+    await expect(c.search("x")).rejects.toThrow(/503/);
+    expect(await c.search("x")).toEqual([]);
+  });
+});

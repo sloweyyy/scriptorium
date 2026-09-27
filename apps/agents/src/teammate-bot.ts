@@ -6,6 +6,7 @@ import {
   REJECT_ACTION,
   RETRY_ACTION,
   SlackApprovalChannel,
+  describeRequest,
   escapeMrkdwn,
   type SlackClient,
   handleApprovalClick,
@@ -53,6 +54,8 @@ export interface TeammateCore {
   checkDigest(now?: Date): Promise<void>;
   /** Post any approved reminder that is due (once each); drop any a day overdue. */
   checkReminders(now?: Date): Promise<void>;
+  /** Nudge approvers once about a request waiting too long; close the card of one that expired. */
+  checkApprovals(now?: Date): Promise<void>;
   /** A Jira comment; answered on the ticket, as the Teammate, if it mentions the Teammate. */
   /** `restriction`: who may see the comment; the reply carries the same. Omitted: public. */
   onJiraComment(input: { issueKey: string; commentId: string; body: string; authorId?: string; restriction?: CommentRestriction }): Promise<void>;
@@ -563,6 +566,31 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       return undefined;
     },
 
+    async checkApprovals(now = new Date()) {
+      const nudgeMs = (settings.approvalNudgeHours ?? 24) * 3_600_000;
+      for (const request of (await store.all()).filter((candidate) => candidate.agent === envelope.agent && candidate.status === "pending")) {
+        const where = (await ledger.get(cardOp(request.id)))?.result as { channel?: string; ts?: string } | undefined;
+        if (!where?.channel || !where.ts) continue;
+        const card = { channel: where.channel, ts: where.ts };
+        if (Date.parse(request.expiresAt) <= now.getTime()) {
+          // The buttons would decide nothing now; leaving them live reads as still pending.
+          await once(ledger, opKey("teammate.card.expired", request.id), async () => {
+            await slack.chat.update({ ...card, text: `⌛ Expired without a decision: ${escapeMrkdwn(describeRequest(request))}. Nothing was done; ask again if it's still needed.`, blocks: [] as never });
+            return true;
+          }).catch(() => undefined);
+          continue;
+        }
+        if (nudgeMs > 0 && now.getTime() - Date.parse(request.requestedAt) >= nudgeMs) {
+          const approvers = (envelope.tools[request.tool]?.approvers ?? []).filter((id) => id.startsWith("slack:")).map((id) => `<@${id.slice("slack:".length)}>`);
+          if (!approvers.length) continue;
+          await once(ledger, opKey("teammate.card.nudged", request.id), async () => {
+            await slack.chat.postMessage({ channel: card.channel, thread_ts: card.ts, text: `⏰ Still waiting for an approver: ${approvers.join(", ")}. It expires <!date^${Math.floor(Date.parse(request.expiresAt) / 1000)}^{date_short_pretty}|${request.expiresAt.slice(0, 10)}>.` });
+            return true;
+          }).catch(() => undefined);
+        }
+      }
+    },
+
     async checkReminders(now = new Date()) {
       // Paused: reminders wait (and are dropped if a day overdue by the time it resumes).
       if ((await refreshControl()).paused) return;
@@ -774,7 +802,10 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
 
   // The weekly digest: checked hourly, posted once per ISO week (the effects ledger makes a
   // restart or a second instance a no-op).
-  const digestCheck = (): void => void core.checkDigest().catch((error) => console.warn(`[teammate] digest: ${error instanceof Error ? error.message : error}`));
+  const digestCheck = (): void => {
+    void core.checkDigest().catch((error) => console.warn(`[teammate] digest: ${error instanceof Error ? error.message : error}`));
+    void core.checkApprovals().catch((error) => console.warn(`[teammate] approvals: ${error instanceof Error ? error.message : error}`));
+  };
   const digestTimer = setInterval(digestCheck, 60 * 60 * 1000);
   const reminderTimer = setInterval(() => void core.checkReminders().catch((error) => console.warn(`[teammate] reminders: ${error instanceof Error ? error.message : error}`)), 60 * 1000);
   digestCheck();

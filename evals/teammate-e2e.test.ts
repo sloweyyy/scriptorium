@@ -308,6 +308,31 @@ describe("automatic PR checks", () => {
   });
 });
 
+describe("approvals nobody decides", () => {
+  it("nudges the approvers once after a day, and closes the card honestly when it expires", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [{ name: "memory_save", input: { text: "Release notes go out on Thursdays.", scope: "channel:C1" } }], reply: "Asked." };
+    await core.onMention({ channel: "C1", ts: "3.0", user: "U1", text: "<@UBOT> remember release notes go out on Thursdays" });
+    await settle(core);
+    const cardIndex = posted.findIndex((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION));
+    const cardTs = `9.${cardIndex + 1}`;
+    const count = posted.length;
+
+    await core.checkApprovals(new Date(Date.now() + 2 * 3_600_000)); // too soon
+    expect(posted).toHaveLength(count);
+    await core.checkApprovals(new Date(Date.now() + 25 * 3_600_000));
+    await core.checkApprovals(new Date(Date.now() + 26 * 3_600_000)); // once only
+    const nudges = posted.slice(count);
+    expect(nudges).toHaveLength(1);
+    expect(nudges[0]).toMatchObject({ channel: "C1", thread_ts: cardTs });
+    expect(nudges[0]?.text).toContain("Still waiting for an approver: <@UPM>");
+
+    await core.checkApprovals(new Date(Date.now() + 8 * 24 * 3_600_000));
+    expect(posted[cardIndex]?.text).toContain("Expired without a decision");
+    expect(JSON.stringify(posted[cardIndex]?.blocks ?? [])).not.toContain(APPROVE_ACTION);
+  });
+});
+
 describe("your memories", () => {
   it("/teammate memories lists what applies to you; you can forget your own at once, not others'", async () => {
     const core = await createTeammate({ ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig, vault, slack as never, "UBOT");

@@ -48,9 +48,14 @@ The model is untrusted too. It proposes; the platform decides what runs.
 ### 4. Policy: one check on every tool call
 - Every tool is `allow`, `approve` or `deny`, per agent. Unlisted tools are denied and not
   even offered to the model. (`packages/policy`; `evals/policy.test.ts`)
-- An approval belongs to a named, listed human, never to the agent itself (and under
-  separation of duties, never to the requester). It is single-use, it expires, and it
-  covers only the exact arguments that were shown, by hash.
+- An approval belongs to a named, listed human. An empty approver list means *nobody*, and
+  `["*"]` has to be chosen explicitly. It is never the agent itself, and under separation of
+  duties never the requester. It is single-use, expires, and covers only the exact
+  arguments that were shown, by hash, in the conversation that asked for them.
+- Deciding and spending an approval are atomic. Two clicks decide once, two runs spend it
+  once, and an action that fails gives its approval back.
+- The card shows each argument on its own capped line, escaped and fenced, so model-written
+  text can't render as a link or ping `@channel`. The argument hash is on the card.
 - An approval request nobody can see is not requested: if the card can't be posted, the
   tool does not run.
 - The same rules hold on every surface: Jira `approve` (`JIRA_APPROVERS`), a board move (an
@@ -65,7 +70,11 @@ The model is untrusted too. It proposes; the platform decides what runs.
   an empty list means none. A refused Confluence page leaks not even its title.
   (`packages/connectors`; `evals/*-connector.test.ts`)
 - The model supplies words, never JQL or CQL. Its input is escaped into a string literal.
-- There is no Slack search tool: agents read only the thread they were asked in.
+- There is no Slack search tool: an agent reads only the thread it was asked in, and the
+  tool is bound to that thread. A memory can be scoped only to everyone, the current
+  channel, or the asker. (`bindToTurn`; `evals/teammate-bot.test.ts`)
+- `_memory/` is invisible to every retrieval tool, the overview and MCP. A memory reaches
+  only its own scope's prompt. (`evals/memory.test.ts`)
 - The vault path guard means nothing an agent writes lands outside the vault.
   (`evals/publish-record.test.ts`)
 - The MCP server is read-only: it files no gaps and writes no notes.
@@ -73,8 +82,13 @@ The model is untrusted too. It proposes; the platform decides what runs.
 - Credentials live in connectors and never enter a prompt or a tool result.
 
 ### 6. Output: no citation, no claim
-- Any factual answer must cite a record that a tool returned in this conversation and that
-  exists. Anything else is refused, not posted. (`enforceGrounding`; `evals/grounding.test.ts`)
+- Any factual answer must cite a record a tool actually *fetched* in this conversation.
+  Evidence is what tools declare they fetched (`ToolSpec.records`, taken from validated
+  input or JSON the tool built), never text inside their output. A page that merely
+  mentions `jira:DOC-99` is not evidence for it, and a refusal that echoes an id isn't
+  either. (`enforceGrounding`; `evals/grounding.test.ts`, `evals/teammate.test.ts`)
+- Attempting a write never switches that check off. An uncited reply around a write is
+  replaced by exactly what the write tools reported.
 - The model loop fails closed: a capped, truncated, refused or empty turn raises an error;
   it is never half an answer. (`evals/session.test.ts`)
 - Every reply says it is AI-generated and names its run.
@@ -85,8 +99,10 @@ The model is untrusted too. It proposes; the platform decides what runs.
   docs. Curator's behaviour never changes with either.
   (`evals/lesson-gate.test.ts`, `evals/memory.test.ts`, `evals/curator-isolation.test.ts`)
 
-- Approvals are signed with a deployment-only key, which the repository can't forge.
-  (`packages/core/src/signing.ts`; `evals/approval-signing.test.ts`)
+- Approvals are signed with a deployment-only key, over the id, status, body, approver, scope
+  and check, and they are verified wherever they're *used*. However an "approved" note got
+  into the vault (a restore, a docs-repo webhook, a hand edit), it doesn't apply without a
+  valid signature. (`packages/core/src/signing.ts`; `evals/approval-signing.test.ts`)
 
 ### 8. Record: every action is attributable
 - The audit log is append-only JSONL, and every line inside a run carries the run's id.
@@ -96,11 +112,15 @@ The model is untrusted too. It proposes; the platform decides what runs.
 
 ## Known gaps
 
-- **Set `SCRIPTORIUM_SIGNING_KEY`.** With it, every approved lesson and memory carries an
-  HMAC over (id, status, body, approver), and a restore from the internal branch downgrades
-  any approved note without a valid signature to a proposal, so write access to the branch
-  can't mint a house rule or edit one. Without it, restores trust the branch. Rules approved
-  before the key was set are unsigned, so re-approve them after setting it.
+- Low severity, found by review and not yet fixed:
+  - A Confluence create's retry check can adopt a same-titled page a human made in that window.
+  - `parentId` isn't validated.
+  - The vault path guard doesn't resolve symlinks.
+  - A card truncates long arguments; the approval is still bound to the full text by hash.
+
+- **Set `SCRIPTORIUM_SIGNING_KEY`.** Without it, approvals are unsigned and the docs repo's
+  internal branch is trusted. Rules approved before the key was set are unsigned and stop
+  applying once it is set, so re-approve them.
 - Atlassian writes are made with one person's API token. A scoped service-account token
   would make the agent its own identity in Jira and Confluence.
 - The Teammate acts on Jira only from Slack in v1. Answering inside Jira needs a second

@@ -330,7 +330,7 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
           await runDraft(ctx, issue, { force: true });
           break;
         case "approve-doc": {
-          const allowed = mayApproveOnJira(ctx.config.jira, ctx.botAccountId, comment.author?.accountId);
+          const allowed = mayApproveOnJira(ctx.config.jira, ctx.botAccountId, comment.author?.accountId, otherAgents);
           if (!allowed.ok) await say(ctx, key, allowed.reason);
           // Older than the draft on the ticket = given to an earlier draft. Holds across
           // crashes and retries, where "revised in this tick" alone would not.
@@ -367,7 +367,7 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
     // Belt to the snapshot's braces: whoever moved it must be a HUMAN. The agent drives
     // the board itself, and its own transition is bookkeeping, never an approval — the
     // fail-closed rule is "no human approval, no publish", and this is where it is held.
-    const allowed = mayApproveOnJira(ctx.config.jira, ctx.botAccountId, mover?.accountId);
+    const allowed = mayApproveOnJira(ctx.config.jira, ctx.botAccountId, mover?.accountId, await ctx.otherAgentIds());
     if (mover?.accountId && mover.accountId === ctx.botAccountId) {
       console.warn(`[scribe] ${key}: ignoring my own transition to "${ctx.config.jira.approvedStatus}" — not a human approval`);
     } else if (!allowed.ok) {

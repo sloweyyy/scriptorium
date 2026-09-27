@@ -28,6 +28,8 @@ export interface JiraToolSettings {
 }
 
 const ISSUE_KEY = /^[A-Z][A-Z0-9_]*-\d+$/;
+/** A Jira label: no spaces (Jira rejects them), bounded. */
+const LABEL = z.string().regex(/^[^\s]{1,255}$/, "a label has no spaces");
 
 export class JiraAccessError extends Error {}
 
@@ -130,6 +132,73 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
             { probe: async () => (await settings.client.findCommentByOp(key, op))?.id, meta: { tool: "jira_comment", key } },
           );
           return `${replayed ? "Already commented" : "Commented"} on jira:${key} (comment ${result}).`;
+        }),
+    },
+    {
+      name: "jira_transition",
+      description: "Move a Jira issue to another status (by the status or transition name, e.g. \"In Review\"). Requires human approval; it is not done until approved.",
+      inputSchema: z.object({ key: z.string(), status: z.string().min(1).max(60) }),
+      run: (input, context) =>
+        refusalOr(async () => {
+          const parsed = z.object({ key: z.string(), status: z.string().min(1).max(60) }).parse(input);
+          const key = checkKey(parsed.key);
+          // Idempotent: moving to the status it is already in is not a second move. No probe needed.
+          const { result } = await once(settings.ledger, opKey("jira.transition", key, parsed.status.toLowerCase(), context?.approval?.id), () => settings.client.transitionTo(key, parsed.status), {
+            meta: { tool: "jira_transition", key },
+          });
+          if (!result) throw new JiraAccessError(`jira:${key} has no transition to "${parsed.status}" from its current status.`);
+          return `Moved jira:${key} to ${parsed.status}.`;
+        }),
+    },
+    {
+      name: "jira_assign",
+      description: "Assign a Jira issue to a person (their name or email), or \"unassigned\". Requires human approval; it is not done until approved.",
+      inputSchema: z.object({ key: z.string(), assignee: z.string().min(1).max(120).describe('A name or email, or "unassigned".') }),
+      run: (input, context) =>
+        refusalOr(async () => {
+          const parsed = z.object({ key: z.string(), assignee: z.string().min(1).max(120) }).parse(input);
+          const key = checkKey(parsed.key);
+          const wanted = parsed.assignee.trim();
+          let person: { accountId: string | null; name: string };
+          if (/^unassign(ed)?$/i.test(wanted)) person = { accountId: null, name: "nobody" };
+          else {
+            // The approver read a name, not an id: exactly one person may match it, or nothing is done.
+            const matches = await settings.client.findUsers(wanted);
+            if (matches.length !== 1) throw new JiraAccessError(matches.length ? `"${wanted}" matches ${matches.length} people; name one exactly.` : `No Jira user matches "${wanted}".`);
+            person = { accountId: (matches[0] as { accountId: string }).accountId, name: (matches[0] as { displayName: string }).displayName };
+          }
+          await once(settings.ledger, opKey("jira.assign", key, person.accountId ?? "", context?.approval?.id), () => settings.client.assign(key, person.accountId), { meta: { tool: "jira_assign", key } });
+          return `Assigned jira:${key} to ${person.name}.`;
+        }),
+    },
+    {
+      name: "jira_labels",
+      description: "Add and/or remove labels on a Jira issue. Requires human approval; it is not done until approved.",
+      inputSchema: z.object({ key: z.string(), add: z.array(LABEL).max(10).default([]), remove: z.array(LABEL).max(10).default([]) }),
+      run: (input, context) =>
+        refusalOr(async () => {
+          const parsed = z.object({ key: z.string(), add: z.array(LABEL).max(10).default([]), remove: z.array(LABEL).max(10).default([]) }).parse(input);
+          const key = checkKey(parsed.key);
+          if (!parsed.add.length && !parsed.remove.length) throw new JiraAccessError("No labels to add or remove.");
+          await once(settings.ledger, opKey("jira.labels", key, parsed.add.join(","), parsed.remove.join(","), context?.approval?.id), () => settings.client.editLabels(key, parsed.add, parsed.remove), {
+            meta: { tool: "jira_labels", key },
+          });
+          return `Labels on jira:${key}: ${[...parsed.add.map((label) => `+${label}`), ...parsed.remove.map((label) => `-${label}`)].join(" ")}.`;
+        }),
+    },
+    {
+      name: "jira_link",
+      description: 'Link two Jira issues, e.g. "DOC-7 blocks DOC-9" (type: Relates, Blocks, Duplicate, Cloners). Requires human approval; it is not done until approved.',
+      inputSchema: z.object({ from: z.string(), to: z.string(), type: z.enum(["Relates", "Blocks", "Duplicate", "Cloners"]).default("Relates") }),
+      run: (input, context) =>
+        refusalOr(async () => {
+          const parsed = z.object({ from: z.string(), to: z.string(), type: z.enum(["Relates", "Blocks", "Duplicate", "Cloners"]).default("Relates") }).parse(input);
+          // Both ends inside the allow-list: a link is a write on each issue.
+          const from = checkKey(parsed.from);
+          const to = checkKey(parsed.to);
+          if (from === to) throw new JiraAccessError("An issue can't be linked to itself.");
+          await once(settings.ledger, opKey("jira.link", from, to, parsed.type, context?.approval?.id), () => settings.client.linkIssues(from, to, parsed.type), { meta: { tool: "jira_link", from, to } });
+          return `Linked jira:${from} → jira:${to} (${parsed.type}).`;
         }),
     },
   ];

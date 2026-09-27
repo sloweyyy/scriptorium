@@ -298,8 +298,18 @@ describe("jira comment webhooks", () => {
   it("parses comment_created into what the Teammate needs, and nothing else", async () => {
     const { jiraCommentFrom } = await import("@scriptorium/agents");
     expect(jiraCommentFrom({ webhookEvent: "comment_created", issue: { key: "DOC-7" }, comment: { id: 10001, body: "hi", author: { accountId: "h1" } } })).toEqual({ issueKey: "DOC-7", commentId: "10001", body: "hi", authorId: "h1", restriction: {} });
-    expect(jiraCommentFrom({ webhookEvent: "comment_updated", issue: { key: "DOC-7" }, comment: { id: 1, body: "x" } })).toBeUndefined();
+    // An edit is read too (adding the forgotten mention); other events are not.
+    expect(jiraCommentFrom({ webhookEvent: "comment_updated", issue: { key: "DOC-7" }, comment: { id: 1, body: "x" } })?.commentId).toBe("1");
+    expect(jiraCommentFrom({ webhookEvent: "comment_deleted", issue: { key: "DOC-7" }, comment: { id: 1, body: "x" } })).toBeUndefined();
     expect(jiraCommentFrom({ webhookEvent: "comment_created", issue: { key: "DOC-7" }, comment: { id: 1 } })).toBeUndefined();
+  });
+});
+
+describe("new Jira issues", () => {
+  it("parses issue_created with its reporter, and nothing else", async () => {
+    const { jiraCreatedFrom } = await import("@scriptorium/agents");
+    expect(jiraCreatedFrom({ webhookEvent: "jira:issue_created", issue: { key: "BEA-1", fields: { reporter: { accountId: "h1" } } } })).toEqual({ issueKey: "BEA-1", reporterId: "h1" });
+    expect(jiraCreatedFrom({ webhookEvent: "jira:issue_updated", issue: { key: "BEA-1" } })).toBeUndefined();
   });
 });
 

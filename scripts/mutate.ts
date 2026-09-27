@@ -102,6 +102,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira.test.ts"],
   },
   {
+    control: "another agent's move or comment never approves a Scribe publish",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "  if (otherAgentIds.includes(accountId)) return",
+    replace: "  if (false) return",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
     control: "Confluence reads are space-allow-listed",
     file: "packages/connectors/src/confluence.ts",
     find: "    if (!space) throw new ConfluenceAccessError(",
@@ -137,8 +144,15 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-bot.test.ts"],
   },
   {
+    control: "slack_read_channel reads only the turn's own channel",
+    file: "apps/agents/src/teammate.ts",
+    find: "if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return",
+    replace: "if (false) return",
+    evals: ["evals/teammate-bot.test.ts"],
+  },
+  {
     control: "the Teammate writes to Atlassian only as itself",
-    file: "apps/agents/src/teammate-bot.ts",
+    file: "apps/agents/src/teammate-bot/tools.ts",
     find: "tools.push(...(ownIdentity ? atlassian : atlassian.filter((tool) => !ATLASSIAN_WRITES.has(tool.name))));",
     replace: "tools.push(...atlassian);",
     evals: ["evals/teammate-bot.test.ts"],

@@ -67,6 +67,8 @@ export function externalRecordUrl(config: AppConfig, citation: string): string |
   if (confluence) return base ? `${base}/wiki/pages/viewpage.action?pageId=${confluence[1]}` : undefined;
   const github = citation.match(/^github:([a-z0-9_.-]+\/[a-z0-9_.-]+)\/pull\/(\d+)$/);
   if (github) return `https://github.com/${github[1]}/pull/${github[2]}`;
+  const slack = citation.match(/^slack:([A-Z0-9]+)\/(\d+)\.(\d+)$/);
+  if (slack) return config.slack.workspaceUrl ? `${config.slack.workspaceUrl.replace(/\/$/, "")}/archives/${slack[1]}/p${slack[2]}${slack[3]}` : undefined;
   return null;
 }
 

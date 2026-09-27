@@ -22,6 +22,10 @@ import { assembleAgent, listMemories, memoryTools, renderMemories, runSession, s
 const WRITE_DESCRIPTIONS: Record<string, string> = {
   jira_comment: "comment on the Jira issue",
   jira_create_issue: "create a Jira issue",
+  jira_transition: "move the Jira issue",
+  jira_assign: "assign the Jira issue",
+  jira_labels: "change the Jira issue's labels",
+  jira_link: "link the Jira issues",
   confluence_create_page: "create a Confluence page",
   confluence_update_page: "update the Confluence page",
   memory_save: "remember that",
@@ -43,7 +47,7 @@ export function describeOutcome(tool: string, result: string): string {
   return `✅ ${result.split("\n")[0]}`;
 }
 
-export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "slack_reply", "confluence_create_page", "confluence_update_page", "memory_save", "github_pr_comment"]);
+export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "jira_transition", "jira_assign", "jira_labels", "jira_link", "slack_reply", "confluence_create_page", "confluence_update_page", "memory_save", "github_pr_comment"]);
 
 export type TeammateReply =
   | { kind: "answer"; text: string; citations: string[] }
@@ -68,7 +72,7 @@ export interface TeammateTurn {
  * Tools narrowed to the turn they serve. Checked BEFORE policy, so an out-of-bounds call
  * never becomes an approval card at all:
  * - `slack_read_thread` reads only the thread the agent was asked in, not any thread in an
- *   allowed channel (a turn in C1 could read C2's);
+ *   allowed channel (a turn in C1 could read C2's), and `slack_read_channel` only its channel;
  * - `memory_save` may only scope to everyone, this channel, or the asker themself — the
  *   model does not get to file a memory about another team or another person.
  */
@@ -81,6 +85,17 @@ export function bindToTurn(tools: ToolSpec[], turn: TeammateTurn): ToolSpec[] {
         run: async (input: unknown, context?: ToolRunContext) => {
           const { channel, thread_ts } = (input ?? {}) as { channel?: unknown; thread_ts?: unknown };
           if (channel !== turn.channel || thread_ts !== turn.threadTs) return "NOT_ALLOWED: you may read only the thread you were asked in.";
+          return tool.run(input, context);
+        },
+      };
+    }
+    if (tool.name === "slack_read_channel") {
+      return {
+        ...tool,
+        run: async (input: unknown, context?: ToolRunContext) => {
+          // Only the channel it was asked in: from anywhere else it would hand a private
+          // channel's messages to someone who isn't in it.
+          if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return "NOT_ALLOWED: you may read only the channel you were asked in.";
           return tool.run(input, context);
         },
       };

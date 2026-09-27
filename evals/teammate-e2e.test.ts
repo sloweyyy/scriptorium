@@ -30,7 +30,7 @@ vi.mock("@scriptorium/core", async (importOriginal) => ({
   }),
 }));
 
-const { createTeammate, APPROVE_ACTION, REJECT_ACTION } = await import("@scriptorium/agents").then(async (agents) => ({ ...agents, ...(await import("@scriptorium/connectors")) }));
+const { createTeammate, APPROVE_ACTION, REJECT_ACTION, RETRY_ACTION } = await import("@scriptorium/agents").then(async (agents) => ({ ...agents, ...(await import("@scriptorium/connectors")) }));
 
 interface Posted { channel: string; thread_ts?: string; text: string; blocks?: unknown[] }
 let tmpRoot: string;
@@ -147,6 +147,38 @@ describe("teammate, end to end", () => {
     // A decided card cannot decide again.
     expect(await core.onApprovalClick(APPROVE_ACTION, payload("UPM"))).toMatch(/^Not recorded/);
     expect(await vault.listNotes("_memory")).toHaveLength(1);
+  });
+
+  it("an approved action whose connector fails can be retried from the thread — by an approver, once", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [{ name: "memory_save", input: { text: "Release notes go out on Thursdays.", scope: "channel:C1" } }], reply: "Asked." };
+    await core.onMention({ channel: "C1", ts: "3.0", user: "U1", text: "<@UBOT> remember release notes go out on Thursdays" });
+    await settle(core);
+    const card = posted.find((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION));
+    const requestId = JSON.stringify(card?.blocks).match(/"value":"([0-9a-f-]{36})"/)?.[1] as string;
+    const writeNote = vault.writeNote.bind(vault);
+    let failNext = true;
+    vault.writeNote = (async (...args: Parameters<Vault["writeNote"]>) => {
+      if (failNext && args[0].startsWith("_memory")) {
+        failNext = false;
+        throw new Error("EIO: disk hiccup");
+      }
+      return writeNote(...args);
+    }) as Vault["writeNote"];
+    const click = (action: string, user: string) => core.onApprovalClick(action, { actions: [{ value: requestId }], user: { id: user, username: user }, channel: { id: "C1" }, message: { ts: "9.1", thread_ts: "3.0" } });
+
+    expect(await click(APPROVE_ACTION, "UPM")).toBeUndefined();
+    const failed = posted.at(-1)!;
+    expect(failed.text).toContain("couldn't carry it out");
+    expect(failed.text).not.toContain("EIO");
+    expect(JSON.stringify(failed.blocks)).toContain(RETRY_ACTION);
+    expect(await vault.listNotes("_memory")).toHaveLength(0);
+
+    expect(await click(RETRY_ACTION, "U_RANDOM")).toMatch(/^Not retried/);
+    expect(await click(RETRY_ACTION, "UPM")).toBeUndefined();
+    expect(posted.at(-1)?.text).toContain("✅ Done");
+    expect(await vault.listNotes("_memory")).toHaveLength(1);
+    expect(await click(RETRY_ACTION, "UPM")).toMatch(/^Nothing to retry/);
   });
 
   it("a DM or a ticket that asked hears the outcome there — the card was elsewhere", async () => {

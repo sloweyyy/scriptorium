@@ -11,6 +11,8 @@
     "@scriptorium/core": "workspace:*",
     "@scriptorium/jira": "workspace:*",
     "zod": "^4.4.3",
-    "@scriptorium/runtime": "workspace:*"
+    "@scriptorium/runtime": "workspace:*",
+    "@scriptorium/policy": "workspace:*",
+    "@slack/web-api": "^7.10.0"
   }
 }

@@ -26,6 +26,8 @@ import { z } from "zod";
 export const OP_EVENT_TYPE = "scriptorium_op";
 export const APPROVE_ACTION = "policy_approve";
 export const REJECT_ACTION = "policy_reject";
+/** Run an approved request again after its connector failed. Decides nothing new. */
+export const RETRY_ACTION = "policy_retry";
 
 export interface SlackToolSettings {
   client: SlackClient;

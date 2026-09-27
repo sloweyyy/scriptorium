@@ -5,6 +5,7 @@ import {
   APPROVE_ACTION,
   ConfluenceConnector,
   REJECT_ACTION,
+  RETRY_ACTION,
   SlackApprovalChannel,
   type SlackClient,
   githubTools,
@@ -14,7 +15,7 @@ import {
 } from "@scriptorium/connectors";
 import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type CommentRestriction, type JiraClient } from "@scriptorium/jira";
 import { installationToken } from "@scriptorium/publish";
-import { FileApprovalStore, executeApproved, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
+import { FileApprovalStore, executeApproved, mayApprove, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
 import { DailyBudget, FileEffectLedger, Gate, KeyedQueue, envelopeOf, keys, loadSkills, memoryTools, once, opKey, type AgentEvent, type EffectLedger } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
@@ -416,6 +417,54 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     }
   }
 
+  /**
+   * Run an approved request and say what happened. A connector that throws gives the
+   * approval back (guard.ts), so the card thread gets a Retry button — otherwise the
+   * decided card has no buttons left and the approval sits unusable until it expires. A
+   * tool's refusal (`NOT_ALLOWED: …`) is not "done".
+   */
+  async function carryOut(request: ApprovalRequest, userId: string | undefined, userName: string | undefined, where: { channel?: string; threadTs?: string }): Promise<void> {
+    const approver = userName ?? userId ?? "an approver";
+    const outcome = await executeApproved(envelope, [...connectorTools, ...memoryTools(vault, config.signingKey)], request.id, guardDepsFor(request.key)).catch(
+      (error: unknown) => ({ kind: "failed" as const, reason: error instanceof Error ? error.message : String(error) }),
+    );
+    const refused = outcome.kind === "ran" && /^NOT_ALLOWED\b/.test(outcome.result);
+    const asker = request.requestedBy?.startsWith("slack:") ? `<@${request.requestedBy.slice("slack:".length)}> ` : "";
+    let text: string;
+    let origin: string;
+    if (outcome.kind === "ran" && !refused) {
+      text = `${asker}✅ Done, approved by ${userId ? `<@${userId}>` : approver}: ${outcome.result.split("\n")[0]}`;
+      origin = `✅ Done, approved by ${approver}: ${outcome.result.split("\n")[0]}`;
+    } else if (refused) {
+      const reason = (outcome as { result: string }).result.replace(/^NOT_ALLOWED:\s*/, "").split("\n")[0];
+      text = `${asker}⚠️ Approved, but it isn't allowed here, so nothing was done: ${reason}`;
+      origin = `⚠️ ${approver} approved this, but it isn't allowed here, so nothing was done: ${reason}`;
+    } else {
+      text = `${asker}⚠️ Approved, but I couldn't carry it out — nothing was changed. The approval is kept: an approver can retry.`;
+      origin = `⚠️ ${approver} approved this, but I couldn't carry it out yet — nothing was changed.`;
+    }
+    if (outcome.kind !== "ran" || refused) {
+      await audit(config.auditFile, { type: "teammate.approval.not_run", actor: "teammate", request: request.id, outcome: refused ? "refused" : outcome.kind, reason: "reason" in outcome ? outcome.reason : undefined }).catch(() => undefined);
+    }
+    const retryable = (await store.all()).find((candidate) => candidate.id === request.id)?.status === "approved";
+    if (where.channel) {
+      await slack.chat.postMessage({
+        channel: where.channel,
+        thread_ts: where.threadTs,
+        text,
+        ...(retryable
+          ? {
+              blocks: [
+                { type: "section", text: { type: "mrkdwn", text } },
+                { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Retry" }, action_id: RETRY_ACTION, value: request.id }] },
+              ] as never,
+            }
+          : {}),
+      });
+    }
+    await tellOrigin(request, origin).catch(() => undefined);
+  }
+
   const digestChannel = settings.digestChannel && settings.channels.includes(settings.digestChannel) ? settings.digestChannel : undefined;
   if (settings.digestChannel && !digestChannel) console.warn(`[teammate] TEAMMATE_DIGEST_CHANNEL ${settings.digestChannel} is not in TEAMMATE_SLACK_CHANNELS — no digest`);
 
@@ -453,6 +502,17 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
 
     async onApprovalClick(action, payload) {
       const requestId = payload.actions?.[0]?.value ?? "";
+      const where = { channel: payload.channel?.id, threadTs: payload.message?.thread_ts ?? payload.message?.ts };
+      if (action === RETRY_ACTION) {
+        // A retry decides nothing new: the request is already approved. It only asks a
+        // listed approver's say-so to run it again.
+        const request = (await store.all()).find((candidate) => candidate.id === requestId);
+        if (!request || request.status !== "approved") return "Nothing to retry: it was already carried out, rejected or expired.";
+        const allowed = mayApprove(envelope, envelope.tools[request.tool] ?? { tier: "deny" }, payload.user?.id ? { accountId: `slack:${payload.user.id}` } : undefined, request.requestedBy);
+        if (!allowed.ok) return `Not retried: ${allowed.reason}.`;
+        await carryOut(request, payload.user?.id, payload.user?.username, where);
+        return undefined;
+      }
       const decided = await handleApprovalClick(slack, store, (agent) => (agent === envelope.agent ? envelope : undefined), {
         action,
         requestId,
@@ -464,25 +524,11 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       });
       if (!decided.ok) return decided.message;
       const request = (await store.all()).find((candidate) => candidate.id === requestId);
-      const approver = payload.user?.username ?? payload.user?.id ?? "an approver";
       if (action !== APPROVE_ACTION) {
-        await tellOrigin(request, `❌ Rejected by ${approver} — nothing was done.`).catch(() => undefined);
+        await tellOrigin(request, `❌ Rejected by ${payload.user?.username ?? payload.user?.id ?? "an approver"} — nothing was done.`).catch(() => undefined);
         return decided.message;
       }
-      const outcome = await executeApproved(envelope, [...connectorTools, ...memoryTools(vault, config.signingKey)], requestId, guardDepsFor(request?.key ?? ""));
-      const asker = request?.requestedBy?.startsWith("slack:") ? `<@${request.requestedBy.slice("slack:".length)}> ` : "";
-      const text =
-        outcome.kind === "ran"
-          ? `${asker}✅ Done, approved by <@${payload.user?.id}>: ${outcome.result.split("\n")[0]}`
-          : `${asker}⚠️ Approved, but I couldn't carry it out. The approval is kept, so it can be retried.`;
-      if (outcome.kind !== "ran") await audit(config.auditFile, { type: "teammate.approval.not_run", actor: "teammate", request: requestId, outcome: outcome.kind, reason: "reason" in outcome ? outcome.reason : undefined }).catch(() => undefined);
-      if (payload.channel?.id) await slack.chat.postMessage({ channel: payload.channel.id, thread_ts: payload.message?.thread_ts ?? payload.message?.ts, text });
-      await tellOrigin(
-        request,
-        outcome.kind === "ran"
-          ? `✅ Done, approved by ${approver}: ${outcome.result.split("\n")[0]}`
-          : `⚠️ ${approver} approved this, but I couldn't carry it out. The approval is kept, so it can be retried.`,
-      ).catch(() => undefined);
+      if (request) await carryOut(request, payload.user?.id, payload.user?.username, where);
       return undefined;
     },
 
@@ -604,7 +650,7 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
 
   app.event("app_mention", async ({ event }) => core.onMention(event as SlackMention));
   app.message(async ({ message }) => core.onDirectMessage(message as SlackMention & { channel_type?: string; subtype?: string }));
-  for (const action of [APPROVE_ACTION, REJECT_ACTION]) {
+  for (const action of [APPROVE_ACTION, REJECT_ACTION, RETRY_ACTION]) {
     app.action(action, async ({ ack, body, respond }) => {
       await ack();
       const message = await core.onApprovalClick(action, body as ApprovalClickPayload);

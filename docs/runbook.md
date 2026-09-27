@@ -47,7 +47,7 @@ Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
 | The Teammate doesn't reply | audit `teammate.ignored` lines, which carry the reason | channel not in `TEAMMATE_SLACK_CHANNELS`, the bot not invited, or a message from another bot |
 | "I couldn't finish that" | the run page or `pnpm trace <run>` → `teammate.error` | provider quota or outage, or a connector 5xx |
 | An approval card never appears | audit `policy.approval.unavailable` | the bot can't post in that channel. The write did **not** run |
-| Approved, but "not carried out" | the run page → `policy.run.failed` | the connector failed. The approval was given back, so clicking again retries safely |
+| Approved, but "couldn't carry it out" | the run page → `policy.run.failed` | the connector failed. The approval was given back: an approver clicks **Retry** in the thread |
 | A house rule stopped applying | lesson frontmatter `restored_unverified: true`, or a missing `approval_sig` | the signing key was set after the rule was approved, or the rule was edited in the repo. Re-approve it |
 | A draft shows `L-00N ✗` | the draft comment's house-rules line | the draft broke a checked rule. The auto-revise already ran once; give feedback or fix the rule's check |
 | "This doc may be out of date" on a ticket | `doc.stale.notified` | the PRD changed after approval. Comment `draft` to revise |

@@ -86,3 +86,11 @@ describe("tools bound to the turn", () => {
     expect(ran).toEqual(["slack_read_thread", "memory_save", "memory_save", "memory_save"]);
   });
 });
+
+describe("progress", () => {
+  it("names what the agent is doing, in plain words", async () => {
+    const { progressText } = await import("@scriptorium/agents");
+    expect(progressText("confluence_search")).toBe("🔎 Searching Confluence…");
+    expect(progressText("something_new")).toBe("🔎 Working on it…");
+  });
+});

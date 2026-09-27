@@ -134,6 +134,8 @@ export interface TeammateSettings extends SlackAppTokens {
   people?: string[][];
   /** Model tokens per channel (or DM) per UTC day. Unset: unlimited. */
   dailyTokens?: number;
+  /** Tokens per UTC day across everything, whatever the scope: many DMs can't add up past it. */
+  dailyTokensTotal?: number;
   /** Channel for the weekly digest. Unset: no digest. */
   digestChannel?: string;
   /** When it goes out, UTC: weekday 1–7 (Mon–Sun) and hour. Default Monday 09:00. */
@@ -289,6 +291,7 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       allowDms: env("TEAMMATE_ALLOW_DMS") === "true",
       people: parsePeople(env("TEAMMATE_PEOPLE")),
       dailyTokens: env("TEAMMATE_DAILY_TOKENS") ? Number(env("TEAMMATE_DAILY_TOKENS")) : undefined,
+      dailyTokensTotal: env("TEAMMATE_DAILY_TOKENS_TOTAL") ? Number(env("TEAMMATE_DAILY_TOKENS_TOTAL")) : undefined,
       digestChannel: env("TEAMMATE_DIGEST_CHANNEL"),
       digestWeekday: envNumber("TEAMMATE_DIGEST_WEEKDAY", 1),
       digestHour: envNumber("TEAMMATE_DIGEST_HOUR", 9),

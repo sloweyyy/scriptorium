@@ -10,6 +10,9 @@ import { Vault, type AppConfig } from "@scriptorium/core";
  * gate, queue, assembly from config, skills, policy, grounding, memory — is the real thing.
  */
 
+/** What the model was sent last — to check the thread it was given. */
+let lastPrompt = "";
+let threadReplies: Array<{ ts: string; user?: string; text: string }> = [];
 let script: { calls: Array<{ name: string; input: unknown }>; reply: string; throwOnce?: boolean; hang?: boolean };
 vi.mock("@scriptorium/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@scriptorium/core")>()),
@@ -17,7 +20,8 @@ vi.mock("@scriptorium/core", async (importOriginal) => ({
   anthropic: () => ({
     beta: {
       messages: {
-        toolRunner: async (params: { tools: Array<{ name: string; run: (input: unknown) => Promise<unknown> }> }) => {
+        toolRunner: async (params: { tools: Array<{ name: string; run: (input: unknown) => Promise<unknown> }>; messages?: unknown }) => {
+          lastPrompt = JSON.stringify(params.messages ?? "");
           // A model call still running when the process goes away.
           if (script.hang) return new Promise(() => undefined);
           if (script.throwOnce) {
@@ -59,7 +63,7 @@ const slack = {
       return { ok: true };
     },
   },
-  conversations: { replies: async () => ({ messages: [] }) },
+  conversations: { replies: async () => ({ messages: threadReplies }) },
 };
 
 function config(): AppConfig {
@@ -85,6 +89,8 @@ beforeEach(async () => {
   posted = [];
   progressUpdates = [];
   progressDelayMs = 0;
+  threadReplies = [];
+  lastPrompt = "";
 });
 
 afterEach(async () => {
@@ -283,6 +289,34 @@ describe("automatic PR checks", () => {
     expect(summary?.text).toContain("Waiting for approval");
     expect(card?.text).toContain("Approval needed");
     expect(card?.thread_ts).toBe(`9.${posted.indexOf(summary!) + 1}`);
+  });
+});
+
+describe("slash command and shortcut", () => {
+  it("/teammate posts the question as a thread and answers under it — only where it answers at all", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]." };
+    expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: "when are digests sent? <!channel>", commandId: "t1" })).toBeUndefined();
+    expect(await core.onSlashCommand({ channel: "C_OTHER", user: "U1", text: "hello", commandId: "t2" })).toMatch(/^I don't work in this conversation\. Ask me in <#C1>/);
+    expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: "help", commandId: "t3" })).toContain("I'm the Teammate");
+    await settle(core);
+    const [root, answer, ...rest] = posted;
+    expect(rest).toEqual([]);
+    // The question is shown as asked, but can't ping the channel.
+    expect(root).toMatchObject({ channel: "C1", text: "<@U1> asked: when are digests sent? &lt;!channel&gt;" });
+    expect(answer).toMatchObject({ channel: "C1", thread_ts: "9.1" });
+    expect(answer?.text).toContain("docs/digest-emails");
+  });
+
+  it("'File as a ticket' reads the thread including the message it was used on", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    threadReplies = [{ ts: "5.0", user: "U2", text: "Digest times should follow each subscriber's timezone" }];
+    script = { calls: [], reply: "Proposed a ticket." };
+    expect(await core.onFileAsTicket({ channel: "C1", user: "U1", messageTs: "5.0", shortcutId: "s1" })).toBeUndefined();
+    expect(await core.onFileAsTicket({ channel: "C_OTHER", user: "U1", messageTs: "5.0", shortcutId: "s2" })).toMatch(/^I don't work/);
+    await settle(core);
+    expect(lastPrompt).toContain("follow each subscriber");
+    expect(posted[0]).toMatchObject({ channel: "C1", thread_ts: "5.0" });
   });
 });
 

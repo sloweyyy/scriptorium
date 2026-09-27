@@ -6,6 +6,7 @@ import {
   REJECT_ACTION,
   RETRY_ACTION,
   SlackApprovalChannel,
+  escapeMrkdwn,
   type SlackClient,
   handleApprovalClick,
 } from "@scriptorium/connectors";
@@ -51,6 +52,10 @@ export interface TeammateCore {
   onJiraAssigned(input: { issueKey: string; assigneeId: string; changeId: string }): Promise<void>;
   /** A new Jira issue: triaged (readiness + likely duplicates) in projects that opted in. */
   onJiraCreated(input: { issueKey: string; reporterId?: string }): Promise<void>;
+  /** `/teammate <question>`. Returns a message for the invoker only (ephemeral), if any. */
+  onSlashCommand(input: { channel: string; user: string; text: string; commandId: string }): Promise<string | undefined>;
+  /** The "File as a ticket" message shortcut. Returns a message for the invoker only, if any. */
+  onFileAsTicket(input: { channel: string; user: string; messageTs: string; threadTs?: string; shortcutId: string }): Promise<string | undefined>;
   /** A pull request to check against its ticket (from the GitHub webhook). */
   onPullRequest(input: { repo: string; number: number; author?: string; deliveryId?: string }): Promise<void>;
   drain(deadlineMs: number): Promise<boolean>;
@@ -68,6 +73,9 @@ export interface TeammateJira {
   client: JiraClient;
   accountId: string;
 }
+
+/** Not a Slack ts: a shortcut's "trigger" excludes nothing from the thread it reads. */
+const SHORTCUT_TRIGGER = "shortcut";
 
 /**
  * Everything the Teammate does in Slack, with no Bolt in it: the whole path from a mention
@@ -348,6 +356,11 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     await tellOrigin(request, origin).catch(() => undefined);
   }
 
+  /** Where the Teammate answers: its channels, and DMs only when they are allowed. */
+  const answersIn = (channel: string): boolean => settings.channels.includes(channel) || (settings.allowDms && channel.startsWith("D"));
+  const notHere = (): string =>
+    settings.channels.length ? `I don't work in this conversation. Ask me in ${settings.channels.map((id) => `<#${id}>`).join(", ")}.` : "I'm not set up to answer in any channel yet.";
+
   const digestChannel = settings.digestChannel && settings.channels.includes(settings.digestChannel) ? settings.digestChannel : undefined;
   if (settings.digestChannel && !digestChannel) console.warn(`[teammate] TEAMMATE_DIGEST_CHANNEL ${settings.digestChannel} is not in TEAMMATE_SLACK_CHANNELS — no digest`);
 
@@ -365,6 +378,27 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         return;
       }
       queue.push(agentEvent);
+    },
+
+    async onSlashCommand({ channel, user, text, commandId }) {
+      // A command is typed anywhere; it is answered only where a mention would be.
+      if (!answersIn(channel)) return notHere();
+      const question = text.trim();
+      if (isHelpRequest(question)) return helpText(settings);
+      // The command itself is invisible to the channel, so the question is posted first and
+      // becomes the thread — the answer and any approval card land under it, where people see them.
+      const root = await slack.chat.postMessage({ channel, text: `<@${user}> asked: ${escapeMrkdwn(question)}` }).catch(() => undefined);
+      if (!root?.ts) return "I couldn't post in this channel — is the Teammate a member here? (`/invite @Teammate`)";
+      await core.onMention({ channel, ts: root.ts, user, text: question, client_msg_id: `command:${commandId}` });
+      return undefined;
+    },
+
+    async onFileAsTicket({ channel, user, messageTs, threadTs, shortcutId }) {
+      if (!answersIn(channel)) return notHere();
+      // The message the shortcut was used on is part of the discussion, not the trigger: no
+      // real ts is excluded from the thread, so the model reads that message too.
+      await core.onMention({ channel, ts: SHORTCUT_TRIGGER, thread_ts: threadTs ?? messageTs, user, text: "Turn this thread into a Jira ticket.", client_msg_id: `shortcut:${shortcutId}` });
+      return undefined;
     },
 
     async onDirectMessage(message) {
@@ -565,6 +599,23 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
 
   app.event("app_mention", async ({ event }) => core.onMention(event as SlackMention));
   app.message(async ({ message }) => core.onDirectMessage(message as SlackMention & { channel_type?: string; subtype?: string }));
+  app.command("/teammate", async ({ ack, command, respond }) => {
+    await ack();
+    const message = await core.onSlashCommand({ channel: command.channel_id, user: command.user_id, text: command.text, commandId: command.trigger_id });
+    if (message) await respond({ text: message, response_type: "ephemeral" });
+  });
+  app.shortcut("file_as_ticket", async ({ ack, shortcut, respond }) => {
+    await ack();
+    if (shortcut.type !== "message_action") return;
+    const message = await core.onFileAsTicket({
+      channel: shortcut.channel.id,
+      user: shortcut.user.id,
+      messageTs: shortcut.message.ts,
+      threadTs: (shortcut.message as { thread_ts?: string }).thread_ts,
+      shortcutId: shortcut.trigger_id,
+    });
+    if (message) await respond({ text: message, response_type: "ephemeral" });
+  });
   for (const action of [APPROVE_ACTION, REJECT_ACTION, RETRY_ACTION]) {
     app.action(action, async ({ ack, body, respond }) => {
       await ack();

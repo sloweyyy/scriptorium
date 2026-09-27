@@ -60,7 +60,7 @@ be caught.
 | **Answer** | Cited answers across your docs, Confluence, Jira and GitHub · channel catch-up ("what did I miss?") · sprint reports · epic status updates · weekly digest |
 | **Act, with approval** | Thread → Jira ticket (also a message shortcut) · move, assign, label and link issues · Confluence pages · PR comments · reminders · several changes on one card as a plan |
 | **Watch** | Triage new tickets (readiness and likely duplicates) · readiness check when a ticket is assigned to it · automatic PR checks against their ticket · stale-doc notices |
-| **Remember** | Team memory it keeps only when a person approves it, scoped to a person, a channel or everyone, and set to expire |
+| **Remember** | Team memory it keeps only when a person approves it, scoped to a person, a channel or everyone, and set to expire. `/teammate memories` shows what applies to you, and `/teammate forget` removes your own at once |
 | **Surfaces** | Slack mentions, DMs, `/teammate`, App Home approvals inbox · Jira mentions, assignments, new issues · GitHub PR webhooks · a read-only MCP server for your editor |
 
 Skills are plain markdown in [`skills/`](skills/), and an agent is configuration, not a new bot.

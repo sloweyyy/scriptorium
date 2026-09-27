@@ -47,6 +47,28 @@ export async function listMemories(vault: Vault, scopes: readonly string[], now 
   return memories.sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/**
+ * Forget one memory. A person may forget their own `person:` memories at once — it only
+ * narrows what the agent knows, so it needs no approver; channel and global memories need
+ * someone allowed to curate them (`mayCurate`). The file is deleted, not marked: forgetting
+ * is the point. Git history still holds it, which the reply says.
+ */
+export async function forgetMemory(
+  vault: Vault,
+  id: string,
+  who: { accountId: string; mayCurate: boolean },
+): Promise<{ ok: true; memory: { id: string; scope: string } } | { ok: false; reason: string }> {
+  if (!/^M-[0-9a-f]{8}$/i.test(id)) return { ok: false, reason: "that isn't a memory id (they look like M-1a2b3c4d)" };
+  const relPath = `${MEMORY_DIR}/${id}.md`;
+  if (!(await vault.exists(relPath))) return { ok: false, reason: `there is no memory ${id}` };
+  const note = await vault.readNote(relPath);
+  const scope = typeof note.frontmatter.scope === "string" ? note.frontmatter.scope : "";
+  const own = scope === `person:${who.accountId}`;
+  if (!own && !who.mayCurate) return { ok: false, reason: `${id} isn't yours to forget (it's ${scope || "unscoped"}); an admin can remove it` };
+  await vault.deleteFile(relPath);
+  return { ok: true, memory: { id, scope } };
+}
+
 export function renderMemories(memories: readonly Memory[]): string {
   if (!memories.length) return "";
   return [

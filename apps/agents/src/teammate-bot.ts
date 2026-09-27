@@ -12,7 +12,7 @@ import {
 } from "@scriptorium/connectors";
 import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type CommentRestriction, type JiraClient } from "@scriptorium/jira";
 import { FileApprovalStore, PLAN_TOOL, executeApproved, mayApprove, planTool, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
-import { DailyBudget, FileEffectLedger, Gate, KeyedQueue, envelopeOf, keys, loadSkills, memoryTools, once, opKey, type AgentEvent } from "@scriptorium/runtime";
+import { DailyBudget, FileEffectLedger, Gate, KeyedQueue, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, scopesFor, type AgentEvent } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
 import { gapTicketOpener } from "./gap-ticket";
@@ -448,6 +448,26 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     },
 
     async onSlashCommand({ channel, user, text, commandId }) {
+      // `/teammate memories` and `/teammate forget M-…`: what it remembers about you, answered
+      // privately. Your own memories you can forget at once; the rest need an admin.
+      const trimmed = text.trim();
+      if (/^memories$/i.test(trimmed)) {
+        const scopes = scopesFor({ channel, askedBy: `slack:${user}` });
+        const memories = await listMemories(vault, scopes);
+        if (!memories.length) return "I don't remember anything that applies to you here.";
+        return [
+          "What I remember that applies to you here:",
+          ...memories.map((memory) => `• \`${memory.id}\` (${memory.scope === `person:slack:${user}` ? "about you" : memory.scope}): ${escapeMrkdwn(memory.text)}`),
+          "Forget one with `/teammate forget <id>`.",
+        ].join("\n");
+      }
+      const forget = trimmed.match(/^forget\s+(\S+)$/i);
+      if (forget) {
+        const result = await forgetMemory(vault, forget[1] as string, { accountId: `slack:${user}`, mayCurate: (settings.admins ?? []).includes(user) });
+        if (!result.ok) return `Nothing forgotten: ${result.reason}.`;
+        await audit(config.auditFile, { type: "memory.forgotten", actor: `slack:${user}`, memory: result.memory.id, scope: result.memory.scope }).catch(() => undefined);
+        return `Forgotten: \`${result.memory.id}\`. It no longer applies anywhere. (It remains in the vault's git history.)`;
+      }
       // `/teammate admin …`: private, from anywhere, and only for listed admins.
       const admin = text.trim().match(/^admin\b(.*)$/is);
       if (admin) {

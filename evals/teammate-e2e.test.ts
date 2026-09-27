@@ -308,6 +308,30 @@ describe("automatic PR checks", () => {
   });
 });
 
+describe("your memories", () => {
+  it("/teammate memories lists what applies to you; you can forget your own at once, not others'", async () => {
+    const core = await createTeammate({ ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig, vault, slack as never, "UBOT");
+    const write = (id: string, scope: string, text: string) => vault.writeNote(`_memory/${id}.md`, text, { id, scope, status: "approved", approved_by: "Priya" });
+    await write("M-0000aaaa", "person:slack:U1", "Prefers short answers.");
+    await write("M-0000bbbb", "channel:C1", "Release notes go out on Thursdays.");
+    await write("M-0000cccc", "person:slack:U2", "Someone else's preference.");
+
+    const listed = (await core.onSlashCommand({ channel: "C1", user: "U1", text: "memories", commandId: "m1" }))!;
+    expect(listed).toContain("`M-0000aaaa` (about you): Prefers short answers.");
+    expect(listed).toContain("`M-0000bbbb` (channel:C1)");
+    expect(listed).not.toContain("Someone else");
+
+    expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: "forget M-0000cccc", commandId: "m2" })).toMatch(/^Nothing forgotten: M-0000cccc isn't yours/);
+    expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: "forget M-0000bbbb", commandId: "m3" })).toMatch(/^Nothing forgotten/);
+    expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: "forget M-0000aaaa", commandId: "m4" })).toMatch(/^Forgotten: `M-0000aaaa`/);
+    expect(await vault.exists("_memory/M-0000aaaa.md")).toBe(false);
+    // An admin may curate the shared ones.
+    expect(await core.onSlashCommand({ channel: "C1", user: "UADMIN", text: "forget M-0000bbbb", commandId: "m5" })).toMatch(/^Forgotten/);
+    expect(await fs.readFile(path.join(tmpRoot, "audit.jsonl"), "utf8")).toContain('"type":"memory.forgotten"');
+    expect(posted).toEqual([]);
+  });
+});
+
 describe("admin controls", () => {
   it("an admin pauses it: nothing is answered or carried out until they resume; others can't", async () => {
     const admins = { ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig;

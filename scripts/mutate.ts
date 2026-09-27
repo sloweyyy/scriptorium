@@ -165,6 +165,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/confluence-connector.test.ts"],
   },
   {
+    control: "you can forget only your own memories (the rest need an admin)",
+    file: "packages/runtime/src/memory.ts",
+    find: "  if (!own && !who.mayCurate) return",
+    replace: "  if (false) return",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
     control: "memories are invisible to retrieval",
     file: "packages/curator/src/search.ts",
     find: "    if (isPrivateNote(relPath)) continue;",

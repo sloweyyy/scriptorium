@@ -321,7 +321,7 @@ Checks:
 ```bash
 pnpm typecheck
 pnpm eval                     # 379 checks, no API key needed
-RUN_LLM_EVALS=1 pnpm eval     # + live grounded-Q&A checks
+RUN_LLM_EVALS=1 pnpm eval     # + live checks (grounded Q&A, handoff, red team, hybrid golden set)
 ```
 
 ### Jira setup (Agent A, ~5 minutes)

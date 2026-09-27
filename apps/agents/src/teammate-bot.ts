@@ -168,8 +168,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const available = new Set([...connectorTools.map((tool) => tool.name), "vault_overview", "search_vault", "read_note", "memory_save"]);
   const hostConfig = { ...agentConfig, tools: Object.fromEntries(Object.entries(agentConfig.tools).filter(([name]) => available.has(name))) };
   const envelope = envelopeOf(hostConfig);
-  // Requests that did not start in a Slack thread (a PR check) put their card in the PR channel.
-  const approvalChannel = new SlackApprovalChannel(slack, settings.prChannel ?? config.slack.notifyChannel);
+  // Cards follow the request: its channel thread; a PR → the PR channel; a DM or Jira → notify.
+  const approvalChannel = new SlackApprovalChannel(slack, { fallbackChannel: config.slack.notifyChannel, prChannel: settings.prChannel });
   const guardDepsFor = (key: string): GuardDeps => ({ store, channel: approvalChannel, auditFile: config.auditFile, key });
   const turnDeps = (key: string) => ({ vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config), signingKey: config.signingKey });
 

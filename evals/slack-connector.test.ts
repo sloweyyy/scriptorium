@@ -129,3 +129,16 @@ describe("the approval card cannot be dressed up by the text it shows", () => {
     expect(escapeMrkdwn("a & b")).toBe("a &amp; b");
   });
 });
+
+describe("where an approval card goes", () => {
+  it("its channel thread; a PR to the PR channel; a DM or Jira request to the notify channel — never a DM", async () => {
+    const { cardTarget } = await import("@scriptorium/connectors");
+    const request = (key: string) => ({ id: "r", agent: "T", tool: "t", argsHash: "h", summary: "", key, requestedAt: "", expiresAt: "", status: "pending" as const });
+    const routing = { fallbackChannel: "CN", prChannel: "CPR" };
+    expect(cardTarget(request("slack:thread:C1/1.0"), routing)).toEqual({ channel: "C1", thread_ts: "1.0" });
+    expect(cardTarget(request("slack:thread:D9/2.0"), routing)).toEqual({ channel: "CN" });
+    expect(cardTarget(request("github:pull:org/app#12"), routing)).toEqual({ channel: "CPR" });
+    expect(cardTarget(request("jira:issue:DOC-7"), routing)).toEqual({ channel: "CN" });
+    expect(cardTarget(request("jira:issue:DOC-7"), {})).toBeUndefined();
+  });
+});

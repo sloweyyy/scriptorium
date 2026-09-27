@@ -100,22 +100,38 @@ async function refusalOr(work: () => Promise<string>): Promise<string> {
   }
 }
 
-/** Where a request's card goes: its own thread when it came from Slack, else the fallback. */
-function cardTarget(request: ApprovalRequest, fallbackChannel?: string): { channel: string; thread_ts?: string } | undefined {
+/** Where approval cards go when the request did not start in a channel thread anyone can see. */
+export interface CardRouting {
+  /** Default: requests from Jira, from a DM, or from anywhere without a visible thread. */
+  fallbackChannel?: string;
+  /** Requests about a GitHub pull request. */
+  prChannel?: string;
+}
+
+/**
+ * Where a request's card goes. A channel thread keeps it in that thread. A DM does NOT —
+ * only the requester can see a DM, and the requester is rarely the approver — so it goes to
+ * the fallback channel, like a request from Jira. A PR goes to the PR channel.
+ */
+export function cardTarget(request: ApprovalRequest, routing: CardRouting): { channel: string; thread_ts?: string } | undefined {
   const thread = request.key.match(/^slack:thread:([^/]+)\/(.+)$/);
-  if (thread) return { channel: thread[1] as string, thread_ts: thread[2] };
-  return fallbackChannel ? { channel: fallbackChannel } : undefined;
+  if (thread && !(thread[1] as string).startsWith("D")) return { channel: thread[1] as string, thread_ts: thread[2] };
+  if (request.key.startsWith("github:pull:") && routing.prChannel) return { channel: routing.prChannel };
+  return routing.fallbackChannel ? { channel: routing.fallbackChannel } : undefined;
 }
 
 export class SlackApprovalChannel implements ApprovalChannel {
+  private readonly routing: CardRouting;
   constructor(
     private readonly client: SlackClient,
-    /** For requests that did not start in Slack (a Jira-triggered write, say). */
-    private readonly fallbackChannel?: string,
-  ) {}
+    /** A channel id (the fallback for everything) or full routing. */
+    routing?: string | CardRouting,
+  ) {
+    this.routing = typeof routing === "string" ? { fallbackChannel: routing } : (routing ?? {});
+  }
 
   async post(request: ApprovalRequest): Promise<void> {
-    const target = cardTarget(request, this.fallbackChannel);
+    const target = cardTarget(request, this.routing);
     // Nowhere to show it means nobody can approve it: throw, and the tool does not run.
     if (!target) throw new Error("no Slack channel to post the approval card in");
     const posted = await this.client.chat.postMessage({ ...target, text: `Approval needed: ${escapeMrkdwn(request.tool)}`, blocks: approvalBlocks(request) as never });

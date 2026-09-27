@@ -224,7 +224,7 @@ export async function enforceGrounding(vault: Vault, answer: QaAnswer, evidence:
   for (const citation of answer.citations) {
     const relPath = citation.replace(/#.*$/, "").replace(/\.md$/, "");
     if (NOT_CITABLE.some((prefix) => relPath.startsWith(prefix))) continue;
-    if (!evidence.retrieved.some((result) => result.includes(relPath))) continue;
+    if (!evidence.retrieved.some((result) => mentions(result, relPath))) continue;
     // A source-qualified citation (`confluence:123`, `jira:DOC-7`) names a record in another
     // system: it counts when a tool returned it in this conversation, which is the only
     // evidence there is — the vault cannot vouch for a Confluence page.
@@ -232,6 +232,16 @@ export async function enforceGrounding(vault: Vault, answer: QaAnswer, evidence:
   }
   if (citations.length || evidence.usedOverview) return { ...answer, citations };
   return { ...answer, citations: [], ungrounded: true };
+}
+
+/**
+ * Does a tool result name this record — as a whole token, not a prefix? A substring test
+ * let `confluence:1` pass because `confluence:101` was retrieved, and `docs/a` because
+ * `docs/ab` was: a citation to something never read, accepted.
+ */
+function mentions(result: string, record: string): boolean {
+  const escaped = record.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^A-Za-z0-9_/.:-])${escaped}(\\.md)?($|[^A-Za-z0-9_/-])`).test(result);
 }
 
 async function noteExists(vault: Vault, relPath: string): Promise<boolean> {

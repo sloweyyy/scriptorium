@@ -99,6 +99,16 @@ describe("enforceGrounding", () => {
     expect((await judge("See [[confluence:../x]].", false, ["confluence:../x"])).ungrounded).toBe(true);
   });
 
+  it("matches a retrieved record as a whole token, never as a prefix of another", async () => {
+    await vault.writeNote("docs/a.md", "# A", {});
+    // docs/ab was retrieved; docs/a exists but was never read.
+    expect((await judge("Claim [[docs/a]].", false, ["docs/ab: something"])).ungrounded).toBe(true);
+    expect((await judge("Claim [[confluence:1]].", false, ["confluence:101 — Page"])).ungrounded).toBe(true);
+    // Real mentions still count: JSON-quoted, path with .md, or followed by punctuation.
+    expect((await judge("Claim [[docs/a]].", false, ['[{"relPath":"docs/a.md"}]'])).ungrounded).toBeUndefined();
+    expect((await judge("Claim [[confluence:101]].", false, ["confluence:101 — Page"])).ungrounded).toBeUndefined();
+  });
+
   it("never counts a citation that escapes the vault", async () => {
     const answer = await judge("See [[../../etc/passwd]].", false, ["../../etc/passwd"]);
     expect(answer.ungrounded).toBe(true);

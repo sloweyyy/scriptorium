@@ -244,21 +244,37 @@ async function publishApprovedDocLocked(
 
   // The internal tree goes to its own private repo or nowhere. The external publish above
   // stands either way: it carries nothing internal, and a human still has to merge it.
-  const vaultDir = await ensureVaultRepo(config);
-  const internal = vaultDir
-    ? await publishVault({
-        vault,
-        repoDir: vaultDir,
-        target: "internal",
-        subdir: "internal",
-        branch: config.docsRepo.internalBranch,
-        remote: "origin",
-        approvedBy: input.approvedBy,
-        message: `vault: ${input.slug} (${input.issueKey})`,
-      })
-    : undefined;
+  //
+  // A vault failure must not escape from here. The external branch is already pushed, and
+  // a throw would skip the pull request below — then the retry finds the branch
+  // `unchanged`, never opens the PR, and the doc waits for a merge nobody can see.
+  let internal: Awaited<ReturnType<typeof publishVault>> | undefined;
+  let internalError: string | undefined;
+  const vaultConfigured = vaultRepoReady(config.docsRepo);
+  if (vaultConfigured) {
+    try {
+      const vaultDir = await ensureVaultRepo(config);
+      if (vaultDir) {
+        internal = await publishVault({
+          vault,
+          repoDir: vaultDir,
+          target: "internal",
+          subdir: "internal",
+          branch: config.docsRepo.internalBranch,
+          remote: "origin",
+          approvedBy: input.approvedBy,
+          message: `vault: ${input.slug} (${input.issueKey})`,
+        });
+      }
+    } catch (error) {
+      internalError = error instanceof Error ? error.message.split("\n")[0] : String(error);
+      console.warn(`[docs] vault repo push failed: ${internalError}`);
+    }
+  }
   if (internal) {
     lines.push(describe(internal.push, "Internal plane"));
+  } else if (internalError !== undefined) {
+    lines.push(`- Internal plane: **push failed** — could not reach the vault repo (${internalError})`);
   } else {
     console.warn(`[docs] ${NO_VAULT_REPO}`);
     lines.push(`- Internal plane: **not pushed** — ${NO_VAULT_REPO}`);
@@ -330,7 +346,9 @@ async function publishApprovedDocLocked(
     // re-approval finds the external tree already up to date and reports `unchanged`;
     // reading that as failure left the retry flag unset forever, so every later `approve`
     // re-ran the whole push and the terminal "already published" reply was unreachable.
-    published: landed(external.push.status) && (internal === undefined || landed(internal.push.status)),
+    // A configured vault repo that could not be reached keeps this retryable; an
+    // unconfigured one is reported, not retried — there is nowhere to retry to.
+    published: landed(external.push.status) && (internal ? landed(internal.push.status) : internalError === undefined),
     pullRequestUrl,
   };
 }

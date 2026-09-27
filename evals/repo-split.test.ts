@@ -152,6 +152,20 @@ describe("two repositories", () => {
   });
 });
 
+describe("a vault repo that cannot be reached", () => {
+  it("still reaches the pull request step, and stays retryable", async () => {
+    // The likely first-deploy mistake: a wrong VAULT_REPO_SSH_KEY. The external branch is
+    // already pushed by then; throwing past the PR step left a doc no human could merge,
+    // because the retry saw the branch `unchanged` and never opened the PR.
+    const outcome = await publishApprovedDoc(config({ vaultUrl: path.join(tmpRoot, "no-such-remote.git"), slug: "o/docs" }), vault, approval);
+
+    expect(outcome.published).toBe(false);
+    expect(outcome.comment).toContain("Internal plane: **push failed**");
+    expect(outcome.comment).toContain("No GitHub App or token configured");
+    expect(await everyPath(docsRemote)).toContain("docs/incident-timeline-embed.md");
+  });
+});
+
 describe("no vault repo configured", () => {
   it("publishes the public doc, pushes nothing internal, and says so", async () => {
     const outcome = await publishApprovedDoc(config({ vaultUrl: undefined }), vault, approval);

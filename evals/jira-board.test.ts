@@ -699,3 +699,19 @@ describe("a lesson learned on one ticket shapes the next (TODO #6)", () => {
     expect(await draftDoc2()).not.toContain(RULE);
   });
 });
+
+describe("designs the model cannot take", () => {
+  it("drafts without an oversized image, and names it instead of failing the whole ticket", async () => {
+    const huge = { id: "att-big", filename: "full-page-4k.png", mimeType: "image/png", size: 12_000_000, content: "https://example.atlassian.net/rest/api/2/attachment/content/att-big" };
+    const fine = { id: "att-ok", filename: "form.png", mimeType: "image/png", size: 200_000, content: "https://example.atlassian.net/rest/api/2/attachment/content/att-ok" };
+    issue = { ...issue, fields: { ...(issue.fields as object), attachment: [huge, fine] } };
+    const run = await startScribeJira(config(), vault);
+    run.stop();
+
+    const draftCall = vi.mocked(generateText).mock.calls[0]?.[0] as GenerateOptions;
+    expect(draftCall.images).toHaveLength(1);
+    const draftComment = comments.find((comment) => comment.body.includes("full-page-4k.png"));
+    expect(draftComment?.body).toMatch(/over 3\.8 MB/);
+    expect(comments.some((comment) => comment.body.includes("I hit an error"))).toBe(false);
+  });
+});

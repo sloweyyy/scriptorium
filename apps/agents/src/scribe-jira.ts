@@ -356,23 +356,46 @@ interface PrdSource {
  * Confluence page for a question nobody asked. Always the CURRENT set, never a cached
  * one — the whole point is that a mockup attached after the first draft is seen.
  */
-async function loadDesignImages(ctx: Ctx, issue: JiraIssue): Promise<{ images: ImageInput[]; names: string[] }> {
+/**
+ * The model's per-image ceiling is 5 MB of base64; base64 is 4/3 of the raw bytes. One
+ * image over it failed EVERY draft on the ticket with a transport error the reviewer could
+ * do nothing about. Oversized designs are now left out and named, and the draft goes ahead.
+ */
+export const MAX_DESIGN_BYTES = 3_750_000;
+/** Enough for a flow's screens; past this each extra image costs more than it tells. */
+export const MAX_DESIGNS = 8;
+
+async function loadDesignImages(ctx: Ctx, issue: JiraIssue): Promise<{ images: ImageInput[]; names: string[]; skipped: string[] }> {
   const images: ImageInput[] = [];
   const names: string[] = [];
-  for (const attachment of issue.fields.attachment ?? []) {
+  const skipped: string[] = [];
+  for (const attachment of newestFirst(issue.fields.attachment ?? [])) {
     const mediaType = VISION_TYPES[attachment.mimeType?.toLowerCase() ?? ""];
     if (!mediaType) continue;
+    if (images.length >= MAX_DESIGNS) {
+      skipped.push(`${attachment.filename} (more than ${MAX_DESIGNS} designs; the newest ${MAX_DESIGNS} were read)`);
+      continue;
+    }
+    // Checked before downloading when Jira says the size, and after in case it didn't.
+    if ((attachment.size ?? 0) > MAX_DESIGN_BYTES) {
+      skipped.push(`${attachment.filename} (over ${Math.round(MAX_DESIGN_BYTES / 1e6 * 10) / 10} MB — export it smaller)`);
+      continue;
+    }
     const bytes = await ctx.client.downloadAttachment(attachment);
+    if (bytes.length > MAX_DESIGN_BYTES) {
+      skipped.push(`${attachment.filename} (over ${Math.round(MAX_DESIGN_BYTES / 1e6 * 10) / 10} MB — export it smaller)`);
+      continue;
+    }
     images.push({ mediaType, base64: bytes.toString("base64") });
     names.push(attachment.filename);
   }
-  return { images, names };
+  return { images, names, skipped };
 }
 
 /** Read the PRD and designs off the ticket: attachments first, description as the fallback. */
 async function loadSource(ctx: Ctx, issue: JiraIssue): Promise<PrdSource> {
   const designs = await loadDesignImages(ctx, issue);
-  const source: PrdSource = { images: designs.images, imageNames: designs.names, skipped: [] };
+  const source: PrdSource = { images: designs.images, imageNames: designs.names, skipped: [...designs.skipped] };
 
   for (const attachment of newestFirst(issue.fields.attachment ?? [])) {
     // Images were read above; this pass is only looking for the PRD.
@@ -389,7 +412,7 @@ async function loadSource(ctx: Ctx, issue: JiraIssue): Promise<PrdSource> {
       source.origin = `the attachment \`${attachment.filename}\``;
       continue;
     }
-    source.skipped.push(attachment.filename);
+    source.skipped.push(`${attachment.filename} (not a PRD or a readable image)`);
   }
 
   // Between the attachment and the description: a linked Confluence page. That is where
@@ -558,7 +581,7 @@ function draftComment(input: {
     `Lint: ${input.lintReport.split("\n").join(" · ")}`,
     `House rules applied: ${input.appliedLessons.join(", ") || "none yet"}`,
     input.source.skipped.length
-      ? `Skipped attachments (not a PRD or a readable image): ${input.source.skipped.join(", ")}`
+      ? `Skipped attachments: ${input.source.skipped.join(", ")}`
       : "",
     "",
     "---",

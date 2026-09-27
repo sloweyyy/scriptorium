@@ -353,7 +353,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
 
     async onPullRequest({ repo, number, author, deliveryId }) {
       // Only allowed repos, and only with somewhere to put the result and the card.
-      if (!settings.prChannel || !settings.githubRepos.map((allowed) => allowed.toLowerCase()).includes(repo.toLowerCase())) {
+      if (!config.hasModelAccess || !settings.prChannel || !settings.githubRepos.map((allowed) => allowed.toLowerCase()).includes(repo.toLowerCase())) {
         await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: keys.githubPull(repo, number), reason: "PR checks are not configured for this repo" }).catch(() => undefined);
         return;
       }

@@ -155,6 +155,29 @@ function run(evals: string[]): boolean {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  // A mutated file must never outlive the run: Ctrl-C or a CI cancel kills the process in
+  // the middle of an eval, where `finally` does not run. Restore on the signal instead.
+  let active: { file: string; original: string } | undefined;
+  const restore = () => {
+    if (active) fs.writeFileSync(active.file, active.original);
+    active = undefined;
+  };
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.on(signal, () => {
+      restore();
+      process.exit(130);
+    });
+  }
+  process.on("exit", restore);
+
+  // Every eval set must be green BEFORE mutation, or "the mutant made it red" means nothing.
+  const sets = [...new Set(MUTANTS.map((mutant) => mutant.evals.join(" ")))];
+  const red = sets.filter((set) => !run(set.split(" ")));
+  if (red.length) {
+    console.error(`baseline is red — fix these before mutating:\n${red.map((set) => `  - ${set}`).join("\n")}`);
+    process.exit(1);
+  }
+
   const survivors: string[] = [];
   for (const mutant of MUTANTS) {
     const original = fs.readFileSync(mutant.file, "utf8");
@@ -165,12 +188,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       continue;
     }
     try {
+      active = { file: mutant.file, original };
       fs.writeFileSync(mutant.file, edits.reduce((text, edit) => text.replace(edit.find, edit.replace), original));
       const green = run(mutant.evals);
       console.log(`${green ? "SURVIVED" : "killed  "}  ${mutant.control}`);
       if (green) survivors.push(`${mutant.control} — ${mutant.evals.join(", ")} stayed green`);
     } finally {
-      fs.writeFileSync(mutant.file, original);
+      restore();
     }
   }
   if (survivors.length) {

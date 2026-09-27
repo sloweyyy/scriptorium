@@ -109,9 +109,15 @@ export function githubTools(settings: GitHubToolSettings): ToolSpec[] {
           const parsed = z.object({ repo: z.string(), number: PullNumber, body: z.string().min(1).max(20_000) }).parse(input);
           const repo = checkRepo(parsed.repo);
           const op = opKey("github.comment", repo, parsed.number, parsed.body, context?.approval?.id);
+          // Paged: on a busy PR the comment a crashed attempt made may be past the first 100.
           const find = async () => {
-            const comments = await call(repo, `/repos/${repo}/issues/${parsed.number}/comments?per_page=100`, Comments);
-            return comments.find((comment) => comment.body?.includes(OP_MARKER(op)))?.id;
+            for (let page = 1; page <= 10; page += 1) {
+              const comments = await call(repo, `/repos/${repo}/issues/${parsed.number}/comments?per_page=100&page=${page}`, Comments);
+              const found = comments.find((comment) => comment.body?.includes(OP_MARKER(op)));
+              if (found) return found.id;
+              if (comments.length < 100) return undefined;
+            }
+            return undefined;
           };
           const { result, replayed } = await once(
             settings.ledger,

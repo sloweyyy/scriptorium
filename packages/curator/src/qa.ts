@@ -1,5 +1,5 @@
-import { anthropic, llmProvider, modelId, runGeminiToolLoop, type ToolSpec, type Vault } from "@scriptorium/core";
-import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
+import type { ToolSpec, Vault } from "@scriptorium/core";
+import { runSession, SessionError } from "@scriptorium/runtime";
 import { buildIndex } from "./search";
 import { QA_MAX_TOKENS, QA_SYSTEM_PROMPT, enforceGrounding, parseQaAnswer, qaTools, type QaAnswer } from "./qa-contract";
 
@@ -7,9 +7,9 @@ import { QA_MAX_TOKENS, QA_SYSTEM_PROMPT, enforceGrounding, parseQaAnswer, qaToo
  * Grounded Q&A: two transports, one contract.
  *
  * The prompt, the tools, the read cap and the citation/gap parsing all come from
- * `qa-contract` — this file only picks a dialect and runs its loop. Claude remains the
- * default; Gemini exists because a Vertex project with zero Anthropic quota should still be
- * able to demonstrate cite-or-refuse retrieval rather than wait on a quota queue.
+ * `qa-contract`; the loop itself is the platform's `runSession`, which runs on Claude or
+ * Gemini and fails closed on both. This file only wires the two together and judges the
+ * answer against what was retrieved.
  */
 export interface AnswerOptions {
   /**
@@ -27,7 +27,7 @@ export async function answerQuestion(vault: Vault, question: string, options: An
   const retrieved: string[] = [];
   const tools = record(observe(qaTools(vault, await buildIndex(vault)), options.onTool), used, retrieved);
   try {
-    const text = llmProvider() === "gemini" ? await askGemini(tools, question) : await askClaude(tools, question);
+    const text = await runSession({ system: QA_SYSTEM_PROMPT, prompt: question, tools, maxTokens: QA_MAX_TOKENS });
     return await enforceGrounding(vault, parseQaAnswer(text, question), { usedOverview: used.has("vault_overview"), retrieved });
   } catch (error) {
     // A retrieval loop that exhausts its round cap has searched hard and concluded
@@ -36,7 +36,7 @@ export async function answerQuestion(vault: Vault, question: string, options: An
     // sweeping synonyms past the prompt's give-up-early rule; the productive failure is
     // a gap note that becomes a documentation ticket, not an error a user cannot act on.
     // Everything else (truncation, transport failures) still fails loudly.
-    if (error instanceof Error && /round cap/.test(error.message)) {
+    if (error instanceof SessionError && error.failure === "round-cap") {
       return parseQaAnswer(`NOT_IN_KB: ${question}`, question);
     }
     throw error;
@@ -69,28 +69,4 @@ function record(tools: ToolSpec[], used: Set<string>, retrieved: string[]): Tool
       return result;
     },
   }));
-}
-
-/** Anthropic dialect: the SDK's tool runner drives the loop and throws on truncation. */
-async function askClaude(tools: ToolSpec[], question: string): Promise<string> {
-  const finalMessage = await anthropic().beta.messages.toolRunner({
-    model: modelId(),
-    max_tokens: QA_MAX_TOKENS,
-    system: QA_SYSTEM_PROMPT,
-    // Same specs, projected into the SDK's zod tool helper — no second description, no
-    // second implementation; only the wrapper differs.
-    tools: tools.map((tool) => betaZodTool(tool)),
-    messages: [{ role: "user", content: question }],
-  });
-
-  return finalMessage.content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
-}
-
-/** Vertex dialect: functionCall out, functionResponse back, capped rounds. */
-async function askGemini(tools: ToolSpec[], question: string): Promise<string> {
-  return runGeminiToolLoop({ system: QA_SYSTEM_PROMPT, prompt: question, tools, maxTokens: QA_MAX_TOKENS });
 }

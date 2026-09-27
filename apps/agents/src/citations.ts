@@ -55,6 +55,21 @@ async function sourceUrlOf(vault: Vault, notePath: string): Promise<string | und
   }
 }
 
+/**
+ * `jira:DOC-7`, `confluence:123`, `github:org/app/pull/12` → their URLs. Returns null for a
+ * vault path (not an external record), undefined when the record has no known site.
+ */
+export function externalRecordUrl(config: AppConfig, citation: string): string | undefined | null {
+  const base = config.jira?.baseUrl?.replace(/\/$/, "");
+  const jira = citation.match(/^jira:([A-Z][A-Z0-9_]*-\d+)$/);
+  if (jira) return base ? `${base}/browse/${jira[1]}` : undefined;
+  const confluence = citation.match(/^confluence:(\d+)$/);
+  if (confluence) return base ? `${base}/wiki/pages/viewpage.action?pageId=${confluence[1]}` : undefined;
+  const github = citation.match(/^github:([a-z0-9_.-]+\/[a-z0-9_.-]+)\/pull\/(\d+)$/);
+  if (github) return `https://github.com/${github[1]}/pull/${github[2]}`;
+  return null;
+}
+
 export async function resolveCitations(
   vault: Vault,
   config: AppConfig,
@@ -64,6 +79,9 @@ export async function resolveCitations(
 
   return Promise.all(
     citations.map(async (raw): Promise<ResolvedCitation> => {
+      // Records outside the vault resolve to where they live, so a reader can open them.
+      const record = externalRecordUrl(config, raw);
+      if (record !== null) return { path: raw, url: record };
       const notePath = raw.replace(/\.md$/, "");
 
       // Source first, and for every note that has one: where the content came from beats

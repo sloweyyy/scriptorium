@@ -30,12 +30,15 @@ vi.mock("@scriptorium/core", async (importOriginal) => ({
   }),
 }));
 
-const { createTeammate, APPROVE_ACTION } = await import("@scriptorium/agents").then(async (agents) => ({ ...agents, ...(await import("@scriptorium/connectors")) }));
+const { createTeammate, APPROVE_ACTION, REJECT_ACTION, RETRY_ACTION } = await import("@scriptorium/agents").then(async (agents) => ({ ...agents, ...(await import("@scriptorium/connectors")) }));
 
 interface Posted { channel: string; thread_ts?: string; text: string; blocks?: unknown[] }
 let tmpRoot: string;
 let vault: Vault;
 let posted: Posted[];
+let progressUpdates: string[] = [];
+/** How long a progress update takes to land (a slow call, or a 429 retried later). */
+let progressDelayMs = 0;
 
 /** Posted messages, as they read NOW: an update replaces the text of the message it targets. */
 const slack = {
@@ -45,6 +48,10 @@ const slack = {
       return { ok: true, ts: `9.${posted.length}` };
     },
     update: async (args: { ts: string; text: string; blocks?: unknown[] }) => {
+      if (args.text.startsWith("🔎")) {
+        progressUpdates.push(args.text);
+        if (progressDelayMs) await new Promise((resolve) => setTimeout(resolve, progressDelayMs));
+      }
       const index = Number(args.ts.split(".")[1]) - 1;
       if (posted[index]) posted[index] = { ...posted[index]!, text: args.text, blocks: args.blocks };
       return { ok: true };
@@ -60,8 +67,9 @@ function config(): AppConfig {
     repoRoot: path.resolve("."),
     auditFile: path.join(tmpRoot, "audit.jsonl"),
     slack: {},
-    jira: { stateDir: path.join(tmpRoot, "state") },
-    teammate: { channels: ["C1"], approvers: ["UPM"], jiraProjects: [], confluenceSpaces: [], digestWeekday: 1, digestHour: 9 },
+    sites: { external: "https://docs.example" },
+    jira: { stateDir: path.join(tmpRoot, "state"), projectKey: "DOC" },
+    teammate: { channels: ["C1"], approvers: ["UPM"], jiraProjects: [], confluenceSpaces: [], githubRepos: [], allowDms: false, digestWeekday: 1, digestHour: 9 },
   } as unknown as AppConfig;
 }
 
@@ -73,6 +81,8 @@ beforeEach(async () => {
   await vault.ensure();
   await vault.writeNote("docs/digest-emails.md", "# Digest emails\n\nSent at 09:00 in the subscriber's timezone.", { feature: "Digest emails" });
   posted = [];
+  progressUpdates = [];
+  progressDelayMs = 0;
 });
 
 afterEach(async () => {
@@ -91,10 +101,24 @@ describe("teammate, end to end", () => {
     expect(posted[0]).toMatchObject({ channel: "C1", thread_ts: "1.0" });
     expect(posted[0]?.text).toContain("docs/digest-emails");
     expect(posted[0]?.text).toContain("AI-generated — verify before acting");
+    // The sources are rendered, not just implied: a link to the doc on its site.
+    expect(JSON.stringify(posted[0]?.blocks)).toContain("https://docs.example/digest-emails");
     // The "looking into it" acknowledgement became the answer; none is left behind.
     expect(posted.some((message) => message.text.includes("Looking into it"))).toBe(false);
+    expect(progressUpdates).toContain("🔎 Searching our docs…");
     const audit = await fs.readFile(path.join(tmpRoot, "audit.jsonl"), "utf8");
     expect(audit).toContain('"type":"teammate.ignored"');
+  });
+
+  it("a progress update that lands late never overwrites the answer", async () => {
+    progressDelayMs = 50;
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 local time [[docs/digest-emails]]." };
+    await core.onMention({ channel: "C1", ts: "1.0", user: "U1", text: "<@UBOT> when are digests sent?" });
+    await settle(core);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(progressUpdates).toHaveLength(1);
+    expect(posted[0]?.text).toContain("docs/digest-emails");
   });
 
   it("a memory it asks to keep waits on a card; a listed approver's click carries it out, once", async () => {
@@ -116,13 +140,83 @@ describe("teammate, end to end", () => {
     expect(await vault.listNotes("_memory")).toHaveLength(0);
 
     expect(await core.onApprovalClick(APPROVE_ACTION, payload("UPM"))).toBeUndefined();
-    expect(posted.at(-1)?.text).toMatch(/^Done: Remembered/);
+    expect(posted.at(-1)?.text).toMatch(/^<@U1> ✅ Done, approved by <@UPM>: Remembered/);
     const [memory] = await vault.listNotes("_memory");
     expect((await vault.readNote(memory!)).frontmatter).toMatchObject({ scope: "channel:C1", status: "approved", approved_by: "UPM" });
 
     // A decided card cannot decide again.
     expect(await core.onApprovalClick(APPROVE_ACTION, payload("UPM"))).toMatch(/^Not recorded/);
     expect(await vault.listNotes("_memory")).toHaveLength(1);
+  });
+
+  it("an approved action whose connector fails can be retried from the thread — by an approver, once", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [{ name: "memory_save", input: { text: "Release notes go out on Thursdays.", scope: "channel:C1" } }], reply: "Asked." };
+    await core.onMention({ channel: "C1", ts: "3.0", user: "U1", text: "<@UBOT> remember release notes go out on Thursdays" });
+    await settle(core);
+    const card = posted.find((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION));
+    const requestId = JSON.stringify(card?.blocks).match(/"value":"([0-9a-f-]{36})"/)?.[1] as string;
+    const writeNote = vault.writeNote.bind(vault);
+    let failNext = true;
+    vault.writeNote = (async (...args: Parameters<Vault["writeNote"]>) => {
+      if (failNext && args[0].startsWith("_memory")) {
+        failNext = false;
+        throw new Error("EIO: disk hiccup");
+      }
+      return writeNote(...args);
+    }) as Vault["writeNote"];
+    const click = (action: string, user: string) => core.onApprovalClick(action, { actions: [{ value: requestId }], user: { id: user, username: user }, channel: { id: "C1" }, message: { ts: "9.1", thread_ts: "3.0" } });
+
+    expect(await click(APPROVE_ACTION, "UPM")).toBeUndefined();
+    const failed = posted.at(-1)!;
+    expect(failed.text).toContain("couldn't carry it out");
+    expect(failed.text).not.toContain("EIO");
+    expect(JSON.stringify(failed.blocks)).toContain(RETRY_ACTION);
+    expect(await vault.listNotes("_memory")).toHaveLength(0);
+
+    expect(await click(RETRY_ACTION, "U_RANDOM")).toMatch(/^Not retried/);
+    expect(await click(RETRY_ACTION, "UPM")).toBeUndefined();
+    expect(posted.at(-1)?.text).toContain("✅ Done");
+    expect(await vault.listNotes("_memory")).toHaveLength(1);
+    expect(await click(RETRY_ACTION, "UPM")).toMatch(/^Nothing to retry/);
+  });
+
+  it("a DM or a ticket that asked hears the outcome there — the card was elsewhere", async () => {
+    const comments: Array<{ issue: string; body: string; op?: string }> = [];
+    const jira = {
+      accountId: "tm-1",
+      client: {
+        addComment: async (issue: string, body: string, options: { op?: string } = {}) => (comments.push({ issue, body, op: options.op }), { id: String(comments.length), body, created: "now" }),
+        findCommentByOp: async (_key: string, op: string) => comments.find((comment) => comment.op === op),
+      } as never,
+    };
+    const dmConfig = { ...config(), slack: { notifyChannel: "CN" }, teammate: { ...config().teammate, allowDms: true, jiraProjects: ["DOC"] } } as AppConfig;
+    const core = await createTeammate(dmConfig, vault, slack as never, "UBOT", jira);
+    const cardIds = () => posted.filter((message) => message.channel === "CN" && message.blocks).map((message) => JSON.stringify(message.blocks).match(/"value":"([0-9a-f-]{36})"/)?.[1] as string);
+    const click = (action: string, id: string) => core.onApprovalClick(action, { actions: [{ value: id }], user: { id: "UPM", username: "priya" }, channel: { id: "CN" }, message: { ts: "9.9" } });
+
+    // One scripted call per turn: the DM asks for a person memory, the ticket for a global one.
+    const scripts = [
+      { calls: [{ name: "memory_save", input: { text: "I prefer short answers.", scope: "person:slack:U1" } }], reply: "Asked." },
+      { calls: [{ name: "memory_save", input: { text: "DOC tickets need a design link.", scope: "global" } }], reply: "Asked." },
+    ];
+    script = scripts[0]!;
+    await core.onDirectMessage({ channel: "D1", channel_type: "im", ts: "2.0", user: "U1", text: "remember I prefer short answers" });
+    await settle(core);
+    const [dmCard] = cardIds();
+    await click(APPROVE_ACTION, dmCard!);
+    expect(posted.find((message) => message.channel === "D1" && message.text.startsWith("✅ Done, approved by priya"))).toMatchObject({ thread_ts: "2.0" });
+
+    // A drained core takes no more work: the ticket's turn runs on a fresh one (same stores).
+    const again = await createTeammate(dmConfig, vault, slack as never, "UBOT", jira);
+    script = scripts[1]!;
+    await again.onJiraComment({ issueKey: "DOC-7", commentId: "c1", body: "[~accountid:tm-1] remember DOC tickets need a design link", authorId: "human-1" });
+    await settle(again);
+    const jiraCard = cardIds().at(-1)!;
+    expect(jiraCard).not.toBe(dmCard);
+    await again.onApprovalClick(REJECT_ACTION, { actions: [{ value: jiraCard }], user: { id: "UPM", username: "priya" }, channel: { id: "CN" }, message: { ts: "9.9" } });
+    expect(comments.filter((comment) => comment.body.includes("Rejected by priya"))).toHaveLength(1);
+    expect(comments.at(-1)?.issue).toBe("DOC-7");
   });
 
   it("a turn that fails is answered with a notice, and the next mention in the batch still gets its answer", async () => {
@@ -133,5 +227,216 @@ describe("teammate, end to end", () => {
     await settle(core);
     expect(posted[0]?.text).toContain("couldn't finish that");
     expect(posted.at(-1)?.text).toContain("docs/digest-emails");
+  });
+});
+
+describe("automatic PR checks", () => {
+  it("a PR from an allowed repo is checked, its comment waits on a card in the PR channel, and nothing reaches GitHub", async () => {
+    const prConfig = () => ({ ...config(), teammate: { ...config().teammate, githubRepos: ["org/app"], prChannel: "CPR" } }) as AppConfig;
+    const core = await createTeammate(prConfig(), vault, slack as never, "UBOT");
+    script = { calls: [], reply: "No Jira key is linked to this PR, so I can't check acceptance criteria." };
+    await core.onPullRequest({ repo: "org/app", number: 12, author: "dev", deliveryId: "d-1" });
+    await core.onPullRequest({ repo: "org/secret", number: 1, author: "dev", deliveryId: "d-2" });
+    await settle(core);
+    const summaries = posted.filter((message) => message.channel === "CPR");
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.text).toContain("<https://github.com/org/app/pull/12|org/app#12>");
+    const audit = await fs.readFile(path.join(tmpRoot, "audit.jsonl"), "utf8");
+    expect(audit).toContain("PR checks are not configured for this repo");
+  });
+
+  it("the card a PR check raises threads under that check's summary", async () => {
+    const prConfig = { ...config(), teammate: { ...config().teammate, githubRepos: ["org/app"], prChannel: "CPR" } } as AppConfig;
+    const core = await createTeammate(prConfig, vault, slack as never, "UBOT");
+    script = { calls: [{ name: "memory_save", input: { text: "PRs in org/app need a DOC key.", scope: "global" } }], reply: "Proposed a note; it waits on approval." };
+    await core.onPullRequest({ repo: "org/app", number: 12, author: "dev", deliveryId: "d-3" });
+    await settle(core);
+    const [summary, card, ...rest] = posted.filter((message) => message.channel === "CPR");
+    expect(rest).toEqual([]);
+    expect(summary?.thread_ts).toBeUndefined();
+    expect(summary?.text).toContain("Waiting for approval");
+    expect(card?.text).toContain("Approval needed");
+    expect(card?.thread_ts).toBe(`9.${posted.indexOf(summary!) + 1}`);
+  });
+});
+
+describe("direct messages", () => {
+  it("answers a DM only when DMs are allowed, and never a bot's or an edit", async () => {
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]." };
+    const off = await createTeammate(config(), vault, slack as never, "UBOT");
+    await off.onDirectMessage({ channel: "D1", channel_type: "im", ts: "1.0", user: "U1", text: "when are digests sent?" });
+    await off.onDirectMessage({ channel: "D1", channel_type: "im", ts: "1.1", user: "U1", text: "hello?" });
+    await settle(off);
+    // DMs off: one pointer to where it does answer, never an answer, never a second pointer.
+    expect(posted).toHaveLength(1);
+    expect(posted[0]?.text).toContain("mention me in <#C1>");
+    posted.length = 0;
+
+    const on = await createTeammate({ ...config(), teammate: { ...config().teammate, allowDms: true } } as AppConfig, vault, slack as never, "UBOT");
+    await on.onDirectMessage({ channel: "D1", channel_type: "im", ts: "2.0", user: "U1", text: "when are digests sent?" });
+    await on.onDirectMessage({ channel: "D1", channel_type: "im", ts: "3.0", user: "U1", text: "edited", subtype: "message_changed" });
+    await on.onDirectMessage({ channel: "D1", channel_type: "im", ts: "4.0", bot_id: "B9", text: "bot says hi" });
+    await on.onDirectMessage({ channel: "D2", channel_type: "im", ts: "5.0", user: "U2", text: "when are digests sent? (screenshot attached)", subtype: "file_share" });
+    await settle(on);
+    // The screenshot DM is a question too.
+    expect(posted.filter((message) => message.channel === "D2")).toHaveLength(1);
+    posted.splice(posted.findIndex((message) => message.channel === "D2"), 1);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatchObject({ channel: "D1" });
+    expect(posted[0]?.text).toContain("docs/digest-emails");
+  });
+});
+
+describe("the Teammate on Jira", () => {
+  function fakeJira() {
+    const comments: Array<{ id: string; body: string; op?: string }> = [];
+    const client = {
+      addComment: async (_key: string, body: string, options: { op?: string } = {}) => {
+        const stored = { id: String(comments.length + 1), body, op: options.op };
+        comments.push(stored);
+        return { id: stored.id, body, created: "now" };
+      },
+      findCommentByOp: async (_key: string, op: string) => comments.find((comment) => comment.op === op),
+    };
+    return { comments, jira: { client: client as never, accountId: "tm-1" } };
+  }
+
+  it("answers a mention of its own account on the ticket, once, as itself — and nothing else", async () => {
+    const { comments, jira } = fakeJira();
+    const core = await createTeammate(config(), vault, slack as never, "UBOT", jira);
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]; see [[docs/digest-emails.md|Digest emails]]." };
+    const mention = { issueKey: "DOC-7", commentId: "c1", body: "[~accountid:tm-1] when do digests go out?", authorId: "human-1" };
+    await core.onJiraComment(mention);
+    await core.onJiraComment(mention); // a webhook redelivery
+    await core.onJiraComment({ ...mention, commentId: "c2", body: "no mention here" });
+    await core.onJiraComment({ ...mention, commentId: "c3", body: "[~accountid:scribe-bot] draft" });
+    await core.onJiraComment({ ...mention, commentId: "c4", authorId: "tm-1" }); // its own comment
+    await core.onJiraComment({ ...mention, issueKey: "HR-1", commentId: "c5" }); // outside its projects
+    await settle(core);
+
+    expect(comments).toHaveLength(1);
+    // A Jira link to the doc, not a raw [[wikilink]].
+    expect(comments[0]?.body).toContain("[docs/digest-emails|https://docs.example/digest-emails]");
+    // A `.md` target still resolves, and an alias is the link's label.
+    expect(comments[0]?.body).toContain("[Digest emails|https://docs.example/digest-emails]");
+    expect(comments[0]?.body).not.toContain("[[");
+    expect(comments[0]?.body).toContain("AI-generated");
+    expect(posted).toHaveLength(0);
+  });
+});
+
+describe("first contact", () => {
+  it("an empty mention or 'help' gets the capabilities card, with no model call", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [], reply: "SHOULD NOT BE CALLED" };
+    await core.onMention({ channel: "C1", ts: "8.0", user: "U1", text: "<@UBOT>" });
+    await core.onMention({ channel: "C1", ts: "8.1", user: "U1", text: "<@UBOT> help" });
+    await settle(core);
+    expect(posted).toHaveLength(2);
+    for (const message of posted) {
+      expect(message.text).toContain("I'm the Teammate");
+      expect(message.text).toContain("waits for an approver: <@UPM>");
+      expect(message.text).not.toContain("SHOULD NOT BE CALLED");
+    }
+  });
+});
+
+describe("restricted Jira comments", () => {
+  it("an internal or role-restricted question is answered at the same visibility, never in public", async () => {
+    const comments: Array<{ issue: string; body: string; options: Record<string, unknown> }> = [];
+    const jira = {
+      accountId: "tm-1",
+      client: {
+        addComment: async (issue: string, body: string, options: Record<string, unknown> = {}) => (comments.push({ issue, body, options }), { id: String(comments.length), body, created: "now" }),
+        findCommentByOp: async () => undefined,
+      } as never,
+    };
+    const core = await createTeammate({ ...config(), teammate: { ...config().teammate, jiraProjects: ["DOC"] } } as AppConfig, vault, slack as never, "UBOT", jira);
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]." };
+    const role = { visibility: { type: "role" as const, value: "Developers" } };
+    await core.onJiraComment({ issueKey: "DOC-7", commentId: "c1", body: "[~accountid:tm-1] when do digests go out?", authorId: "h1", restriction: role });
+    await core.onJiraComment({ issueKey: "DOC-8", commentId: "c2", body: "[~accountid:tm-1] when do digests go out?", authorId: "h1", restriction: { internal: true } });
+    await settle(core);
+    expect(comments.find((comment) => comment.issue === "DOC-7")?.options.restriction).toEqual(role);
+    expect(comments.find((comment) => comment.issue === "DOC-8")?.options.restriction).toEqual({ internal: true });
+  });
+
+  it("the client sends the restriction Jira reads", async () => {
+    const { jiraClient } = await import("@scriptorium/jira");
+    const sent: unknown[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => (sent.push(JSON.parse(String(init?.body))), new Response(JSON.stringify({ id: "1", body: "x", created: "now" }), { status: 201 }))) as typeof fetch;
+    try {
+      const client = jiraClient({ baseUrl: "https://x.atlassian.net", email: "a@x", apiToken: "t", projectKey: "DOC" } as never);
+      await client.addComment("SD-1", "hi", { op: "o1", restriction: { internal: true, visibility: { type: "group", value: "staff" } } });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    expect(sent[0]).toMatchObject({
+      body: "hi",
+      visibility: { type: "group", value: "staff" },
+      properties: [{ key: "scriptorium.op", value: { op: "o1" } }, { key: "sd.public.comment", value: { internal: true } }],
+    });
+  });
+});
+
+describe("spend caps", () => {
+  it("a channel over today's budget gets a fixed notice and no model call — even after a restart", async () => {
+    const auditFile = path.join(tmpRoot, "audit.jsonl");
+    await fs.writeFile(auditFile, JSON.stringify({ ts: new Date().toISOString(), type: "llm.usage", scope: "C1", input: 5_000, output: 100 }) + "\n");
+    const capped = { ...config(), teammate: { ...config().teammate, dailyTokens: 1_000 } } as AppConfig;
+    const core = await createTeammate(capped, vault, slack as never, "UBOT");
+    script = { calls: [], reply: "SHOULD NOT BE CALLED" };
+    await core.onMention({ channel: "C1", ts: "9.0", user: "U1", text: "<@UBOT> when are digests sent?" });
+    await settle(core);
+    expect(posted[0]?.text).toContain("today's usage limit");
+    expect(posted[0]?.text).not.toContain("SHOULD NOT BE CALLED");
+  });
+
+  it("a Jira project and a PR repo are capped too — a ticket comment can't spend without limit", async () => {
+    const auditFile = path.join(tmpRoot, "audit.jsonl");
+    const today = new Date().toISOString();
+    await fs.writeFile(
+      auditFile,
+      [{ scope: "jira:DOC" }, { scope: "github:org/app" }].map((line) => JSON.stringify({ ts: today, type: "llm.usage", input: 5_000, output: 0, ...line })).join("\n") + "\n",
+    );
+    const comments: Array<{ body: string; op?: string }> = [];
+    const jira = {
+      accountId: "tm-1",
+      client: {
+        addComment: async (_key: string, body: string, options: { op?: string } = {}) => (comments.push({ body, op: options.op }), { id: String(comments.length), body, created: "now" }),
+        findCommentByOp: async (_key: string, op: string) => comments.find((comment) => comment.op === op),
+      } as never,
+    };
+    const capped = { ...config(), teammate: { ...config().teammate, dailyTokens: 1_000, githubRepos: ["org/app"], prChannel: "CPR" } } as AppConfig;
+    const core = await createTeammate(capped, vault, slack as never, "UBOT", jira);
+    script = { calls: [], reply: "SHOULD NOT BE CALLED" };
+    await core.onJiraComment({ issueKey: "DOC-7", commentId: "c1", body: "[~accountid:tm-1] when do digests go out?", authorId: "human-1" });
+    await core.onPullRequest({ repo: "org/app", number: 12, author: "dev", deliveryId: "d-9" });
+    await settle(core);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.body).toContain("today's usage limit");
+    expect(posted.find((message) => message.channel === "CPR")?.text).toContain("today's usage limit");
+    expect(JSON.stringify([comments, posted])).not.toContain("SHOULD NOT BE CALLED");
+  });
+});
+
+describe("assigned on Jira", () => {
+  it("checks readiness and replies on the ticket when the ticket is assigned to it — once, and only to it", async () => {
+    const comments: Array<{ body: string; op?: string }> = [];
+    const jira = {
+      accountId: "tm-1",
+      client: {
+        addComment: async (_key: string, body: string, options: { op?: string } = {}) => (comments.push({ body, op: options.op }), { id: String(comments.length), body, created: "now" }),
+        findCommentByOp: async (_key: string, op: string) => comments.find((comment) => comment.op === op),
+      } as never,
+    };
+    const core = await createTeammate(config(), vault, slack as never, "UBOT", jira);
+    script = { calls: [], reply: "NOT_IN_KB: acceptance criteria" };
+    await core.onJiraAssigned({ issueKey: "DOC-9", assigneeId: "tm-1", changeId: "ch-1" });
+    await core.onJiraAssigned({ issueKey: "DOC-9", assigneeId: "tm-1", changeId: "ch-1" });
+    await core.onJiraAssigned({ issueKey: "DOC-9", assigneeId: "someone-else", changeId: "ch-2" });
+    await settle(core);
+    expect(comments).toHaveLength(1);
   });
 });

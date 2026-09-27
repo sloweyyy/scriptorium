@@ -76,6 +76,22 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
       records: citeRecords,
     },
     {
+      name: "jira_children",
+      description: "List the issues under an epic or parent issue (only in projects you may use), with status — for status updates.",
+      inputSchema: z.object({ key: z.string().describe("The epic or parent key, e.g. DOC-40.") }),
+      run: (input) =>
+        refusalOr(async () => {
+          const key = checkKey(z.object({ key: z.string() }).parse(input).key);
+          // Only a validated, project-checked key reaches the JQL — nothing the model wrote.
+          const jql = `project in (${projects.map(jqlString).join(",")}) AND parent = ${jqlString(key)} ORDER BY status ASC, updated DESC`;
+          const issues = await settings.client.searchIssues(jql, 50);
+          return JSON.stringify(
+            issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
+          );
+        }),
+      records: citeRecords,
+    },
+    {
       name: "jira_get_issue",
       description: "Read one Jira issue: summary, status, description and its latest comments. Cite it as [[jira:<KEY>]].",
       inputSchema: z.object({ key: z.string().describe("Issue key, e.g. DOC-7.") }),

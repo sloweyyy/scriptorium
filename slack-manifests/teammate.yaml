@@ -4,6 +4,9 @@ display_information:
   description: A governed AI teammate — cited answers from Confluence, Jira and the docs; every change waits for a named approver.
   background_color: "#2D3A8C"
 features:
+  app_home:
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
   bot_user:
     display_name: Teammate
     always_online: true
@@ -15,10 +18,13 @@ oauth_config:
       # Reads only the thread it was asked in (Slack's terms rule out bulk indexing).
       - channels:history
       - groups:history
+      # Direct messages — only answered with TEAMMATE_ALLOW_DMS=true.
+      - im:history
 settings:
   event_subscriptions:
     bot_events:
       - app_mention
+      - message.im
   # Approval cards: Approve / Reject buttons.
   interactivity:
     is_enabled: true

@@ -1,23 +1,55 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { approvalVerified, docsRepoReady, parseMarkdown, type AppConfig, type Frontmatter, type Vault } from "@scriptorium/core";
+import { approvalVerified, docsRepoReady, parseMarkdown, vaultRepoReady, type AppConfig, type Frontmatter, type Vault } from "@scriptorium/core";
 import { docBranchName, docPullRequestBody, installationToken, openPullRequest, publishVault, type PublishToRepoResult } from "@scriptorium/publish";
 
 const exec = promisify(execFile);
 
 /**
- * The egress side of an approval: push the allowlisted vault into the docs repo, and open
- * the pull request whose merge publishes it.
+ * The egress side of an approval: push the allowlisted vault into two repositories, and
+ * open the pull request whose merge publishes the public half.
  *
  * Two gates that mean different things — a human approved the *content* on the ticket; a
- * human merges to *publish* it. The external tree goes to a per-ticket branch so the PR
- * exists to be merged; the internal tree (PRDs, gaps, house rules) goes straight to the
- * base branch, because losing it is the failure this exists to prevent and there is no
- * second audience to review it for.
+ * human merges to *publish* it. The external tree goes to a per-ticket branch of the
+ * public docs repo so the PR exists to be merged; the internal tree (PRDs, gaps, house
+ * rules) goes straight to the private vault repo, because losing it is the failure this
+ * exists to prevent and there is no second audience to review it for.
+ *
+ * Two repositories rather than two branches of one: the docs repo is public, and every
+ * branch of a public repo is public. The internal tree has no route into the docs repo —
+ * not a fallback, not a default — so a missing vault remote skips the internal push
+ * instead of publishing it.
  */
+
+/** One remote the agent writes to: where it lives, which branch, which key. */
+interface RepoTarget {
+  url: string;
+  workDir: string;
+  branch: string;
+  sshKey?: string;
+}
+
+function docsTarget(config: AppConfig): RepoTarget {
+  const { url, workDir, base, sshKey } = config.docsRepo;
+  if (!url) throw new Error("DOCS_REPO_URL is not set");
+  return { url, workDir, branch: base, sshKey };
+}
+
+/** Undefined when no vault remote is configured — callers skip, never substitute. */
+function vaultTarget(config: AppConfig): RepoTarget | undefined {
+  const docs = config.docsRepo;
+  if (!vaultRepoReady(docs) || !docs.vaultUrl) return undefined;
+  return {
+    url: docs.vaultUrl,
+    workDir: docs.vaultWorkDir ?? path.join(path.dirname(docs.workDir), "vault-repo"),
+    branch: docs.internalBranch,
+    sshKey: docs.vaultSshKey,
+  };
+}
 
 export interface PublishOutcome {
   /** Markdown for the ticket comment — always says what happened, including refusals. */
@@ -27,20 +59,21 @@ export interface PublishOutcome {
 }
 
 /**
- * Publish the deploy key to the whole process, once.
+ * Usable copies of each deploy key, by the path they were configured at.
  *
- * Passing it per-exec only covers the git calls in THIS file — `@scriptorium/publish` shells
- * out to git itself and inherits `process.env`, so a per-call env produced exactly one
- * symptom: clone worked, push died with `Permission denied (publickey)`. Setting it on the
- * environment is what actually reaches every child git process. Harmless elsewhere: the
- * only other git use is a local commit, which never touches the network.
+ * The key reaches git through `core.sshCommand` in each clone's own config, not through
+ * `GIT_SSH_COMMAND` on the process. Passing it per-exec only covered the git calls in THIS
+ * file — `@scriptorium/publish` shells out to git itself — so it once had to be set
+ * process-wide. With two repos that is wrong: GitHub binds a deploy key to one repository,
+ * and a process-wide key sends the docs key to the vault remote. Clone-local config reaches
+ * every git process run inside that clone, whoever spawns it.
  */
-let usableKey: string | undefined;
+const usableKeys = new Map<string, string>();
 
 /**
  * One work tree, one writer at a time.
  *
- * Every publish shares a single git clone. The per-issue lock upstream serialises the wrong
+ * Every publish shares the git clones. The per-issue lock upstream serialises the wrong
  * axis: two DIFFERENT tickets approved seconds apart both checkout, copy and commit in the
  * same directory, and the second finds the first one's half-staged tree and refuses with
  * "work tree is not clean". Observed live — three approvals inside one second, one casualty.
@@ -69,42 +102,48 @@ function withRepoLock<T>(work: () => Promise<T>): Promise<T> {
  * process, and re-copying on every git call would be pointless churn.
  */
 async function privateKeyPath(keyPath: string): Promise<string> {
-  if (usableKey) return usableKey;
+  const known = usableKeys.get(keyPath);
+  if (known) return known;
   const stat = await fs.stat(keyPath);
   if ((stat.mode & 0o077) === 0) {
-    usableKey = keyPath;
+    usableKeys.set(keyPath, keyPath);
     return keyPath;
   }
-  const copy = path.join(os.tmpdir(), "scriptorium-docs-key");
+  const tag = createHash("sha256").update(keyPath).digest("hex").slice(0, 8);
+  const copy = path.join(os.tmpdir(), `scriptorium-deploy-key-${tag}`);
   await fs.copyFile(keyPath, copy);
   await fs.chmod(copy, 0o600);
   console.log(`[docs] copied the deploy key to ${copy} with 0600 — ssh rejects the 0444 secret mount`);
-  usableKey = copy;
+  usableKeys.set(keyPath, copy);
   return copy;
 }
 
-async function ssh(config: AppConfig): Promise<NodeJS.ProcessEnv> {
-  const key = config.docsRepo.sshKey;
-  if (!key) return process.env;
-  const command = `ssh -i ${await privateKeyPath(key)} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`;
-  if (process.env.GIT_SSH_COMMAND !== command) process.env.GIT_SSH_COMMAND = command;
-  return process.env;
+async function sshCommand(target: RepoTarget): Promise<string | undefined> {
+  if (!target.sshKey) return undefined;
+  return `ssh -i ${await privateKeyPath(target.sshKey)} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`;
 }
 
-/** Clone on first use, fetch afterwards. The clone is scratch — safe to delete. */
-export async function ensureDocsRepo(config: AppConfig): Promise<string> {
-  const { url, workDir, base } = config.docsRepo;
-  if (!url) throw new Error("DOCS_REPO_URL is not set");
+/**
+ * Clone on first use, fetch afterwards. The clone is scratch — safe to delete.
+ *
+ * The clone's own `core.sshCommand` carries its key. `GIT_SSH_COMMAND` would override that
+ * for every repo at once, so it is cleared when a key is configured.
+ */
+async function ensureRepo(config: AppConfig, target: RepoTarget): Promise<string> {
+  const { url, workDir, branch } = target;
+  const command = await sshCommand(target);
+  if (command) delete process.env.GIT_SSH_COMMAND;
 
-  const env = await ssh(config);
   const gitDir = path.join(workDir, ".git");
   try {
     await fs.access(gitDir);
-    await exec("git", ["fetch", "origin", base], { cwd: workDir, env });
+    if (command) await exec("git", ["config", "core.sshCommand", command], { cwd: workDir });
+    await exec("git", ["fetch", "origin", branch], { cwd: workDir });
   } catch {
     await fs.mkdir(path.dirname(workDir), { recursive: true });
     await fs.rm(workDir, { recursive: true, force: true });
-    await exec("git", ["clone", "--branch", base, url, workDir], { env });
+    const withKey = command ? ["-c", `core.sshCommand=${command}`] : [];
+    await exec("git", ["clone", ...withKey, "--branch", branch, url, workDir]);
   }
   // Identity must exist inside the clone — and it must be an identity GitHub can associate
   // with a user, or Vercel blocks the build with COMMIT_AUTHOR_REQUIRED and the published
@@ -113,6 +152,19 @@ export async function ensureDocsRepo(config: AppConfig): Promise<string> {
   await exec("git", ["config", "user.email", config.docsRepo.commitEmail], { cwd: workDir });
   return workDir;
 }
+
+export async function ensureDocsRepo(config: AppConfig): Promise<string> {
+  return ensureRepo(config, docsTarget(config));
+}
+
+/** The vault clone, or undefined when no vault remote is configured. */
+export async function ensureVaultRepo(config: AppConfig): Promise<string | undefined> {
+  const target = vaultTarget(config);
+  return target ? ensureRepo(config, target) : undefined;
+}
+
+const NO_VAULT_REPO =
+  "VAULT_REPO_URL is not set, so the internal plane (PRDs, gaps, house rules) was not pushed anywhere — it never goes to the public docs repo";
 
 function describe(result: PublishToRepoResult, label: string): string {
   switch (result.status) {
@@ -190,19 +242,43 @@ async function publishApprovedDocLocked(
   });
   lines.push(describe(external.push, "External docs"));
 
-  const internal = await publishVault({
-    vault,
-    repoDir,
-    target: "internal",
-    subdir: "internal",
-    // Never the base branch: see DocsRepoSettings.internalBranch.
-    branch: config.docsRepo.internalBranch,
-    baseBranch: config.docsRepo.base,
-    remote: "origin",
-    approvedBy: input.approvedBy,
-    message: `vault: ${input.slug} (${input.issueKey})`,
-  });
-  lines.push(describe(internal.push, "Internal plane"));
+  // The internal tree goes to its own private repo or nowhere. The external publish above
+  // stands either way: it carries nothing internal, and a human still has to merge it.
+  //
+  // A vault failure must not escape from here. The external branch is already pushed, and
+  // a throw would skip the pull request below — then the retry finds the branch
+  // `unchanged`, never opens the PR, and the doc waits for a merge nobody can see.
+  let internal: Awaited<ReturnType<typeof publishVault>> | undefined;
+  let internalError: string | undefined;
+  const vaultConfigured = vaultRepoReady(config.docsRepo);
+  if (vaultConfigured) {
+    try {
+      const vaultDir = await ensureVaultRepo(config);
+      if (vaultDir) {
+        internal = await publishVault({
+          vault,
+          repoDir: vaultDir,
+          target: "internal",
+          subdir: "internal",
+          branch: config.docsRepo.internalBranch,
+          remote: "origin",
+          approvedBy: input.approvedBy,
+          message: `vault: ${input.slug} (${input.issueKey})`,
+        });
+      }
+    } catch (error) {
+      internalError = error instanceof Error ? error.message.split("\n")[0] : String(error);
+      console.warn(`[docs] vault repo push failed: ${internalError}`);
+    }
+  }
+  if (internal) {
+    lines.push(describe(internal.push, "Internal plane"));
+  } else if (internalError !== undefined) {
+    lines.push(`- Internal plane: **push failed** — could not reach the vault repo (${internalError})`);
+  } else {
+    console.warn(`[docs] ${NO_VAULT_REPO}`);
+    lines.push(`- Internal plane: **not pushed** — ${NO_VAULT_REPO}`);
+  }
 
   let pullRequestUrl: string | undefined;
   const externalPublished = external.push.status === "published" && external.push.pushed;
@@ -239,11 +315,11 @@ async function publishApprovedDocLocked(
       lines.push(`- Pull request could not be opened (${error instanceof Error ? error.message : String(error)}); the branch is pushed and can be merged manually`);
     }
   }
-  if (internal.push.status === "published") {
+  if (internal?.push.status === "published") {
     lines.push(`- Internal site tracks \`${config.docsRepo.internalBranch}\`, so it is already live`);
   }
 
-  const refused = external.push.status === "conflict" || internal.push.status === "conflict";
+  const refused = external.push.status === "conflict" || internal?.push.status === "conflict";
 
   // The two targets are two renderings of ONE vault note, pushed in two separate commits.
   // That is not atomic: one can land while the other refuses, and then the public site and
@@ -251,7 +327,9 @@ async function publishApprovedDocLocked(
   // compares each copy against what the agent last published FOR THAT TARGET, so neither
   // check can see the mismatch. Say it out loud instead.
   const landed = (status: string): boolean => status === "published" || status === "unchanged";
-  const inconsistent = landed(external.push.status) !== landed(internal.push.status);
+  // No vault repo is a configuration gap, reported above — not a divergence between two
+  // copies, since only one copy exists.
+  const inconsistent = internal !== undefined && landed(external.push.status) !== landed(internal.push.status);
   const heading = refused
     ? "**Publish refused — the docs repo has human edits I would have overwritten.**"
     : "**Pushed to the docs repo.**";
@@ -268,7 +346,9 @@ async function publishApprovedDocLocked(
     // re-approval finds the external tree already up to date and reports `unchanged`;
     // reading that as failure left the retry flag unset forever, so every later `approve`
     // re-ran the whole push and the terminal "already published" reply was unreachable.
-    published: landed(external.push.status) && landed(internal.push.status),
+    // A configured vault repo that could not be reached keeps this retryable; an
+    // unconfigured one is reported, not retried — there is nowhere to retry to.
+    published: landed(external.push.status) && (internal ? landed(internal.push.status) : internalError === undefined),
     pullRequestUrl,
   };
 }
@@ -281,20 +361,23 @@ async function publishApprovedDocLocked(
  * they will vote on, an approval they gave) is pushed the moment it exists.
  */
 export async function pushInternalPlane(config: AppConfig, vault: Vault, message: string): Promise<boolean> {
-  if (!docsRepoReady(config.docsRepo)) return false;
+  if (!vaultRepoReady(config.docsRepo)) {
+    if (docsRepoReady(config.docsRepo)) console.warn(`[docs] ${NO_VAULT_REPO} (${message})`);
+    return false;
+  }
   return withRepoLock(() => pushInternalPlaneLocked(config, vault, message));
 }
 
 async function pushInternalPlaneLocked(config: AppConfig, vault: Vault, message: string): Promise<boolean> {
   try {
-    const repoDir = await ensureDocsRepo(config);
+    const repoDir = await ensureVaultRepo(config);
+    if (!repoDir) return false;
     const result = await publishVault({
       vault,
       repoDir,
       target: "internal",
       subdir: "internal",
       branch: config.docsRepo.internalBranch,
-      baseBranch: config.docsRepo.base,
       remote: "origin",
       approvedBy: "scriptorium agent",
       message,
@@ -336,7 +419,8 @@ export interface DocsRepoChange {
  * edits are reported on the originating ticket for a human to fold in — the honest answer,
  * rather than a silent one-way corruption dressed up as a round trip.
  *
- * Reads blobs out of `origin/<base>` with `git show`, so nothing is checked out and the
+ * Reads blobs with `git show` — published docs from the docs repo's `origin/<base>`, internal
+ * notes from the vault repo's branch — so nothing is checked out and the
  * agent's own publish branch in the work tree is left alone.
  */
 export async function syncFromDocsRepo(config: AppConfig, vault: Vault, paths: readonly string[]): Promise<DocsRepoChange> {
@@ -348,22 +432,21 @@ async function syncFromDocsRepoLocked(config: AppConfig, vault: Vault, paths: re
   const change: DocsRepoChange = { vaultUpdated: [], externalEdited: [] };
 
   const repoDir = await ensureDocsRepo(config);
-  const env = await ssh(config);
   const base = config.docsRepo.base;
   const internal = config.docsRepo.internalBranch;
-  await exec("git", ["fetch", "origin", base], { cwd: repoDir, env });
-  await exec("git", ["fetch", "origin", internal], { cwd: repoDir, env }).catch(() => undefined);
+  const vaultDir = paths.some((repoPath) => repoPath.startsWith("internal/")) ? await ensureVaultRepo(config) : undefined;
+  await exec("git", ["fetch", "origin", base], { cwd: repoDir });
 
   for (const repoPath of paths) {
-    const isInternal = repoPath.startsWith("internal/");
+    // Internal content is read from the vault repo only; the public repo holds none.
+    const isInternal = repoPath.startsWith("internal/") && vaultDir !== undefined;
     const isExternal = repoPath.startsWith("docs/");
     if (!isInternal && !isExternal) continue;
 
     let content: string;
     try {
-      // Internal content lives on its own branch; published docs on the base.
-      const ref = isInternal ? `origin/${internal}` : `origin/${base}`;
-      const { stdout } = await exec("git", ["show", `${ref}:${repoPath}`], { cwd: repoDir, maxBuffer: 8_000_000 });
+      const [cwd, ref] = isInternal && vaultDir ? [vaultDir, `origin/${internal}`] : [repoDir, `origin/${base}`];
+      const { stdout } = await exec("git", ["show", `${ref}:${repoPath}`], { cwd, maxBuffer: 8_000_000 });
       content = stdout;
     } catch {
       // Deleted upstream. Deleting vault notes on a remote delete is not something an
@@ -401,7 +484,7 @@ async function syncFromDocsRepoLocked(config: AppConfig, vault: Vault, paths: re
     let landed = false;
     if (issueKey) {
       const branch = docBranchName(issueKey, slug ?? path.basename(repoPath, ".md"));
-      await exec("git", ["fetch", "origin", branch], { cwd: repoDir, env }).catch(() => undefined);
+      await exec("git", ["fetch", "origin", branch], { cwd: repoDir }).catch(() => undefined);
       const branchCopy = await exec("git", ["show", `origin/${branch}:${repoPath}`], { cwd: repoDir, maxBuffer: 8_000_000 }).catch(
         () => undefined,
       );
@@ -413,9 +496,9 @@ async function syncFromDocsRepoLocked(config: AppConfig, vault: Vault, paths: re
 }
 
 /**
- * Boot-time restore: rebuild the vault from the docs repo's internal tree.
+ * Boot-time restore: rebuild the vault from the vault repo's internal tree.
  *
- * This is what makes "the vault is reconstructible from the docs repo" true rather than
+ * This is what makes "the vault is reconstructible from git" true rather than
  * aspirational. It reads `internal/**` — which carries the UNTRANSFORMED docs, PRDs, gap
  * notes, house rules and index — so a fresh container comes up with the same knowledge
  * plane it had before, and Curator can cite notes it never saw written.
@@ -447,7 +530,10 @@ export function untrustedApprovalsDowngraded(relPath: string, frontmatter: Front
 }
 
 export async function hydrateVaultFromDocsRepo(config: AppConfig, vault: Vault): Promise<string[]> {
-  if (!docsRepoReady(config.docsRepo)) return [];
+  if (!vaultRepoReady(config.docsRepo)) {
+    if (docsRepoReady(config.docsRepo)) console.warn(`[docs] VAULT_REPO_URL is not set — nothing to restore the vault from`);
+    return [];
+  }
   return withRepoLock(() => hydrateVaultFromDocsRepoLocked(config, vault));
 }
 
@@ -459,10 +545,10 @@ async function hydrateVaultFromDocsRepoLocked(config: AppConfig, vault: Vault): 
   // — `_lessons/` and `_gaps/`, both written after the image was built — so an approved
   // house rule silently stopped shaping drafts at the next deploy while still rendering on
   // the internal site. Restoring the missing ones fixed that half; this fixes the other.
-  const repoDir = await ensureDocsRepo(config);
-  const env = await ssh(config);
+  const repoDir = await ensureVaultRepo(config);
+  if (!repoDir) return [];
   const base = config.docsRepo.internalBranch;
-  await exec("git", ["fetch", "origin", base], { cwd: repoDir, env });
+  await exec("git", ["fetch", "origin", base], { cwd: repoDir });
 
   const { stdout } = await exec("git", ["ls-tree", "-r", "--name-only", `origin/${base}`, "internal/"], {
     cwd: repoDir,

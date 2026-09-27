@@ -61,22 +61,32 @@ export interface JiraSettings {
 }
 
 export interface DocsRepoSettings {
-  /** SSH remote, e.g. git@github.com:owner/name.git */
+  /** SSH remote of the PUBLIC docs repo, e.g. git@github.com:owner/name.git */
   url?: string;
   /** Branch the external PR targets. The agent never pushes here — a human merges. */
   base: string;
-  /**
-   * Branch the internal tree pushes to, deliberately NOT the base.
-   *
-   * GitHub does not offer branch protection on a private repo on the free plan, so nothing
-   * on the platform stops this credential from writing `main`. Keeping every agent push on
-   * its own branches means the merge gate is a property of what the agent does, not merely
-   * of what its token is forbidden to do — and the residual risk is one line of policy
-   * instead of the whole publication gate.
-   */
-  internalBranch: string;
-  /** Deploy key — repo-scoped write, which is all pushing needs. */
+  /** Deploy key for the docs repo — repo-scoped write, which is all pushing needs. */
   sshKey?: string;
+  /**
+   * SSH remote of the PRIVATE vault repo that carries `internal/` (PRDs, gaps, lessons).
+   *
+   * A separate repository, not a branch of the docs repo: the docs repo is public, and a
+   * branch of a public repo is public. There is deliberately no fallback to `url` — an
+   * unset vault remote skips every internal push rather than sending PRDs and house rules
+   * to the public repo because one env var was forgotten at deploy time.
+   */
+  vaultUrl?: string;
+  /** Branch of the vault repo the internal tree pushes to, and restores from on boot. */
+  internalBranch: string;
+  /**
+   * Deploy key for the vault repo. Its own key, because GitHub binds a deploy key to
+   * exactly one repository.
+   */
+  vaultSshKey?: string;
+  /** Local clone of the vault repo. Defaults to a sibling of `workDir`. */
+  vaultWorkDir?: string;
+  /** "owner/name" of the vault repo, derived from `vaultUrl`. */
+  vaultSlug?: string;
   /** API token, only needed to OPEN a pull request; a deploy key cannot. */
   token?: string;
   /**
@@ -220,6 +230,11 @@ export function docsRepoReady(docs: DocsRepoSettings): boolean {
   return Boolean(docs.url && docs.workDir);
 }
 
+/** The internal plane has somewhere private to go. Never inferred from the docs repo. */
+export function vaultRepoReady(docs: DocsRepoSettings): boolean {
+  return Boolean(docs.vaultUrl);
+}
+
 /** git@github.com:owner/name.git and https://github.com/owner/name(.git) both yield owner/name. */
 export function repoSlugFromUrl(url: string | undefined): string | undefined {
   if (!url) return undefined;
@@ -337,8 +352,12 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
     docsRepo: {
       url: env("DOCS_REPO_URL"),
       base: env("DOCS_REPO_BRANCH") ?? "main",
-      internalBranch: env("DOCS_REPO_INTERNAL_BRANCH") ?? "vault-live",
       sshKey: env("DOCS_REPO_SSH_KEY"),
+      vaultUrl: env("VAULT_REPO_URL"),
+      internalBranch: env("VAULT_REPO_BRANCH") ?? "vault-live",
+      vaultSshKey: env("VAULT_REPO_SSH_KEY"),
+      vaultWorkDir: path.resolve(repoRoot, env("VAULT_REPO_WORKDIR") ?? ".scriptorium-state/vault-repo"),
+      vaultSlug: repoSlugFromUrl(env("VAULT_REPO_URL")),
       token: env("DOCS_REPO_TOKEN"),
       githubAppId: env("DOCS_REPO_GITHUB_APP_ID"),
       githubAppKey: env("DOCS_REPO_GITHUB_APP_KEY"),

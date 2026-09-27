@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { docsRepoReady, jiraReady, linesForRun, parseAudit, runPage, type AppConfig } from "@scriptorium/core";
+import { docsRepoReady, jiraReady, linesForRun, parseAudit, repoSlugFromUrl, runPage, type AppConfig } from "@scriptorium/core";
 import type { CommentRestriction } from "@scriptorium/jira";
 import { z } from "zod";
 
@@ -51,7 +51,7 @@ const GitHubPush = z.object({
 export interface IngressHooks {
   /** Work one Jira issue now — the poller's own handler, by key. */
   nudge?: (issueKey: string) => Promise<void>;
-  /** A push landed on the docs repo's base branch; these repo-relative paths changed. */
+  /** A push landed on the public docs repo's base branch; these repo-relative paths changed. */
   docsChanged?: (input: { paths: string[]; commit?: string; commitUrl?: string }) => Promise<void>;
   /** A pull request opened (or became ready for review) on a source repo. */
   pullRequest?: (input: { repo: string; number: number; author?: string; deliveryId?: string }) => Promise<void>;
@@ -215,7 +215,7 @@ export function jiraIssueKeyFrom(payload: unknown): { key?: string; event?: stri
   return { key: parsed.data.issue?.key, event, probe: event === PROBE_EVENT };
 }
 
-export function docsPathsFrom(payload: unknown): { paths: string[]; ref?: string; commit?: string; commitUrl?: string } {
+export function docsPathsFrom(payload: unknown): { paths: string[]; ref?: string; commit?: string; commitUrl?: string; repo?: string } {
   const parsed = GitHubPush.safeParse(payload);
   if (!parsed.success) return { paths: [] };
   const paths = new Set<string>();
@@ -225,7 +225,7 @@ export function docsPathsFrom(payload: unknown): { paths: string[]; ref?: string
     }
   }
   const last = parsed.data.commits?.at(-1);
-  return { paths: [...paths], ref: parsed.data.ref, commit: parsed.data.after ?? last?.id, commitUrl: last?.url };
+  return { paths: [...paths], ref: parsed.data.ref, commit: parsed.data.after ?? last?.id, commitUrl: last?.url, repo: parsed.data.repository?.full_name };
 }
 
 export interface IngressOptions {
@@ -400,8 +400,13 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
           }
           return;
         }
-        const { paths, ref, commit, commitUrl } = docsPathsFrom(payload);
-        const onBase = !ref || ref === `refs/heads/${config.docsRepo.base}`;
+        const { paths, ref, commit, commitUrl, repo } = docsPathsFrom(payload);
+        // Only the public docs repo feeds the round trip. The vault repo's pushes are the
+        // agent's own: syncing them back would stamp every note as human-edited and push it
+        // again, forever.
+        const docsSlug = config.docsRepo.slug ?? repoSlugFromUrl(config.docsRepo.url);
+        const fromDocsRepo = !repo || !docsSlug || repo.toLowerCase() === docsSlug.toLowerCase();
+        const onBase = fromDocsRepo && (!ref || ref === `refs/heads/${config.docsRepo.base}`);
         send(response, 202, { accepted: onBase && paths.length > 0, paths: paths.length, ref });
         if (onBase && paths.length && hooks.docsChanged) {
           try {

@@ -98,11 +98,12 @@ other surface without anyone prompting it.
   endpoint, so the agent runs the same on a laptop, in a container, or behind a corporate
   firewall. Signed webhooks are also supported. Idempotency (a processed-comment ledger) is
   what makes either safe.
-- **The output lives in a second repository.** An agent that can push to the repository
-  holding its own code can change its own guardrails. With the content split out, the publish
-  path is a repo-scoped deploy key that reaches nothing but documentation. Approved docs land
-  on a per-ticket branch and reach the public site only when a human merges the pull request.
-  The agent never pushes `main`. See [deploy.md](deploy.md#where-the-docs-land).
+- **The output lives in two other repositories.** An agent that can push to the repository
+  holding its own code can change its own guardrails. So published docs go to a docs repo,
+  which may be public, and the internal plane (PRDs, gaps, house rules) goes to a separate
+  private vault repo. Each repo gets its own repo-scoped deploy key, which reaches nothing but
+  that repo. Approved docs reach the public site only when a human merges the pull request;
+  the agent never pushes the docs repo's `main`. See [deploy.md](deploy.md#where-the-docs-land).
 
 ## Setup
 

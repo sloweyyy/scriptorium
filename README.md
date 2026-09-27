@@ -128,8 +128,8 @@ docker run --env-file .env -p 8080:8080 scriptorium
 ```
 
 Run a single instance, with state on a persistent volume. [docs/deploy.md](docs/deploy.md)
-covers Cloud Run, model providers, and the separate content repository that Scribe publishes
-into.
+covers Cloud Run, model providers, and where Scribe publishes: a public docs repo and a
+private vault repo.
 
 ## Architecture
 

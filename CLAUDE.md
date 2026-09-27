@@ -92,11 +92,15 @@ pnpm auditlog verify    # the audit log's hash chain holds (export --from --to f
    Curator wires it to Jira, so an unanswered question becomes Agent A's ticket.
 5. [x] **Verify against the real instance** — `pnpm jira:doctor`, then Cloud Run
    (`min-instances=1 --no-cpu-throttling`, GCS-mounted ledger). Both webhooks verified
-   live (Jira HMAC-signed, GitHub `x-hub-signature-256`); both sites deploy from the
-   docs repo — `main`/`docs/` public, `vault-live`/`internal/` basic-auth gated. The
-   board chain drives all four DOC columns. The deploy key is copied off its 0444
-   secret mount, proved against the real remote.
-   Left: one live `approve` -> push -> PR round trip on the current revision.
+   live (Jira HMAC-signed, GitHub `x-hub-signature-256`). The board chain drives all
+   four DOC columns. The deploy key is copied off its 0444 secret mount, proved against
+   the real remote.
+   Content is split across two repos: `scriptorium-docs` (public, `main`/`docs/`, PRs
+   only) and `scriptorium-vault` (private, `vault-live`/`internal/`, basic-auth site).
+   Internal notes never fall back to the docs repo — no `VAULT_REPO_URL`, no push.
+   Left: redeploy with the split (second deploy key, `VAULT_REPO_*` env, docs-repo
+   webhook, GitHub App on `scriptorium-docs`), then one live `approve` -> push -> PR
+   round trip.
 6. `samples/prd-002-*` exists — the full demo run (lesson transfer across two PRDs) does not.
 7. Demo video.
 

@@ -174,8 +174,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "slack_read_channel reads only the turn's own channel",
     file: "apps/agents/src/teammate.ts",
-    find: "if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return",
-    replace: "if (false) return",
+    find: "if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return \"NOT_ALLOWED: you may read only the channel",
+    replace: "if (false) return \"NOT_ALLOWED: you may read only the channel",
     evals: ["evals/teammate-bot.test.ts"],
   },
   {
@@ -245,6 +245,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   for (const mutant of MUTANTS) {
     const original = fs.readFileSync(mutant.file, "utf8");
     const edits = [{ find: mutant.find, replace: mutant.replace }, ...(mutant.also ?? [])];
+    // A find string that matches twice mutates whichever comes first — maybe not the control.
+    if (edits.some((edit) => original.split(edit.find).length !== 2)) {
+      survivors.push(`${mutant.control} — find string is missing or not unique in ${mutant.file}; update scripts/mutate.ts`);
+      continue;
+    }
     if (edits.some((edit) => !original.includes(edit.find))) {
       // The guarded line moved: the catalogue is stale, which is itself a failure.
       survivors.push(`${mutant.control} — mutant no longer applies (${mutant.file}); update scripts/mutate.ts`);

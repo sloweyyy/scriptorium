@@ -50,6 +50,11 @@ export interface JiraSettings {
   inProgressStatus: string;
   inReviewStatus: string;
   approvedStatus: string;
+  /**
+   * Jira account ids whose `approve` (comment or board move) publishes. Empty: any human
+   * on the ticket, never the agent. Set it: a project's commenters are not its approvers.
+   */
+  approvers?: string[];
   pollMs: number;
   /** Resume state (processed comment ids, working drafts) — gitignored, not part of the record. */
   stateDir: string;
@@ -245,6 +250,7 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       inProgressStatus: env("JIRA_IN_PROGRESS_STATUS") ?? "In Progress",
       inReviewStatus: env("JIRA_IN_REVIEW_STATUS") ?? "In Review",
       approvedStatus: env("JIRA_APPROVED_STATUS") ?? "Approved",
+      approvers: list(env("JIRA_APPROVERS")),
       pollMs: envNumber("JIRA_POLL_MS", 15_000),
       stateDir: path.resolve(repoRoot, env("STATE_DIR") ?? ".scriptorium-state"),
     },

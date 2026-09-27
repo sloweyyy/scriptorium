@@ -311,3 +311,14 @@ describe("untrusted ticket input stays input", () => {
     expect(safeDesignName(undefined, "image/gif", "digest-design-3")).toBe("digest-design-3.gif");
   });
 });
+
+describe("mayApproveOnJira", () => {
+  it("never approves an unknown account or the agent itself, and honours the approver list", async () => {
+    const { mayApproveOnJira } = await import("@scriptorium/agents");
+    expect(mayApproveOnJira({}, "bot", undefined).ok).toBe(false);
+    expect(mayApproveOnJira({}, "bot", "bot").ok).toBe(false);
+    expect(mayApproveOnJira({}, "bot", "anyone").ok).toBe(true);
+    expect(mayApproveOnJira({ approvers: ["pm"] }, "bot", "anyone").ok).toBe(false);
+    expect(mayApproveOnJira({ approvers: ["pm"] }, "bot", "pm").ok).toBe(true);
+  });
+});

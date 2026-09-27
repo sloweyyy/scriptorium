@@ -53,6 +53,7 @@ const slack = {
       posted.push({ ...args });
       return { ok: true, ts: `9.${posted.length}` };
     },
+    getPermalink: async (args: { channel: string; message_ts: string }) => ({ ok: true, permalink: `https://team.slack.com/archives/${args.channel}/p${args.message_ts.replace(".", "")}` }),
     update: async (args: { ts: string; text: string; blocks?: unknown[] }) => {
       if (args.text.startsWith("🔎")) {
         progressUpdates.push(args.text);
@@ -289,6 +290,29 @@ describe("automatic PR checks", () => {
     expect(summary?.text).toContain("Waiting for approval");
     expect(card?.text).toContain("Approval needed");
     expect(card?.thread_ts).toBe(`9.${posted.indexOf(summary!) + 1}`);
+  });
+});
+
+describe("the approvals inbox (App Home)", () => {
+  it("shows an approver what is waiting for them, linked to the card; shows others nothing to approve", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [{ name: "memory_save", input: { text: "Release notes go out on Thursdays.", scope: "channel:C1" } }], reply: "Asked." };
+    await core.onMention({ channel: "C1", ts: "3.0", user: "U1", text: "<@UBOT> remember release notes go out on Thursdays" });
+    await settle(core);
+    const card = posted.find((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION))!;
+    const cardTs = `9.${posted.indexOf(card) + 1}`;
+
+    const approver = JSON.stringify(await core.homeView("UPM"));
+    expect(approver).toContain("Waiting for your approval (1)");
+    expect(approver).toContain("Remember (channel:C1)");
+    expect(approver).toContain(`https://team.slack.com/archives/C1/p${cardTs.replace(".", "")}|open the card`);
+    // Read-only: deciding happens on the card, never from Home.
+    expect(approver).not.toContain(APPROVE_ACTION);
+
+    const asker = JSON.stringify(await core.homeView("U1"));
+    expect(asker).toContain("Waiting for your approval (0)");
+    expect(asker).toContain("*waiting*");
+    expect(JSON.stringify(await core.homeView("U_RANDOM"))).toContain("Waiting for your approval (0)");
   });
 });
 

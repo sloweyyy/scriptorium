@@ -169,6 +169,7 @@ memory — posts an approval card that a `TEAMMATE_APPROVERS` click carries out 
 | Cited answers across the vault, Confluence and Jira | `answer-with-citations`; uncited claims are refused, misses become gap tickets (deduped) |
 | What did I miss? | `channel-catchup`; reads the channel it was asked in (up to 72h, on demand, nothing kept): decided / still open / waiting on you, each point cited to its message |
 | Thread → Jira ticket | `thread-to-ticket`; reads the thread it was asked in, proposes the issue on a card — or use the **File as a ticket** message shortcut |
+| An approver's inbox | the App Home tab lists what is waiting for *your* approval, each linked to its card, and what you asked for (read-only — cards are where things are decided) |
 | Ask without a mention | `/teammate <question>` posts the question as a thread in the channel and answers under it (same channels, same approvals) |
 | Is this ticket ready? | `readiness-check`; verdict plus what is missing, cited |
 | Remember this | `remember`; scoped memory (person / channel / global), human-approved, never reaches published docs |

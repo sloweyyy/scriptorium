@@ -138,7 +138,7 @@ export const MUTANTS: Mutant[] = [
   },
   {
     control: "the Teammate writes to Atlassian only as itself",
-    file: "apps/agents/src/teammate-bot.ts",
+    file: "apps/agents/src/teammate-bot/tools.ts",
     find: "tools.push(...(ownIdentity ? atlassian : atlassian.filter((tool) => !ATLASSIAN_WRITES.has(tool.name))));",
     replace: "tools.push(...atlassian);",
     evals: ["evals/teammate-bot.test.ts"],

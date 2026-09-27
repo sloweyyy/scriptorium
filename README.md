@@ -177,6 +177,7 @@ memory — posts an approval card that a `TEAMMATE_APPROVERS` click carries out 
 | Status update for an epic | `status-update`; what shipped, what's in flight, what's at risk — every line cited, posted only on approval |
 | Triage new tickets | `triage`; in `TEAMMATE_TRIAGE_PROJECTS`, a new issue gets one reply: ready or not, what's missing, likely duplicates (cited); rate-capped per project, changes nothing |
 | Ready to start? (on assignment) | assigning a ticket to the Teammate runs `readiness-check` and replies on the ticket |
+| Release notes | `release-notes`; what merged into an allowed repo since a date (`github_list_merged`), grouped new / improved / fixed, every line cited to its PR; published only on approval |
 | Check a PR against its ticket | `pr-check`; on request or automatically when a PR opens, acceptance criteria covered or not, doc drift flagged, one advisory comment behind a card |
 
 **What keeps the docs honest after they ship.** A published doc records its PRD's hash; if

@@ -44,6 +44,7 @@ describe("agent policy", () => {
       slack_read_thread: "allow",
       slack_read_channel: "allow",
       github_get_pull: "allow",
+      github_list_merged: "allow",
       jira_comment: "approve",
       jira_create_issue: "approve",
       jira_transition: "approve",

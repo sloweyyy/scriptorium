@@ -116,6 +116,7 @@ const TOOL_PROGRESS: Record<string, string> = {
   slack_read_thread: "Reading the thread",
   slack_read_channel: "Reading the channel",
   github_get_pull: "Reading the pull request",
+  github_list_merged: "Listing merged pull requests",
 };
 
 export function progressText(tool: string): string {

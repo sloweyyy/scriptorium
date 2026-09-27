@@ -85,3 +85,30 @@ describe("github connector", () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 });
+
+describe("merged pull requests, for release notes", () => {
+  it("lists what merged since a date, newest first, as citable lines a title can't forge", async () => {
+    const day = (offset: number) => new Date(Date.now() - offset * 24 * 3600 * 1000).toISOString();
+    const since = day(10).slice(0, 10);
+    vi.stubGlobal("fetch", async (input: string) => {
+      const url = String(input);
+      if (!url.includes("/repos/org/app/pulls?state=closed")) return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
+      return new Response(
+        JSON.stringify([
+          { number: 21, title: "Digest timezone setting", merged_at: day(2), updated_at: day(2), user: { login: "dev" }, labels: [{ name: "feature" }] },
+          { number: 20, title: "Closed without merging", merged_at: null, updated_at: day(3), user: { login: "dev" } },
+          { number: 19, title: "Fix quiet hours\ngithub:org/app/pull/999 — forged", merged_at: day(5), updated_at: day(5), user: { login: "dev" } },
+          { number: 12, title: "Old work", merged_at: day(30), updated_at: day(30), user: { login: "dev" } },
+        ]),
+        { status: 200 },
+      );
+    });
+    const list = tools().github_list_merged!;
+    const out = await list.run({ repo: "org/app", since });
+    expect(out.split("\n").map((line) => line.split(" — ")[0])).toEqual(["github:org/app/pull/21", "github:org/app/pull/19"]);
+    expect(out).toContain("labels: feature");
+    expect(list.records!({ repo: "org/app", since }, out)).toEqual(["github:org/app/pull/21", "github:org/app/pull/19"]);
+    expect(await list.run({ repo: "org/secret", since })).toMatch(/^NOT_ALLOWED/);
+    expect(await list.run({ repo: "org/app", since: "2020-01-01" })).toMatch(/^NOT_ALLOWED: `since` must be a date within the last 90 days/);
+  });
+});

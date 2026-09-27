@@ -34,6 +34,14 @@ const Pull = z.object({
   head: z.object({ ref: z.string() }),
   html_url: z.string(),
 });
+const MergedPull = z.object({
+  number: z.number(),
+  title: z.string(),
+  merged_at: z.string().nullable(),
+  updated_at: z.string(),
+  user: z.object({ login: z.string() }).nullable(),
+  labels: z.array(z.object({ name: z.string() })).optional(),
+});
 const Files = z.array(z.object({ filename: z.string(), status: z.string(), additions: z.number(), deletions: z.number() }));
 const Comments = z.array(z.object({ id: z.number(), body: z.string().nullable() }));
 
@@ -98,6 +106,43 @@ export function githubTools(settings: GitHubToolSettings): ToolSpec[] {
         // No "#": in wikilink syntax it starts a heading, and `[[github:org/app#12]]` would cite the repo, not the PR.
         const id = `github:${parsed.data.repo.trim().toLowerCase()}/pull/${parsed.data.number}`;
         return output.startsWith(`${id} — `) ? [id] : [];
+      },
+    },
+    {
+      name: "github_list_merged",
+      description:
+        "List the pull requests merged into a repo since a date (at most 90 days back), newest first — for release notes. Cite each as [[github:<owner/repo>/pull/<number>]], using the id at the start of its line.",
+      inputSchema: z.object({ repo: z.string().describe("owner/name"), since: z.string().describe("A date, YYYY-MM-DD.") }),
+      run: (input) =>
+        refusalOr(async () => {
+          const parsed = z.object({ repo: z.string(), since: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).parse(input);
+          const repo = checkRepo(parsed.repo);
+          const since = Date.parse(`${parsed.since}T00:00:00Z`);
+          if (!Number.isFinite(since) || since < Date.now() - 90 * 24 * 3600 * 1000) throw new GitHubAccessError("`since` must be a date within the last 90 days.");
+          const merged: Array<z.infer<typeof MergedPull>> = [];
+          // Closed PRs, most recently updated first: once a page is entirely older than
+          // `since`, nothing after it can be newer.
+          for (let page = 1; page <= 5; page += 1) {
+            const pulls = await call(repo, `/repos/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=${page}`, z.array(MergedPull));
+            merged.push(...pulls.filter((pull) => pull.merged_at && Date.parse(pull.merged_at) >= since));
+            if (pulls.length < 100 || pulls.every((pull) => Date.parse(pull.updated_at) < since)) break;
+          }
+          if (!merged.length) return `No pull requests were merged into ${repo} since ${parsed.since}.`;
+          // One PR per line, its id first, its title flattened: a title can't forge a record.
+          return merged
+            .sort((a, b) => Date.parse(b.merged_at as string) - Date.parse(a.merged_at as string))
+            .slice(0, 200)
+            .map((pull) => `github:${repo}/pull/${pull.number} — ${pull.title.replace(/\s+/g, " ").slice(0, 200)} (merged ${(pull.merged_at as string).slice(0, 10)} by ${pull.user?.login ?? "unknown"}${pull.labels?.length ? `; labels: ${pull.labels.map((label) => label.name).join(", ")}` : ""})`)
+            .join("\n");
+        }),
+      records: (input, output) => {
+        const parsed = z.object({ repo: z.string() }).safeParse(input);
+        if (!parsed.success) return [];
+        const prefix = `github:${parsed.data.repo.trim().toLowerCase()}/pull/`;
+        return output
+          .split("\n")
+          .map((line) => line.match(/^(github:[a-z0-9_.-]+\/[a-z0-9_.-]+\/pull\/\d+) — /)?.[1])
+          .filter((id): id is string => Boolean(id) && (id as string).startsWith(prefix));
       },
     },
     {

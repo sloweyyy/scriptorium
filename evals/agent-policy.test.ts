@@ -37,6 +37,7 @@ describe("agent policy", () => {
       read_note: "allow",
       confluence_search: "allow",
       confluence_read_page: "allow",
+      confluence_page_children: "allow",
       jira_search: "allow",
       jira_recent: "allow",
       jira_children: "allow",

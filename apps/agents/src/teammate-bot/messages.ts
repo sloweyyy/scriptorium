@@ -109,6 +109,7 @@ const TOOL_PROGRESS: Record<string, string> = {
   vault_overview: "Looking at what the docs cover",
   confluence_search: "Searching Confluence",
   confluence_read_page: "Reading a Confluence page",
+  confluence_page_children: "Looking through a Confluence page tree",
   jira_search: "Searching Jira",
   jira_recent: "Checking recent Jira activity",
   jira_children: "Reading the epic's issues",

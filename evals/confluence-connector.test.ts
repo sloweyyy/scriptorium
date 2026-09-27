@@ -24,6 +24,8 @@ beforeEach(() => {
     if (url.includes("/rest/api/search")) {
       return json({ results: [{ excerpt: "@@@hl@@@Maintenance@@@endhl@@@ windows", content: { id: "101", title: "Maintenance windows", space: { key: "BEACON" } } }] });
     }
+    const parent = url.match(/\/api\/v2\/pages\/(\d+)\/children/)?.[1];
+    if (parent === "101") return json({ results: [{ id: "103", title: "Maintenance runbook", spaceId: "1" }, { id: "202", title: "Salaries 2026", spaceId: "2" }] });
     const page = url.match(/\/api\/v2\/pages\/(\d+)/)?.[1];
     if (page && PAGES[page]) {
       return json({ id: page, title: PAGES[page].title, spaceId: PAGES[page].spaceId, body: { storage: { value: "<h1>Hello</h1><p>World</p>" } }, _links: { webui: `/spaces/X/pages/${page}` } });
@@ -83,6 +85,19 @@ describe("confluence connector", () => {
       return new Response(JSON.stringify({ id: "101", title: "T", spaceId: "1", body: {} }));
     });
     await expect(connector().readPage("101")).rejects.toThrow(/unexpected shape: body\.storage/);
+  });
+});
+
+describe("confluence page trees", () => {
+  it("lists a page's children in allowed spaces only, and refuses a parent outside them", async () => {
+    const children = connector().tools().find((tool) => tool.name === "confluence_page_children")!;
+    const out = await children.run({ id: "101" });
+    expect(JSON.parse(out)).toEqual([{ cite: "confluence:103", id: "103", title: "Maintenance runbook" }]);
+    expect(out).not.toContain("Salaries");
+    expect(children.records!({ id: "101" }, out)).toEqual(["confluence:103"]);
+    const refused = await children.run({ id: "202" });
+    expect(refused).toMatch(/^NOT_ALLOWED/);
+    expect(refused).not.toContain("Salaries");
   });
 });
 
@@ -151,7 +166,7 @@ describe("confluence writes", () => {
 
   it("offers no write tools without a ledger", () => {
     const readOnly = new ConfluenceConnector({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", allowedSpaceKeys: ["BEACON"] });
-    expect(readOnly.tools().map((tool) => tool.name)).toEqual(["confluence_search", "confluence_read_page"]);
+    expect(readOnly.tools().map((tool) => tool.name)).toEqual(["confluence_search", "confluence_read_page", "confluence_page_children"]);
     expect(writer().tools().map((tool) => tool.name)).toContain("confluence_update_page");
   });
 });

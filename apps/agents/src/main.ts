@@ -1,5 +1,6 @@
 import path from "node:path";
 import { docsRepoReady, geminiModel, jiraReady, loadConfig, Vault } from "@scriptorium/core";
+import { jiraClient } from "@scriptorium/jira";
 import { FileEffectLedger } from "@scriptorium/runtime";
 import { seedCorpusIfEmpty, updateMoc, watchInbox } from "@scriptorium/curator";
 import { startIngress } from "./ingress";
@@ -72,7 +73,16 @@ let scribe: ScribeJiraHandle | undefined;
 
 if (jiraReady(config.jira)) {
   try {
-    scribe = await startScribeJira(config, vault);
+    // The Teammate's own Jira account, if it has one: Scribe must not read its conversation
+    // (questions to it, answers from it) as feedback on a draft.
+    const teammateJiraId =
+      config.teammate.atlassianEmail && config.teammate.atlassianToken
+        ? await jiraClient({ ...config.jira, email: config.teammate.atlassianEmail, apiToken: config.teammate.atlassianToken })
+            .myself()
+            .then((me) => me.accountId)
+            .catch(() => undefined)
+        : undefined;
+    scribe = await startScribeJira(config, vault, { otherAgentIds: teammateJiraId ? [teammateJiraId] : [] });
     stops.push(() => scribe?.stop());
   } catch (error) {
     console.error(`[scribe] jira poller failed to start: ${error instanceof Error ? error.message : error}`);

@@ -277,7 +277,7 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
     if (ctx.state.isProcessed(key, comment.id)) continue;
     // `hasDraft` is read fresh: a draft posted earlier in this same batch changes what a
     // mention means, and the parser needs the current answer, not the one from the top.
-    const command = parseCommand(comment, ctx.botAccountId, { hasDraft: Boolean(ctx.state.get(key)?.hasDraft) });
+    const command = parseCommand(comment, ctx.botAccountId, { hasDraft: Boolean(ctx.state.get(key)?.hasDraft), otherAgents: ctx.otherAgentIds });
 
     // Someone else's conversation: on a mention-only ticket the agent has never taken part
     // in, plain prose is people talking to each other and must not trigger a revise.

@@ -106,3 +106,45 @@ describe("jira_children", () => {
     expect(await tools().jira_children!.run({ key: 'DOC-1" OR project = HR' })).toMatch(/^NOT_ALLOWED/);
   });
 });
+
+describe("small Jira edits: move, assign, label, link", () => {
+  function stubEdits(users: Array<{ accountId: string; displayName: string }>) {
+    vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+      const url = decodeURIComponent(String(input));
+      const method = init?.method ?? "GET";
+      requests.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+      if (url.endsWith("/transitions") && method === "GET") return json({ transitions: [{ id: "31", name: "Start review", to: { name: "In Review" } }] });
+      if (url.includes("/user/search")) return json(users.map((user) => ({ ...user, active: true, accountType: "atlassian" })));
+      return method === "GET" ? json({}) : method === "POST" ? new Response("", { status: 201 }) : new Response(null, { status: 204 });
+    });
+  }
+
+  it("moves by status name, and a status it can't reach is not 'done'", async () => {
+    stubEdits([]);
+    expect(await tools().jira_transition!.run({ key: "doc-7", status: "in review" }, { approval: { id: "a1" } })).toBe("Moved jira:DOC-7 to in review.");
+    expect(requests.find((request) => request.method === "POST")?.body).toEqual({ transition: { id: "31" } });
+    expect(await tools().jira_transition!.run({ key: "DOC-7", status: "Done" }, { approval: { id: "a2" } })).toMatch(/^NOT_ALLOWED: jira:DOC-7 has no transition to "Done"/);
+    expect(await tools().jira_transition!.run({ key: "HR-1", status: "Done" })).toMatch(/^NOT_ALLOWED/);
+  });
+
+  it("assigns only when exactly one person matches the name the approver read", async () => {
+    stubEdits([{ accountId: "acc-mai", displayName: "Mai Tran" }]);
+    expect(await tools().jira_assign!.run({ key: "DOC-7", assignee: "Mai" }, { approval: { id: "a1" } })).toBe("Assigned jira:DOC-7 to Mai Tran.");
+    expect(requests.find((request) => request.method === "PUT")?.body).toEqual({ accountId: "acc-mai" });
+    stubEdits([{ accountId: "a", displayName: "Mai A" }, { accountId: "b", displayName: "Mai B" }]);
+    expect(await tools().jira_assign!.run({ key: "DOC-7", assignee: "Mai" }, { approval: { id: "a2" } })).toMatch(/^NOT_ALLOWED: "Mai" matches 2 people/);
+    expect(await tools().jira_assign!.run({ key: "DOC-7", assignee: "unassigned" }, { approval: { id: "a3" } })).toBe("Assigned jira:DOC-7 to nobody.");
+  });
+
+  it("labels are validated, and a link needs both ends inside the allow-list", async () => {
+    stubEdits([]);
+    expect(await tools().jira_labels!.run({ key: "DOC-7", add: ["needs-docs"], remove: ["triage"] }, { approval: { id: "a1" } })).toBe("Labels on jira:DOC-7: +needs-docs -triage.");
+    expect(requests.find((request) => request.method === "PUT")?.body).toEqual({ update: { labels: [{ add: "needs-docs" }, { remove: "triage" }] } });
+    await expect(tools().jira_labels!.run({ key: "DOC-7", add: ["two words"] })).rejects.toThrow();
+    expect(await tools().jira_link!.run({ from: "DOC-7", to: "DOC-9", type: "Blocks" }, { approval: { id: "a1" } })).toBe("Linked jira:DOC-7 → jira:DOC-9 (Blocks).");
+    // "DOC-7 blocks DOC-9": Jira reads inwardIssue as the subject of the outward verb.
+    expect(requests.find((request) => request.url.endsWith("/issueLink"))?.body).toEqual({ type: { name: "Blocks" }, inwardIssue: { key: "DOC-7" }, outwardIssue: { key: "DOC-9" } });
+    expect(await tools().jira_link!.run({ from: "DOC-7", to: "HR-2" })).toMatch(/^NOT_ALLOWED/);
+  });
+});

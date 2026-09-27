@@ -43,9 +43,23 @@ describe("teammate slack surface", () => {
     expect(refused.notRun).toBe("refused");
     expect(refused.text).not.toContain("Done");
     expect(refused.text).toContain("HR is outside the Jira projects");
+    // A plan part-way: neither "Done" nor "nothing was changed".
+    const partial = outcomeMessages({ kind: "ran", result: "PARTIAL: plan “t”: 1 of 3 steps done; step 2 was refused (x), so nothing after it was run." }, who);
+    expect(partial.notRun).toBe("partial");
+    expect(partial.text).toContain("only partly done: plan “t”: 1 of 3 steps done");
+    expect(partial.text).not.toContain("✅");
+    const failedMidway = outcomeMessages({ kind: "failed", reason: "PARTIAL: 1 of 3 steps done before step 2 failed." }, who);
+    expect(failedMidway.text).toContain("1 of 3 steps are done");
+    expect(failedMidway.text).not.toContain("nothing was changed");
     const failed = outcomeMessages({ kind: "failed", reason: "ECONNRESET at socket.ts:88" }, who);
     expect(failed.notRun).toBe("failed");
     expect(failed.text + failed.origin).not.toContain("ECONNRESET");
+  });
+
+  it("the inbox calls an expired request expired, not waiting", async () => {
+    const { homeBlocks } = await import("@scriptorium/agents");
+    const expired = { id: "r", agent: "Teammate", tool: "jira_comment", argsHash: "h", summary: "", key: "slack:thread:C1/1.0", requestedAt: "2020-01-01", expiresAt: "2020-01-08T00:00:00Z", status: "pending" as const, args: { key: "DOC-1" } };
+    expect(JSON.stringify(homeBlocks({ waiting: [], mine: [expired], help: "" }))).toContain("*expired*");
   });
 
   it("caps a question's length, and says it was cut", () => {
@@ -129,6 +143,17 @@ describe("tools bound to the turn", () => {
     for (const scope of ["global", "channel:C1", "person:slack:U1"]) expect(await save!.run({ text: "x is y.", scope })).toBe("ok");
     for (const scope of ["channel:C2", "person:slack:U2"]) expect(await save!.run({ text: "x is y.", scope })).toMatch(/^NOT_ALLOWED/);
     expect(ran).toEqual(["slack_read_thread", "memory_save", "memory_save", "memory_save"]);
+  });
+
+  it("a plan's steps are held to the same bounds — a reminder step for another channel is refused", async () => {
+    const { bindToTurn } = await import("@scriptorium/agents");
+    const { z } = await import("zod");
+    const ran: unknown[] = [];
+    const [plan] = bindToTurn([{ name: "propose_plan", description: "", inputSchema: z.object({}), run: async (input) => (ran.push(input), "ok") }], { question: "q", askedBy: "slack:U1", channel: "C1", threadTs: "1.0" });
+    const reminder = (channel: string) => ({ tool: "schedule_reminder", args: { channel, at: "2030-01-01T09:00:00Z", text: "x" } });
+    expect(await plan!.run({ title: "t", steps: [reminder("C1"), reminder("C_PRIVATE")] })).toMatch(/^NOT_ALLOWED: step 2: reminders can be set/);
+    expect(await plan!.run({ title: "t", steps: [reminder("C1"), { tool: "jira_labels", args: { key: "DOC-1" } }] })).toBe("ok");
+    expect(ran).toHaveLength(1);
   });
 
   it("reads only the channel it was asked in — never another allowed one", async () => {

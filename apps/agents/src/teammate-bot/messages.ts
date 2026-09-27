@@ -109,13 +109,16 @@ const TOOL_PROGRESS: Record<string, string> = {
   vault_overview: "Looking at what the docs cover",
   confluence_search: "Searching Confluence",
   confluence_read_page: "Reading a Confluence page",
+  confluence_page_children: "Looking through a Confluence page tree",
   jira_search: "Searching Jira",
   jira_recent: "Checking recent Jira activity",
   jira_children: "Reading the epic's issues",
+  jira_sprint: "Reading the sprint",
   jira_get_issue: "Reading a Jira issue",
   slack_read_thread: "Reading the thread",
   slack_read_channel: "Reading the channel",
   github_get_pull: "Reading the pull request",
+  github_list_merged: "Listing merged pull requests",
 };
 
 export function progressText(tool: string): string {

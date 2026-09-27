@@ -1,3 +1,4 @@
+import { PLAN_TOOL, summarizePlan } from "./plan";
 import { audit, type ToolSpec } from "@scriptorium/core";
 import { consumeApproval, requestApproval, restoreApproval, type ApprovalRequest, type ApprovalStore } from "./approvals";
 import { evaluate, type Envelope } from "./policy";
@@ -89,7 +90,7 @@ export async function runUnderPolicy(envelope: Envelope, tool: ToolSpec, input: 
     agent: envelope.agent,
     tool: tool.name,
     args: input,
-    summary: deps.summarize?.(tool.name, input) ?? summarizeArgs(input),
+    summary: deps.summarize?.(tool.name, input) ?? (tool.name === PLAN_TOOL ? summarizePlan(input) : summarizeArgs(input)),
     key: deps.key,
     requestedBy: deps.requestedBy,
     rule: verdict.rule ?? { tier: "approve" },

@@ -1,6 +1,6 @@
 import { audit, type ToolRunContext, type ToolSpec, type Vault } from "@scriptorium/core";
 import { buildRetrievalIndex, enforceGrounding, fileGapNote, parseQaAnswer, qaTools, type GapInput } from "@scriptorium/curator";
-import type { GuardDeps } from "@scriptorium/policy";
+import { PLAN_TOOL, checkPlan, type GuardDeps } from "@scriptorium/policy";
 import { assembleAgent, listMemories, memoryTools, renderMemories, runSession, scopesFor, SessionError, type AgentConfig, type SessionUsage, type Skill } from "@scriptorium/runtime";
 
 /**
@@ -30,6 +30,9 @@ const WRITE_DESCRIPTIONS: Record<string, string> = {
   confluence_update_page: "update the Confluence page",
   memory_save: "remember that",
   github_pr_comment: "comment on the pull request",
+  propose_plan: "carry out the plan",
+  schedule_reminder: "schedule the reminder",
+  cancel_reminder: "cancel the reminder",
   slack_reply: "reply in the thread",
 };
 
@@ -47,7 +50,7 @@ export function describeOutcome(tool: string, result: string): string {
   return `✅ ${result.split("\n")[0]}`;
 }
 
-export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "jira_transition", "jira_assign", "jira_labels", "jira_link", "slack_reply", "confluence_create_page", "confluence_update_page", "memory_save", "github_pr_comment"]);
+export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "jira_transition", "jira_assign", "jira_labels", "jira_link", "slack_reply", "confluence_create_page", "confluence_update_page", "memory_save", "github_pr_comment", "propose_plan", "schedule_reminder", "cancel_reminder"]);
 
 export type TeammateReply =
   | { kind: "answer"; text: string; citations: string[] }
@@ -78,42 +81,47 @@ export interface TeammateTurn {
  */
 export function bindToTurn(tools: ToolSpec[], turn: TeammateTurn): ToolSpec[] {
   const scopes = new Set(scopesFor(turn));
-  return tools.map((tool) => {
-    if (tool.name === "slack_read_thread") {
-      return {
-        ...tool,
-        run: async (input: unknown, context?: ToolRunContext) => {
-          const { channel, thread_ts } = (input ?? {}) as { channel?: unknown; thread_ts?: unknown };
-          if (channel !== turn.channel || thread_ts !== turn.threadTs) return "NOT_ALLOWED: you may read only the thread you were asked in.";
-          return tool.run(input, context);
-        },
-      };
+  return tools.map((tool) => ({
+    ...tool,
+    run: async (input: unknown, context?: ToolRunContext) => {
+      // A plan's steps are held to the same bounds as the tools they name: a plan is not a
+      // way around them (a reminder step for another channel is refused like the tool is).
+      if (tool.name === PLAN_TOOL) {
+        const steps = (input as { steps?: unknown } | undefined)?.steps;
+        for (const [index, step] of (Array.isArray(steps) ? steps : []).entries()) {
+          const { tool: name, args } = (step ?? {}) as { tool?: unknown; args?: unknown };
+          const refusal = typeof name === "string" ? turnRefusal(name, args, turn, scopes) : undefined;
+          if (refusal) return `${refusal.replace(/^NOT_ALLOWED: /, `NOT_ALLOWED: step ${index + 1}: `)}`;
+        }
+        return tool.run(input, context);
+      }
+      return turnRefusal(tool.name, input, turn, scopes) ?? tool.run(input, context);
+    },
+  }));
+}
+
+/** Why this call is outside the turn it serves, or undefined when it is inside. */
+export function turnRefusal(name: string, input: unknown, turn: TeammateTurn, scopes: ReadonlySet<string> = new Set(scopesFor(turn))): string | undefined {
+  if (name === "slack_read_thread") {
+    const { channel, thread_ts } = (input ?? {}) as { channel?: unknown; thread_ts?: unknown };
+    if (channel !== turn.channel || thread_ts !== turn.threadTs) return "NOT_ALLOWED: you may read only the thread you were asked in.";
+  }
+  if (name === "schedule_reminder" || name === "list_reminders" || name === "cancel_reminder") {
+    // Reminders only in the conversation that asked: the model does not get to post into other channels later.
+    if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return "NOT_ALLOWED: reminders can be set, listed or cancelled only in the channel you were asked in.";
+  }
+  if (name === "slack_read_channel") {
+    // Only the channel it was asked in: from anywhere else it would hand a private
+    // channel's messages to someone who isn't in it.
+    if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return "NOT_ALLOWED: you may read only the channel you were asked in.";
+  }
+  if (name === "memory_save") {
+    const scope = (input as { scope?: unknown } | undefined)?.scope;
+    if (typeof scope !== "string" || !scopes.has(scope)) {
+      return `NOT_ALLOWED: from here a memory can be scoped to ${[...scopes].map((value) => `"${value}"`).join(", ")} only.`;
     }
-    if (tool.name === "slack_read_channel") {
-      return {
-        ...tool,
-        run: async (input: unknown, context?: ToolRunContext) => {
-          // Only the channel it was asked in: from anywhere else it would hand a private
-          // channel's messages to someone who isn't in it.
-          if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return "NOT_ALLOWED: you may read only the channel you were asked in.";
-          return tool.run(input, context);
-        },
-      };
-    }
-    if (tool.name === "memory_save") {
-      return {
-        ...tool,
-        run: async (input: unknown, context?: ToolRunContext) => {
-          const scope = (input as { scope?: unknown } | undefined)?.scope;
-          if (typeof scope !== "string" || !scopes.has(scope)) {
-            return `NOT_ALLOWED: from here a memory can be scoped to ${[...scopes].map((value) => `"${value}"`).join(", ")} only.`;
-          }
-          return tool.run(input, context);
-        },
-      };
-    }
-    return tool;
-  });
+  }
+  return undefined;
 }
 
 export interface TeammateDeps {
@@ -147,7 +155,17 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
   const records = new Set<string>();
   /** What each write tool reported — the ONLY text an uncited action reply may carry. */
   const writeOutcomes: string[] = [];
-  const tools = bindToTurn(agent.tools, turn).map((tool) => ({
+  // A plan that couldn't run is refused before it becomes a card: an approver never sees one.
+  const available = [...vaultTools, ...memoryTools(deps.vault, deps.signingKey), ...deps.connectorTools];
+  const planned = agent.tools.map((tool) =>
+    tool.name === PLAN_TOOL
+      ? { ...tool, run: async (input: unknown, context?: ToolRunContext) => {
+          const problem = checkPlan(agent.envelope, available, input);
+          return problem ? `NOT_ALLOWED: ${problem}` : tool.run(input, context);
+        } }
+      : tool,
+  );
+  const tools = bindToTurn(planned, turn).map((tool) => ({
     ...tool,
     run: async (input: unknown) => {
       used.add(tool.name);

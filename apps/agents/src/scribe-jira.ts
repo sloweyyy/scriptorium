@@ -462,6 +462,36 @@ async function loadConfluencePrd(
  * Hand the inputs to Agent B: PRD and designs land in `_inbox`, where Curator's watcher
  * files and links them. Agent A's ticket becomes Agent B's knowledge without a second copy.
  */
+/**
+ * The PRD's own frontmatter is the PM's input, not the vault's metadata. Copied wholesale,
+ * a PRD carrying `source_url` became the citation link Curator shows for it and blocked the
+ * internal publish; `kind`, `status` or `approved_by` could pose as vault state. Only the
+ * fields a PRD legitimately carries are kept.
+ */
+const PRD_KEYS = new Set(["feature", "audience", "user_goal", "owner", "title", "summary", "tags"]);
+
+export function prdFrontmatter(frontmatter: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(frontmatter).filter(([key]) => PRD_KEYS.has(key)));
+}
+
+const IMAGE_EXTENSIONS: Record<string, string> = { "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif" };
+
+/**
+ * A design's filename, made safe to file. The name is whatever the uploader typed: an
+ * image named `approve.md` was filed by the organizer as a DOCUMENT. The extension now
+ * comes from the bytes' media type, and the rest is reduced to a plain slug.
+ */
+export function safeDesignName(uploaded: string | undefined, mediaType: string, fallback: string): string {
+  const stem = path
+    .basename(uploaded ?? "")
+    .replace(/\.[^.]*$/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return `${stem || fallback}${IMAGE_EXTENSIONS[mediaType] ?? ".png"}`;
+}
+
 async function seedVault(ctx: Ctx, slug: string, feature: string, source: PrdSource, issueKey: string): Promise<void> {
   if (source.markdown) {
     // Written through the vault with `kind: prd` set explicitly: the organizer would
@@ -469,7 +499,7 @@ async function seedVault(ctx: Ctx, slug: string, feature: string, source: PrdSou
     // the very note publishDoc writes on approval.
     const { frontmatter, body } = parseMarkdown(source.markdown);
     await ctx.vault.writeNote(`_inbox/${slug}.md`, body, {
-      ...frontmatter,
+      ...prdFrontmatter(frontmatter),
       kind: "prd",
       feature,
       // Pinned so the organizer files it under the same slug the doc is published as.
@@ -479,7 +509,7 @@ async function seedVault(ctx: Ctx, slug: string, feature: string, source: PrdSou
     });
   }
   for (const [index, image] of source.images.entries()) {
-    const name = source.imageNames[index] ?? `${slug}-design-${index + 1}.png`;
+    const name = safeDesignName(source.imageNames[index], image.mediaType, `${slug}-design-${index + 1}`);
     await fs.writeFile(ctx.vault.abs(`_inbox/${name}`), Buffer.from(image.base64, "base64"));
   }
 }

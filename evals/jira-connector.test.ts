@@ -95,3 +95,14 @@ describe("jira connector", () => {
     expect(await tools(new MemoryEffectLedger(), []).jira_search!.run({ query: "x" })).toMatch(/^NOT_ALLOWED:/);
   });
 });
+
+describe("jira_children", () => {
+  it("lists an epic's children with only the validated key in the JQL, and refuses other projects", async () => {
+    const out = await tools().jira_children!.run({ key: "doc-40" });
+    expect(JSON.parse(out)[0]).toMatchObject({ cite: "jira:DOC-7" });
+    const jql = requests.filter((request) => request.url.includes("/search")).at(-1)?.url ?? "";
+    expect(jql).toContain('parent = "DOC-40"');
+    expect(await tools().jira_children!.run({ key: "HR-1" })).toMatch(/^NOT_ALLOWED/);
+    expect(await tools().jira_children!.run({ key: 'DOC-1" OR project = HR' })).toMatch(/^NOT_ALLOWED/);
+  });
+});

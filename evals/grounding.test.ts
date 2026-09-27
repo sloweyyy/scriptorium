@@ -150,3 +150,16 @@ describe("answerQuestion applies it", () => {
     expect((await answerQuestion(vault, "Do you cover SSO?")).ungrounded).toBe(true);
   });
 });
+
+describe("refusals are not evidence", () => {
+  it("a tool's NOT_ALLOWED echo of an id never grounds a citation to it", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "scriptorium-refusal-"));
+    const v = new Vault(dir);
+    const answer = await enforceGrounding(v, parseQaAnswer("DOC-99 shipped [[jira:DOC-99]]", "q"), {
+      usedOverview: false,
+      retrieved: ['NOT_ALLOWED: "jira:DOC-99" is not an issue key.'],
+    });
+    expect(answer.ungrounded).toBe(true);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+});

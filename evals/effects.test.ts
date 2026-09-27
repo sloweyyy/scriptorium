@@ -105,3 +105,14 @@ describe("jira op-keyed comments", () => {
     expect(await client.findCommentByOp("DOC-1", "other")).toBeUndefined();
   });
 });
+
+describe("once, concurrently", () => {
+  it("two simultaneous calls for the same op act once; the second replays the first", async () => {
+    const ledger = new MemoryEffectLedger();
+    let acts = 0;
+    const [a, b] = await Promise.all([once(ledger, "op-x", async () => ++acts), once(ledger, "op-x", async () => ++acts)]);
+    expect(acts).toBe(1);
+    expect([a.replayed, b.replayed].sort()).toEqual([false, true]);
+    expect(a.result).toBe(b.result);
+  });
+});

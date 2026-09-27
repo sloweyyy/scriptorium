@@ -70,7 +70,7 @@ export function teammateConnectorTools(config: AppConfig, slack: SlackClient, le
     const projects = settings.jiraProjects.length ? settings.jiraProjects : [config.jira.projectKey as string];
     // Its own service account, or read-only. Borrowing Scribe's token to WRITE would make
     // two agents one identity: a Teammate comment would read as Scribe's on every ticket.
-    const ownIdentity = Boolean(settings.atlassianEmail && settings.atlassianToken);
+    const ownIdentity = Boolean(settings.atlassianEmail && settings.atlassianToken) && !sharesScribeAccount(config);
     const email = ownIdentity ? (settings.atlassianEmail as string) : (config.jira.email as string);
     const apiToken = ownIdentity ? (settings.atlassianToken as string) : (config.jira.apiToken as string);
     const atlassian = [
@@ -198,6 +198,16 @@ export interface ApprovalClickPayload {
 export interface TeammateJira {
   client: JiraClient;
   accountId: string;
+}
+
+/**
+ * The Teammate and Scribe on one Atlassian account are one identity: each would read the
+ * other's comments as its own, and every ticket Scribe assigns to itself would look
+ * assigned to the Teammate. That is refused, not warned about.
+ */
+export function sharesScribeAccount(config: AppConfig): boolean {
+  const mine = config.teammate.atlassianEmail?.trim().toLowerCase();
+  return Boolean(mine) && mine === config.jira.email?.trim().toLowerCase();
 }
 
 export async function createTeammate(config: AppConfig, vault: Vault, slack: SlackClient, selfUserId: string, jira?: TeammateJira): Promise<TeammateCore> {
@@ -569,7 +579,9 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
   const identity = await app.client.auth.test();
   // On Jira only as itself: its own service account, or not at all.
   let jira: TeammateJira | undefined;
-  if (jiraReady(config.jira) && settings.atlassianEmail && settings.atlassianToken) {
+  if (sharesScribeAccount(config)) {
+    console.warn("[teammate] TEAMMATE_ATLASSIAN_EMAIL is Scribe's Jira account, so Jira is off for the Teammate: two agents on one account are one identity.");
+  } else if (jiraReady(config.jira) && settings.atlassianEmail && settings.atlassianToken) {
     const client = jiraClient({ ...config.jira, email: settings.atlassianEmail, apiToken: settings.atlassianToken });
     // A Jira problem at boot costs the Jira surface, never the whole Teammate: Slack keeps working.
     jira = await client

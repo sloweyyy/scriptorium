@@ -40,6 +40,7 @@ import {
   draftDoc,
   formatContractQuestions,
   formatLintFindings,
+  lessonDecisionCheck,
   lintOk,
   listLessons,
   rejectLesson,
@@ -1014,12 +1015,29 @@ async function runLessonDecision(
   decision: "approve" | "reject",
   explicitId: string | undefined,
   actor: string,
+  actorAccountId?: string,
 ): Promise<void> {
   const known = ctx.state.get(key);
   const id = explicitId ?? known?.pendingLessonId;
   if (!id) {
     await say(ctx, key, "I don't have a lesson pending on this ticket. Lessons are proposed right after a doc is published.");
     return;
+  }
+
+  // A house rule shapes every future draft, so deciding one takes at least what publishing
+  // one doc takes: a permitted human, on the ticket the rule came from, on a live proposal.
+  const allowed = mayApproveOnJira(ctx.config.jira, ctx.botAccountId, actorAccountId);
+  if (!allowed.ok) {
+    await say(ctx, key, allowed.reason.replace("publish from this ticket", "decide house rules"));
+    return;
+  }
+  const current = (await listLessons(ctx.vault)).find((candidate) => candidate.id === id);
+  if (current) {
+    const check = lessonDecisionCheck(current, decision, ctx.client.issueUrl(key));
+    if (!check.ok) {
+      await say(ctx, key, check.reason);
+      return;
+    }
   }
 
   if (decision === "approve") {
@@ -1275,11 +1293,11 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
       }
       case "approve-lesson":
         await flushFeedback();
-        await runLessonDecision(ctx, key, "approve", command.id, authorName(comment));
+        await runLessonDecision(ctx, key, "approve", command.id, authorName(comment), comment.author?.accountId);
         break;
       case "reject-lesson":
         await flushFeedback();
-        await runLessonDecision(ctx, key, "reject", command.id, authorName(comment));
+        await runLessonDecision(ctx, key, "reject", command.id, authorName(comment), comment.author?.accountId);
         break;
     }
   }

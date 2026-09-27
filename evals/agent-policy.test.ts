@@ -39,6 +39,7 @@ describe("agent policy", () => {
       confluence_read_page: "allow",
       jira_search: "allow",
       jira_recent: "allow",
+      jira_children: "allow",
       jira_get_issue: "allow",
       slack_read_thread: "allow",
       github_get_pull: "allow",

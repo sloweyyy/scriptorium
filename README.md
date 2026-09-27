@@ -172,6 +172,8 @@ memory — posts an approval card that a `TEAMMATE_APPROVERS` click carries out 
 | Remember this | `remember`; scoped memory (person / channel / global), human-approved, never reaches published docs |
 | Weekly digest | `weekly-digest`; what moved in Jira and which doc gaps opened, posted once per week to `TEAMMATE_DIGEST_CHANNEL` |
 | Docs into Confluence | `confluence_create_page` / `confluence_update_page`, approve-tier, allowed spaces only |
+| Status update for an epic | `status-update`; what shipped, what's in flight, what's at risk — every line cited, posted only on approval |
+| Ready to start? (on assignment) | assigning a ticket to the Teammate runs `readiness-check` and replies on the ticket |
 | Check a PR against its ticket | `pr-check`; on request or automatically when a PR opens, acceptance criteria covered or not, doc drift flagged, one advisory comment behind a card |
 
 **What keeps the docs honest after they ship.** A published doc records its PRD's hash; if

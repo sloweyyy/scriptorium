@@ -284,7 +284,14 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         return { kind: "refused" as const, text: "I couldn't finish that, so I haven't answered or changed anything. Try again in a moment." };
       },
     );
-    const body = markdownToJira(`${reply.text}\n\n_AI-generated — verify before acting · run ${(currentRunId() ?? "").slice(0, 8)}_`);
+    // Citations as Jira links, not raw `[[wikilinks]]` — the same resolver Slack answers use.
+    const citations = reply.kind === "answer" ? reply.citations : [];
+    const links = citationLinks(await resolveCitations(vault, config, citations));
+    const linked = reply.text.replace(/\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/g, (whole, target: string) => {
+      const url = links.get(target.trim());
+      return url ? `[${target.trim()}](${url})` : target.trim();
+    });
+    const body = markdownToJira(`${linked}\n\n_AI-generated — verify before acting · run ${(currentRunId() ?? "").slice(0, 8)}_`);
     const op = opKey("teammate.jira.reply", issueKey, commentId);
     await once(ledger, op, async () => (await jira.client.addComment(issueKey, body, { op })).id, {
       probe: async () => (await jira.client.findCommentByOp(issueKey, op))?.id,

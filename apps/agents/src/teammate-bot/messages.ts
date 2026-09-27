@@ -113,6 +113,7 @@ const TOOL_PROGRESS: Record<string, string> = {
   jira_search: "Searching Jira",
   jira_recent: "Checking recent Jira activity",
   jira_children: "Reading the epic's issues",
+  jira_sprint: "Reading the sprint",
   jira_get_issue: "Reading a Jira issue",
   slack_read_thread: "Reading the thread",
   slack_read_channel: "Reading the channel",

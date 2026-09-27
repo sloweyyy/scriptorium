@@ -94,6 +94,30 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
       records: citeRecords,
     },
     {
+      name: "jira_sprint",
+      description: "List the issues in a project's open sprint(s), with status and assignee — for a sprint report or standup. Only projects you may use.",
+      inputSchema: z.object({ project: z.string().describe("Project key, e.g. DOC.") }),
+      run: (input) =>
+        refusalOr(async () => {
+          const project = z.object({ project: z.string() }).parse(input).project.trim().toUpperCase();
+          if (!/^[A-Z][A-Z0-9_]*$/.test(project) || !projects.includes(project)) throw new JiraAccessError(`${project} is outside the Jira projects this agent may use.`);
+          // Jira Software's openSprints(): no board id to guess, and nothing the model wrote in the JQL.
+          const issues = await settings.client.searchIssues(`project = ${jqlString(project)} AND sprint in openSprints() ORDER BY status ASC, updated DESC`, 100);
+          if (!issues.length) return `No issues in an open sprint in ${project} (no active sprint, or the project isn't on a Scrum board).`;
+          return JSON.stringify(
+            issues.map((issue) => ({
+              cite: `jira:${issue.key}`,
+              key: issue.key,
+              summary: issue.fields.summary,
+              status: issue.fields.status?.name,
+              assignee: issue.fields.assignee?.displayName ?? "unassigned",
+              updated: issue.fields.updated,
+            })),
+          );
+        }),
+      records: citeRecords,
+    },
+    {
       name: "jira_get_issue",
       description: "Read one Jira issue: summary, status, description and its latest comments. Cite it as [[jira:<KEY>]].",
       inputSchema: z.object({ key: z.string().describe("Issue key, e.g. DOC-7.") }),

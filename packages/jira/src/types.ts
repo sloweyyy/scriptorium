@@ -46,6 +46,7 @@ export interface JiraIssueFields {
   attachment?: JiraAttachment[];
   updated?: string;
   reporter?: JiraUser | null;
+  assignee?: JiraUser | null;
 }
 
 export interface JiraIssue {

@@ -19,6 +19,7 @@ pnpm draft <prd.md> [images...]   # full Scribe pipeline from the CLI
 pnpm render:wireframes  # samples/wireframes/*.svg -> .png
 pnpm seed:corpus        # corpus/*.md -> vault/reference/ (--inbox to let the watcher file them)
 pnpm mcp                # the vault as a read-only MCP server over stdio
+pnpm trace [run-id]     # what one agent run did (from the audit log); no arg = recent runs
 ```
 
 ## Architecture

@@ -169,6 +169,9 @@ general agent on it. Skills are markdown in [`skills/`](skills/). It answers onl
 claude mcp add scriptorium -- pnpm --dir /path/to/scriptorium mcp
 ```
 
+**Tracing.** Every agent reply ends with its run id; `pnpm trace 3f2a9c1b` prints what that
+run did — trigger, policy decisions, tool calls, approvals, reply — from the audit log.
+
 ## Why it is built this way
 
 - **Learning = human-gated lessons, not fine-tuning.** Feedback that generalizes becomes a

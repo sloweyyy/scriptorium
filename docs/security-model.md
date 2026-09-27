@@ -132,6 +132,8 @@ The model is untrusted too. It proposes; the platform decides what runs.
 
 ### 8. Record: every action is attributable
 - The audit log is append-only JSONL, and every line inside a run carries the run's id.
+  Each line is hash-chained to the one before it (`pnpm auditlog verify` finds an edited,
+  removed or reordered line), and a range can be exported with a signed digest.
   Every publish is a git commit naming its approver. Effects are exactly-once through
   op-keys, so a retry never doubles a write. (`evals/publish-record.test.ts`,
   `evals/run-trace.test.ts`, `evals/effects.test.ts`)

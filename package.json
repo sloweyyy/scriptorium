@@ -15,7 +15,8 @@
     "seed:corpus": "tsx scripts/seed-corpus.ts",
     "mcp": "tsx scripts/mcp.ts",
     "trace": "tsx scripts/trace.ts",
-    "mutate": "tsx scripts/mutate.ts"
+    "mutate": "tsx scripts/mutate.ts",
+    "auditlog": "tsx scripts/audit.ts"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",

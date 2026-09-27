@@ -1,10 +1,13 @@
+import path from "node:path";
 import { docsRepoReady, geminiModel, jiraReady, loadConfig, Vault } from "@scriptorium/core";
+import { FileEffectLedger } from "@scriptorium/runtime";
 import { seedCorpusIfEmpty, updateMoc, watchInbox } from "@scriptorium/curator";
 import { startIngress } from "./ingress";
 import { hydrateVaultFromDocsRepo, syncFromDocsRepo } from "./docs-repo";
 import { startCuratorBot } from "./curator-bot";
 import { startScribeBot } from "./scribe-bot";
 import { startScribeJira, type ScribeJiraHandle } from "./scribe-jira";
+import { reportStaleDocs } from "./staleness-watch";
 import { startTeammateBot } from "./teammate-bot";
 
 /**
@@ -87,6 +90,19 @@ if (config.curator.botToken && config.curator.appToken) {
   await startCuratorBot(config, vault);
 } else {
   console.log("[curator] Slack tokens not set — create the app from slack-manifests/curator.yaml, then fill .env");
+}
+
+// Stale docs: hourly, compare every published doc with its source PRD now; a doc whose PRD
+// changed since approval gets ONE notice on the ticket it was approved on.
+if (scribe) {
+  const staleLedger = new FileEffectLedger(path.join(config.jira.stateDir, "effects.json"));
+  const checkStale = (): void =>
+    void reportStaleDocs({ vault, ledger: staleLedger, auditFile: config.auditFile, notify: (key, markdown) => scribe!.comment(key, markdown) })
+      .then(({ notified }) => notified.length && console.log(`[curator] stale: notified ${notified.join(", ")}`))
+      .catch((error) => console.warn(`[curator] staleness check: ${error instanceof Error ? error.message : error}`));
+  const staleTimer = setInterval(checkStale, 60 * 60 * 1000);
+  stops.push(() => clearInterval(staleTimer));
+  checkStale();
 }
 
 // The general Teammate (ADR-001). Its own Slack identity, its own envelope; answers only in

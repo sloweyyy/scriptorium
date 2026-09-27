@@ -377,7 +377,15 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   }
 
   /** Where the Teammate answers: its channels, and DMs only when they are allowed. */
-  const answersIn = (channel: string): boolean => settings.channels.includes(channel) || (settings.allowDms && channel.startsWith("D"));
+  // A DM counts only when it is the invoker's DM WITH the Teammate: a command or shortcut used
+  // in a DM between two people is not a conversation it is part of (and it can't read one).
+  const answersIn = async (channel: string, user: string): Promise<boolean> => {
+    if (settings.channels.includes(channel)) return true;
+    if (!settings.allowDms || !channel.startsWith("D")) return false;
+    const info = await slack.conversations.info({ channel }).catch(() => undefined);
+    const im = info?.channel as { is_im?: boolean; user?: string } | undefined;
+    return Boolean(im?.is_im && im.user === user);
+  };
   const notHere = (): string =>
     settings.channels.length ? `I don't work in this conversation. Ask me in ${settings.channels.map((id) => `<#${id}>`).join(", ")}.` : "I'm not set up to answer in any channel yet.";
 
@@ -426,7 +434,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
 
     async onSlashCommand({ channel, user, text, commandId }) {
       // A command is typed anywhere; it is answered only where a mention would be.
-      if (!answersIn(channel)) return notHere();
+      if (!(await answersIn(channel, user))) return notHere();
       const question = text.trim();
       if (isHelpRequest(question)) return helpText(settings);
       // The command itself is invisible to the channel, so the question is posted first and
@@ -438,7 +446,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     },
 
     async onFileAsTicket({ channel, user, messageTs, threadTs, shortcutId }) {
-      if (!answersIn(channel)) return notHere();
+      if (!(await answersIn(channel, user))) return notHere();
       // The message the shortcut was used on is part of the discussion, not the trigger: no
       // real ts is excluded from the thread, so the model reads that message too.
       await core.onMention({ channel, ts: SHORTCUT_TRIGGER, thread_ts: threadTs ?? messageTs, user, text: "Turn this thread into a Jira ticket.", client_msg_id: `shortcut:${shortcutId}` });

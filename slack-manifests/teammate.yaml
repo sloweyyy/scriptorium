@@ -32,8 +32,10 @@ oauth_config:
       # Reads only the thread or channel it was asked in, on demand (Slack's terms rule out bulk indexing).
       - channels:history
       - groups:history
-      # Direct messages — only answered with TEAMMATE_ALLOW_DMS=true.
+      # Direct messages — only answered with TEAMMATE_ALLOW_DMS=true (im:read tells its own DM
+      # from a DM between two people, for /teammate and the shortcut).
       - im:history
+      - im:read
 settings:
   event_subscriptions:
     bot_events:

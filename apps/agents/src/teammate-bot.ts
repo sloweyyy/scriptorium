@@ -266,15 +266,26 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const guardDepsFor = (key: string): GuardDeps => ({ store, channel: approvalChannel, auditFile: config.auditFile, key });
   // Spend caps per channel per day, seeded from today's audit so a restart is not a reset.
   const budget = new DailyBudget(settings.dailyTokens);
-  budget.seed(parseAudit(await fs.readFile(config.auditFile, "utf8").catch(() => "")));
+  // Per scope, each DM is its own channel: N people each get the full cap. The total caps them all.
+  const total = new DailyBudget(settings.dailyTokensTotal);
+  const ALL = "*";
+  const usage = parseAudit(await fs.readFile(config.auditFile, "utf8").catch(() => ""));
+  budget.seed(usage);
+  total.seed(usage.map((line) => ({ ...line, scope: ALL })));
   const LIMIT_NOTICE = "I've reached today's usage limit here, so I'm not answering until tomorrow (UTC). An admin can raise `TEAMMATE_DAILY_TOKENS`.";
   /** Every surface a person can trigger spends against a cap: a channel, a Jira project, a repo. */
   const overBudget = async (key: string, scope: string): Promise<boolean> => {
-    if (!budget.exhausted(scope)) return false;
-    await audit(config.auditFile, { type: "teammate.budget.exhausted", actor: "teammate", key, scope }).catch(() => undefined);
+    const exhausted = budget.exhausted(scope) ? scope : total.exhausted(ALL) ? ALL : undefined;
+    if (!exhausted) return false;
+    await audit(config.auditFile, { type: "teammate.budget.exhausted", actor: "teammate", key, scope: exhausted }).catch(() => undefined);
     return true;
   };
-  const spendAgainst = (scope: string) => ({ onUsage: (usage: { input: number; output: number }) => budget.add(scope, usage.input + usage.output) });
+  const spendAgainst = (scope: string) => ({
+    onUsage: (usage: { input: number; output: number }) => {
+      budget.add(scope, usage.input + usage.output);
+      total.add(ALL, usage.input + usage.output);
+    },
+  });
   const turnDeps = (key: string) => ({ vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config), signingKey: config.signingKey });
 
   const gate = new Gate({
@@ -320,7 +331,6 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
           await close();
         };
         try {
-          const context = text ? await threadContext(slack, channel, threadTs, ts).catch(() => undefined) : undefined;
           if (isHelpRequest(text)) {
             await deliver(helpText(settings));
             return;
@@ -329,6 +339,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
             await deliver(LIMIT_NOTICE);
             return;
           }
+          const context = text ? await threadContext(slack, channel, threadTs, ts).catch(() => undefined) : undefined;
           // Show what it is doing, at most every 2s (chat.update is rate-limited).
           let lastProgress = 0;
           const onTool = (tool: string): void => {

@@ -419,6 +419,19 @@ describe("spend caps", () => {
     expect(posted[0]?.text).not.toContain("SHOULD NOT BE CALLED");
   });
 
+  it("a total cap holds across scopes: many DMs can't each spend a full channel's budget", async () => {
+    const auditFile = path.join(tmpRoot, "audit.jsonl");
+    const today = new Date().toISOString();
+    await fs.writeFile(auditFile, ["D5", "D6"].map((scope) => JSON.stringify({ ts: today, type: "llm.usage", scope, input: 600, output: 0 })).join("\n") + "\n");
+    const capped = { ...config(), teammate: { ...config().teammate, dailyTokensTotal: 1_000 } } as AppConfig;
+    const core = await createTeammate(capped, vault, slack as never, "UBOT");
+    script = { calls: [], reply: "SHOULD NOT BE CALLED" };
+    await core.onMention({ channel: "C1", ts: "9.0", user: "U1", text: "<@UBOT> when are digests sent?" });
+    await settle(core);
+    expect(posted[0]?.text).toContain("today's usage limit");
+    expect(await fs.readFile(auditFile, "utf8")).toContain('"scope":"*"');
+  });
+
   it("a Jira project and a PR repo are capped too — a ticket comment can't spend without limit", async () => {
     const auditFile = path.join(tmpRoot, "audit.jsonl");
     const today = new Date().toISOString();

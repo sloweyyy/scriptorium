@@ -75,6 +75,24 @@ describe("thread context", () => {
     // A top-level mention has no thread yet.
     expect(await threadContext(client, "C1", "1.2", "1.2")).toBeUndefined();
   });
+
+  it("in a long thread, keeps the parent and the latest messages — not the first page", async () => {
+    const { threadContext } = await import("@scriptorium/agents");
+    const all = Array.from({ length: 450 }, (_, i) => ({ ts: `1.${String(i).padStart(3, "0")}`, user: "U1", text: `msg ${i}` }));
+    const client = {
+      conversations: {
+        // Oldest first, 200 a page, like Slack.
+        replies: async ({ cursor }: { cursor?: string }) => {
+          const start = Number(cursor ?? 0);
+          const next = start + 200;
+          return { messages: all.slice(start, next), response_metadata: { next_cursor: next < all.length ? String(next) : "" } };
+        },
+      },
+      chat: {},
+    } as unknown as SlackClient;
+    const context = (await threadContext(client, "C1", "1.000", "1.449", 5))!.split("\n");
+    expect(context).toEqual(["<@U1>: msg 0", "<@U1>: msg 445", "<@U1>: msg 446", "<@U1>: msg 447", "<@U1>: msg 448"]);
+  });
 });
 
 describe("tools bound to the turn", () => {

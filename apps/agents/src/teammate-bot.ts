@@ -101,10 +101,25 @@ export function teammateConnectorTools(config: AppConfig, slack: SlackClient, le
  */
 export async function threadContext(slack: SlackClient, channel: string, threadTs: string, triggerTs: string, limit = 20): Promise<string | undefined> {
   if (threadTs === triggerTs) return undefined;
-  const replies = await slack.conversations.replies({ channel, ts: threadTs, limit: 50 });
-  const lines = (replies.messages ?? [])
-    .filter((message) => message.ts !== triggerTs && message.text)
-    .slice(-limit)
+  // Replies page oldest-first: one page of a long thread is its beginning, and "file a
+  // ticket for this" is about its end. Page through (bounded), keep the parent + the latest.
+  type Reply = { ts?: string; user?: string; text?: string };
+  let parent: Reply | undefined;
+  let recent: Reply[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 20; page += 1) {
+    const replies = await slack.conversations.replies({ channel, ts: threadTs, limit: 200, ...(cursor ? { cursor } : {}) });
+    for (const message of (replies.messages ?? []) as Reply[]) {
+      if (message.ts === threadTs) parent = message;
+      else recent.push(message);
+    }
+    recent = recent.slice(-(limit + 1));
+    cursor = replies.response_metadata?.next_cursor || undefined;
+    if (!cursor) break;
+  }
+  const usable = (message: Reply) => message.ts !== triggerTs && Boolean(message.text);
+  const head = parent && usable(parent) ? [parent] : [];
+  const lines = [...head, ...recent.filter(usable).slice(-(limit - head.length))]
     .map((message) => `${message.user ? `<@${message.user}>` : "bot"}: ${(message.text ?? "").slice(0, 1_000)}`);
   return lines.length ? lines.join("\n") : undefined;
 }

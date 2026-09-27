@@ -8,9 +8,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@scriptorium/core": "workspace:*",
     "@anthropic-ai/sdk": "^0.128.0",
+    "@scriptorium/core": "workspace:*",
     "@scriptorium/policy": "workspace:*",
-    "zod": "^4.4.3"
+    "zod": "^4.6.5"
   }
 }

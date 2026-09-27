@@ -1,5 +1,6 @@
 import path from "node:path";
 import { docsRepoReady, geminiModel, jiraReady, loadConfig, Vault } from "@scriptorium/core";
+import { jiraClient } from "@scriptorium/jira";
 import { FileEffectLedger } from "@scriptorium/runtime";
 import { seedCorpusIfEmpty, updateMoc, watchInbox } from "@scriptorium/curator";
 import { startIngress } from "./ingress";
@@ -8,7 +9,7 @@ import { startCuratorBot } from "./curator-bot";
 import { startScribeBot } from "./scribe-bot";
 import { startScribeJira, type ScribeJiraHandle } from "./scribe-jira";
 import { reportStaleDocs } from "./staleness-watch";
-import { startTeammateBot } from "./teammate-bot";
+import { startTeammateBot, type TeammateCore } from "./teammate-bot";
 
 /**
  * One process, one vault, one audit log — two agents with separate identities and
@@ -72,7 +73,15 @@ let scribe: ScribeJiraHandle | undefined;
 
 if (jiraReady(config.jira)) {
   try {
-    scribe = await startScribeJira(config, vault);
+    // The Teammate's own Jira account, if it has one: Scribe must not read its conversation
+    // (questions to it, answers from it) as feedback on a draft.
+    // A lookup, not a value: if it fails at boot, Scribe holds comments and retries rather
+    // than assuming there is no Teammate.
+    const teammateJira =
+      config.teammate.atlassianEmail && config.teammate.atlassianToken
+        ? jiraClient({ ...config.jira, email: config.teammate.atlassianEmail, apiToken: config.teammate.atlassianToken })
+        : undefined;
+    scribe = await startScribeJira(config, vault, { otherAgentIds: teammateJira ? async () => [(await teammateJira.myself()).accountId] : [] });
     stops.push(() => scribe?.stop());
   } catch (error) {
     console.error(`[scribe] jira poller failed to start: ${error instanceof Error ? error.message : error}`);
@@ -107,9 +116,12 @@ if (scribe) {
 
 // The general Teammate (ADR-001). Its own Slack identity, its own envelope; answers only in
 // TEAMMATE_SLACK_CHANNELS, and every write waits for a TEAMMATE_APPROVERS click.
+let teammate: TeammateCore | undefined;
 if (config.teammate.botToken && config.teammate.appToken) {
   try {
-    stops.push(await startTeammateBot(config, vault));
+    const started = await startTeammateBot(config, vault);
+    teammate = started.core;
+    stops.push(started.stop);
   } catch (error) {
     console.error(`[teammate] failed to start: ${error instanceof Error ? error.message : error}`);
   }
@@ -122,6 +134,9 @@ const ingress = startIngress({
   config,
   hooks: {
     nudge: scribe ? (issueKey) => scribe!.nudge(issueKey) : undefined,
+    pullRequest: (input) => teammate?.onPullRequest(input) ?? Promise.resolve(),
+    jiraComment: (input) => teammate?.onJiraComment(input) ?? Promise.resolve(),
+    jiraAssigned: (input) => teammate?.onJiraAssigned(input) ?? Promise.resolve(),
     docsChanged: docsRepoReady(config.docsRepo)
       ? async ({ paths, commitUrl }) => {
           const change = await syncFromDocsRepo(config, vault, paths);

@@ -49,7 +49,7 @@ const confluenceRead: ToolSpec = {
   run: async () => "confluence:101 — Digest schedule (space BEACON)\n\nDigests go out at 09:00 local time.",
   records: (input) => [`confluence:${(input as { id: string }).id}`],
 };
-const others = ["confluence_search", "jira_search", "jira_recent", "jira_get_issue", "slack_read_thread", "jira_comment", "confluence_create_page", "confluence_update_page"].map(
+const others = ["confluence_search", "jira_search", "jira_recent", "jira_children", "jira_get_issue", "slack_read_thread", "jira_comment", "confluence_create_page", "confluence_update_page", "github_get_pull", "github_pr_comment"].map(
   (name): ToolSpec => ({ name, description: name, inputSchema: z.object({}), run: async () => "[]" }),
 );
 
@@ -146,7 +146,9 @@ describe("teammate turn", () => {
     const reply = await turn("File a ticket about SSO pricing");
     expect(reply.kind).toBe("action");
     expect(reply.text).not.toContain("free plan");
-    expect(reply.text).toMatch(/^• jira_create_issue: APPROVAL_PENDING/);
+    expect(reply.text).toMatch(/^⏳ Waiting for approval to create a Jira issue/);
+    // Tool results are written for the model; none of that wording reaches a person.
+    expect(reply.text).not.toMatch(/APPROVAL_PENDING|Tell the user/);
   });
 
   it("a truncated turn is refused, never posted as half an answer", async () => {
@@ -157,5 +159,22 @@ describe("teammate turn", () => {
   it("running out of rounds is a gap, not an error", async () => {
     script = { calls: [], reply: "still looking", stop: "tool_use" };
     expect((await turn("What is the retention policy?")).kind).toBe("gap");
+  });
+});
+
+describe("messages a person reads", () => {
+  it("describe every write outcome in plain words", async () => {
+    const { describeOutcome } = await import("@scriptorium/agents");
+    expect(describeOutcome("jira_create_issue", "APPROVAL_PENDING: a human must approve this (request r1). It has NOT been done. Tell the user it is waiting for approval.")).toBe("⏳ Waiting for approval to create a Jira issue. An approver has been asked; nothing is done until they say yes.");
+    expect(describeOutcome("memory_save", "DENIED: Teammate has no permission for memory_save. Do not retry.")).toBe("🚫 I'm not allowed to remember that.");
+    expect(describeOutcome("slack_reply", "NOT_ALLOWED: you may read only the thread you were asked in.")).toBe("⚠️ I couldn't reply in the thread: you may read only the thread you were asked in.");
+    expect(describeOutcome("jira_comment", "Commented on jira:DOC-7 (comment 10).")).toBe("✅ Commented on jira:DOC-7 (comment 10).");
+  });
+
+  it("a gap says what happens next, without an internal path", async () => {
+    script = { calls: [{ name: "search_vault", input: { query: "sso" } }], reply: "NOT_IN_KB: nothing documents SSO" };
+    const reply = await turn("Does Beacon support SSO?");
+    expect(reply.text).not.toMatch(/_gaps\//);
+    expect(reply.text).toContain("I've asked for it to be written");
   });
 });

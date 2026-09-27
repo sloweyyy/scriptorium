@@ -1,7 +1,7 @@
 import { audit, type ToolRunContext, type ToolSpec, type Vault } from "@scriptorium/core";
 import { buildRetrievalIndex, enforceGrounding, fileGapNote, parseQaAnswer, qaTools, type GapInput } from "@scriptorium/curator";
 import type { GuardDeps } from "@scriptorium/policy";
-import { assembleAgent, listMemories, memoryTools, renderMemories, runSession, scopesFor, SessionError, type AgentConfig, type Skill } from "@scriptorium/runtime";
+import { assembleAgent, listMemories, memoryTools, renderMemories, runSession, scopesFor, SessionError, type AgentConfig, type SessionUsage, type Skill } from "@scriptorium/runtime";
 
 /**
  * One Teammate turn: a question (or a request) in, a decided reply out.
@@ -18,7 +18,32 @@ import { assembleAgent, listMemories, memoryTools, renderMemories, runSession, s
  *   loop failed closed. Never posted as an answer.
  */
 
-export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "slack_reply", "confluence_create_page", "confluence_update_page", "memory_save"]);
+/** What each write does, in words a person would use. */
+const WRITE_DESCRIPTIONS: Record<string, string> = {
+  jira_comment: "comment on the Jira issue",
+  jira_create_issue: "create a Jira issue",
+  confluence_create_page: "create a Confluence page",
+  confluence_update_page: "update the Confluence page",
+  memory_save: "remember that",
+  github_pr_comment: "comment on the pull request",
+  slack_reply: "reply in the thread",
+};
+
+/**
+ * A write tool's outcome as a sentence for the person who asked. Tool results are written
+ * for the MODEL ("APPROVAL_PENDING … Tell the user it is waiting") and must never reach a
+ * human verbatim.
+ */
+export function describeOutcome(tool: string, result: string): string {
+  const what = WRITE_DESCRIPTIONS[tool] ?? tool;
+  const reason = result.replace(/^[A-Z_]+:\s*/, "").split(/(?<=\.)\s/)[0] ?? "";
+  if (result.startsWith("APPROVAL_PENDING")) return `⏳ Waiting for approval to ${what}. An approver has been asked; nothing is done until they say yes.`;
+  if (result.startsWith("DENIED")) return `🚫 I'm not allowed to ${what}.`;
+  if (result.startsWith("NOT_ALLOWED") || result.startsWith("NOT_DONE")) return `⚠️ I couldn't ${what}: ${reason}`;
+  return `✅ ${result.split("\n")[0]}`;
+}
+
+export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "slack_reply", "confluence_create_page", "confluence_update_page", "memory_save", "github_pr_comment"]);
 
 export type TeammateReply =
   | { kind: "answer"; text: string; citations: string[] }
@@ -35,6 +60,8 @@ export interface TeammateTurn {
   channel?: string;
   /** The thread the Teammate was asked in — the only one it may read. */
   threadTs?: string;
+  /** What the turn's tokens count against for the daily cap. Default: the channel, else the asker. */
+  budgetScope?: string;
 }
 
 /**
@@ -85,6 +112,10 @@ export interface TeammateDeps {
   openTicket?: GapInput["openTicket"];
   /** Signs approved memories so a restore from the docs repo cannot forge one. */
   signingKey?: string;
+  /** Told what each run cost (all rounds), after the audit line is written. */
+  onUsage?: (usage: SessionUsage) => void;
+  /** Told each tool as it starts — so a surface can show what the agent is doing. */
+  onTool?: (name: string) => void;
 }
 
 export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): Promise<TeammateReply> {
@@ -105,10 +136,15 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
     ...tool,
     run: async (input: unknown) => {
       used.add(tool.name);
+      try {
+        deps.onTool?.(tool.name);
+      } catch {
+        // Progress is decoration; it never decides a turn.
+      }
       const result = await tool.run(input);
       retrieved.push(result);
       for (const fetched of tool.records?.(input, result) ?? []) records.add(fetched);
-      if (WRITE_TOOLS.has(tool.name)) writeOutcomes.push(`${tool.name}: ${result.split("\n")[0]}`);
+      if (WRITE_TOOLS.has(tool.name)) writeOutcomes.push(describeOutcome(tool.name, result));
       return result;
     },
   }));
@@ -123,11 +159,16 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
       tools,
       maxTokens: 4_096,
       // Cost on the record, under the run's id: `pnpm trace` shows what each answer cost.
-      onUsage: (usage) => void audit(deps.auditFile, { type: "llm.usage", actor: deps.config.name, ...usage }).catch(() => undefined),
+      onUsage: (usage) => {
+        // `scope` is what spend caps are counted against: the channel, else the asker.
+        void audit(deps.auditFile, { type: "llm.usage", actor: deps.config.name, scope: turn.budgetScope ?? turn.channel ?? turn.askedBy, ...usage }).catch(() => undefined);
+        deps.onUsage?.(usage);
+      },
     });
   } catch (error) {
     if (error instanceof SessionError && error.failure === "round-cap") text = `NOT_IN_KB: ${turn.question}`;
-    else if (error instanceof SessionError) return { kind: "refused", text: `I couldn't finish that (${error.failure}), so I won't give a partial answer.` };
+    // The failure type is for the audit log (`llm` events, the run page), not the reader.
+    else if (error instanceof SessionError) return { kind: "refused", text: "I couldn't finish that, so I won't give a partial answer. Try again, or narrow the question." };
     else throw error;
   }
 
@@ -142,12 +183,12 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
 
   if (judged.gap) {
     const gap = await fileGapNote(deps.vault, { question: turn.question, missing: judged.gap, askedBy: turn.askedBy, auditFile: deps.auditFile, openTicket: deps.openTicket });
-    return { kind: "gap", text: `Not in the knowledge base yet, so I won't guess. I've filed it as a documentation gap (${gap.relPath}).`, gapPath: gap.relPath, ticket: gap.ticket };
+    return { kind: "gap", text: "I couldn't find this in our docs, so I won't guess. I've asked for it to be written.", gapPath: gap.relPath, ticket: gap.ticket };
   }
   if (judged.ungrounded) {
     // A write happened (or was asked for): report exactly what the tools said about it, not
     // the model's uncited prose around it — that prose is where an unsupported claim hides.
-    if (acted) return { kind: "action", text: writeOutcomes.map((outcome) => `• ${outcome}`).join("\n") };
+    if (acted) return { kind: "action", text: writeOutcomes.join("\n") };
     return { kind: "refused", text: "I couldn't tie an answer to any record I retrieved, so I won't state one. Try naming the feature, page or ticket you mean." };
   }
   if (acted && !judged.citations.length) return { kind: "action", text: judged.text };

@@ -66,6 +66,8 @@ approver list. `deny`, or leaving the tool out, means the model never sees it.
 
 - `pnpm typecheck && pnpm eval` must be green. CI runs both on Node 22 and 24.
 - Behaviour changes come with an eval that fails without them. Try deleting the guarded
-  line: if the eval stays green, it doesn't guard anything.
+  line: if the eval stays green, it doesn't guard anything. For a safety control, add
+  that deletion as a mutant in `scripts/mutate.ts`. `pnpm mutate` (weekly in CI) then
+  keeps proving the eval still catches it.
 - Retrieval changes must not lower `evals/baselines/retrieval.json`. If they raise the
   score, raise the baseline in the same commit.

@@ -15,12 +15,32 @@ export interface Ctx {
   client: JiraClient;
   state: JiraState;
   botAccountId: string;
+  /**
+   * Other agents' Jira accounts (the Teammate): never feedback, never a command. A lookup,
+   * because it can fail — and until it has succeeded, no comment is read (see knownAccounts).
+   */
+  otherAgentIds: () => Promise<string[]>;
   /** Per-issue serialisation — see withIssueLock. */
   locks: Map<string, Promise<unknown>>;
   /** Exactly-once record of the agent's own comments (op-keyed; see `say`). */
   effects: EffectLedger;
   /** The human comment currently being acted on, per issue, and how many replies it has had. */
   triggers: Map<string, { id: string; seq: number }>;
+}
+
+/**
+ * Account ids that may need a network lookup. A failed lookup throws — the caller reads no
+ * comments this time, and they stay unprocessed for the next — and is retried on the next
+ * call; a successful one is remembered. Answering "no other agents" on a failure would fail
+ * OPEN: Scribe would read the Teammate's answers as feedback and revise in a loop.
+ */
+export function knownAccounts(source: readonly string[] | (() => Promise<string[]>)): () => Promise<string[]> {
+  if (typeof source !== "function") {
+    const fixed = [...source];
+    return async () => fixed;
+  }
+  let known: string[] | undefined;
+  return async () => (known ??= await source());
 }
 
 /**

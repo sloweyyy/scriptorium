@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { approvalSignature, approvalSigningKey, approvalVerified, type ToolSpec, type Vault } from "@scriptorium/core";
+import { approvalSignature, approvalSigningKey, approvalVerified, frontmatterString, type ToolSpec, type Vault } from "@scriptorium/core";
 import { z } from "zod";
 
 /**
@@ -26,7 +26,7 @@ export interface Memory {
   relPath: string;
 }
 
-export async function listMemories(vault: Vault, scopes: readonly string[]): Promise<Memory[]> {
+export async function listMemories(vault: Vault, scopes: readonly string[], now = new Date()): Promise<Memory[]> {
   const memories: Memory[] = [];
   for (const relPath of await vault.listNotes(MEMORY_DIR)) {
     const note = await vault.readNote(relPath);
@@ -36,6 +36,12 @@ export async function listMemories(vault: Vault, scopes: readonly string[]): Pro
     // Verified where it is used, whatever route it took into the vault (a restore, a docs-
     // repo webhook, a hand edit): no valid signature, no memory — once a key is configured.
     if (!approvalVerified(note.frontmatter, note.body)) continue;
+    // Expired: kept on file as the record, but no longer applied. Re-approval means a new memory.
+    // An expiry that is present but unreadable counts as passed: fail closed.
+    if (note.frontmatter.expires_at !== undefined) {
+      const expiresAt = Date.parse(frontmatterString(note.frontmatter.expires_at) ?? "");
+      if (!Number.isFinite(expiresAt) || expiresAt <= now.getTime()) continue;
+    }
     memories.push({ id, scope, text: note.body.trim(), approvedBy: typeof approvedBy === "string" ? approvedBy : undefined, relPath });
   }
   return memories.sort((a, b) => a.id.localeCompare(b.id));
@@ -58,6 +64,12 @@ export function scopesFor(turn: { channel?: string; askedBy: string }): string[]
  * `memory_save`. Held at the approve tier, so `run` only ever executes after a human said
  * yes — and it refuses to write without the approval the policy layer hands it.
  */
+/** How long an approved memory applies before it has to be asked for (and approved) again. */
+export function memoryLifetimeDays(): number {
+  const days = Number(process.env.TEAMMATE_MEMORY_DAYS);
+  return Number.isFinite(days) && days > 0 ? days : 180;
+}
+
 export function memoryTools(vault: Vault, signingKey = approvalSigningKey()): ToolSpec[] {
   const input = z.object({
     text: z.string().min(3).max(500).describe("One self-contained sentence to remember."),
@@ -74,6 +86,8 @@ export function memoryTools(vault: Vault, signingKey = approvalSigningKey()): To
         if (!context?.approval) return "NOT_DONE: a memory is only saved with a human's approval.";
         const id = `M-${randomUUID().slice(0, 8)}`;
         const approvedBy = context.approval.approvedBy;
+        // Facts about people and teams go stale; a memory lapses unless someone asks again.
+        const expires_at = new Date(Date.now() + memoryLifetimeDays() * 86_400_000).toISOString();
         await vault.writeNote(`${MEMORY_DIR}/${id}.md`, text, {
           id,
           scope,
@@ -82,7 +96,8 @@ export function memoryTools(vault: Vault, signingKey = approvalSigningKey()): To
           approved_by_id: context.approval.approvedById,
           approval: context.approval.id,
           created: new Date().toISOString(),
-          ...(signingKey ? { approval_sig: approvalSignature(signingKey, { id, status: "approved", body: text, approvedBy, terms: { scope } }) } : {}),
+          expires_at,
+          ...(signingKey ? { approval_sig: approvalSignature(signingKey, { id, status: "approved", body: text, approvedBy, terms: { scope, expires_at } }) } : {}),
         });
         return `Remembered (${scope}): ${text}`;
       },

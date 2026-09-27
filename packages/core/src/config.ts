@@ -168,6 +168,12 @@ export interface AppConfig {
   webhook: WebhookSettings;
   slack: SlackSettings;
   sites: SiteSettings;
+  /**
+   * Signs approvals (lessons, memories) so a restore from the docs repo cannot be fed a
+   * forged one. Unset: approvals are unsigned and restores trust the branch — see
+   * docs/security-model.md.
+   */
+  signingKey?: string;
 }
 
 export function docsRepoReady(docs: DocsRepoSettings): boolean {
@@ -236,6 +242,7 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       botToken: env("CURATOR_SLACK_BOT_TOKEN"),
       appToken: env("CURATOR_SLACK_APP_TOKEN"),
     },
+    signingKey: env("SCRIPTORIUM_SIGNING_KEY"),
     teammate: {
       botToken: env("TEAMMATE_SLACK_BOT_TOKEN"),
       appToken: env("TEAMMATE_SLACK_APP_TOKEN"),

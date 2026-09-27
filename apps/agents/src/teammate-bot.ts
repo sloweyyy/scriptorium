@@ -139,7 +139,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const envelope = envelopeOf(hostConfig);
   const approvalChannel = new SlackApprovalChannel(slack, config.slack.notifyChannel);
   const guardDepsFor = (key: string): GuardDeps => ({ store, channel: approvalChannel, auditFile: config.auditFile, key });
-  const turnDeps = (key: string) => ({ vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config) });
+  const turnDeps = (key: string) => ({ vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config), signingKey: config.signingKey });
 
   const gate = new Gate({
     selfIds: [self],
@@ -199,7 +199,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       });
       if (!decided.ok || action !== APPROVE_ACTION) return decided.message;
       const request = (await store.all()).find((candidate) => candidate.id === requestId);
-      const outcome = await executeApproved(envelope, [...connectorTools, ...memoryTools(vault)], requestId, guardDepsFor(request?.key ?? ""));
+      const outcome = await executeApproved(envelope, [...connectorTools, ...memoryTools(vault, config.signingKey)], requestId, guardDepsFor(request?.key ?? ""));
       const text = outcome.kind === "ran" ? `Done: ${outcome.result}` : `Approved, but not carried out: ${"reason" in outcome ? outcome.reason : outcome.kind}`;
       if (payload.channel?.id) await slack.chat.postMessage({ channel: payload.channel.id, thread_ts: payload.message?.thread_ts ?? payload.message?.ts, text });
       return undefined;

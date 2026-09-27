@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { ToolSpec, Vault } from "@scriptorium/core";
+import { approvalSignature, type ToolSpec, type Vault } from "@scriptorium/core";
 import { z } from "zod";
 
 /**
@@ -55,7 +55,7 @@ export function scopesFor(turn: { channel?: string; askedBy: string }): string[]
  * `memory_save`. Held at the approve tier, so `run` only ever executes after a human said
  * yes — and it refuses to write without the approval the policy layer hands it.
  */
-export function memoryTools(vault: Vault): ToolSpec[] {
+export function memoryTools(vault: Vault, signingKey?: string): ToolSpec[] {
   const input = z.object({
     text: z.string().min(3).max(500).describe("One self-contained sentence to remember."),
     scope: z.string().describe('"global", "channel:<channel id>" or "person:slack:<user id>" — as narrow as it can be.'),
@@ -70,13 +70,15 @@ export function memoryTools(vault: Vault): ToolSpec[] {
         if (!SCOPE.test(scope)) return `NOT_DONE: "${scope}" is not a memory scope.`;
         if (!context?.approval) return "NOT_DONE: a memory is only saved with a human's approval.";
         const id = `M-${randomUUID().slice(0, 8)}`;
+        const approvedBy = context.approval.approvedBy;
         await vault.writeNote(`${MEMORY_DIR}/${id}.md`, text, {
           id,
           scope,
           status: "approved",
-          approved_by: context.approval.approvedBy,
+          approved_by: approvedBy,
           approval: context.approval.id,
           created: new Date().toISOString(),
+          ...(signingKey ? { approval_sig: approvalSignature(signingKey, { id, status: "approved", body: text, approvedBy }) } : {}),
         });
         return `Remembered (${scope}): ${text}`;
       },

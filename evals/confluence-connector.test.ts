@@ -8,6 +8,7 @@ import { MemoryEffectLedger } from "@scriptorium/runtime";
  */
 
 let requests: string[];
+let downloads: Array<{ url: string; auth: boolean }> = [];
 /** Pages the stub serves, by id → space id. */
 const PAGES: Record<string, { spaceId: string; title: string }> = {
   "101": { spaceId: "1", title: "Maintenance windows" },
@@ -17,9 +18,19 @@ const PAGES: Record<string, { spaceId: string; title: string }> = {
 
 beforeEach(() => {
   requests = [];
-  vi.stubGlobal("fetch", async (input: string) => {
+  downloads = [];
+  vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
     const url = decodeURIComponent(String(input));
     requests.push(url);
+    downloads.push({ url, auth: Boolean((init?.headers as Record<string, string> | undefined)?.Authorization) });
+    if (url.endsWith("/api/v2/pages/101/attachments?limit=50")) {
+      return new Response(JSON.stringify({ results: [
+        { id: "att1", title: "limits.csv", mediaType: "text/csv", fileSize: 40, downloadLink: "/download/attachments/101/limits.csv", pageId: "101" },
+        { id: "att2", title: "deck.pdf", mediaType: "application/pdf", fileSize: 900000, downloadLink: "/download/attachments/101/deck.pdf", pageId: "101" },
+      ] }), { status: 200 });
+    }
+    if (url.includes("/download/attachments/101/limits.csv")) return new Response(null, { status: 302, headers: { location: "https://media.example/blob/limits.csv" } });
+    if (url.startsWith("https://media.example/")) return new Response("plan,max_seats\nfree,5\nteam,50", { status: 200 });
     const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200 });
     if (url.includes("/api/v2/spaces?keys=")) return json({ results: [{ id: 1, key: "BEACON" }] });
     if (url.includes("/rest/api/search")) {
@@ -109,6 +120,22 @@ describe("confluence page trees", () => {
   });
 });
 
+describe("confluence attachments", () => {
+  it("reads a text attachment of an allowed page, never sending credentials to media storage", async () => {
+    const tools = connector().tools();
+    const list = tools.find((tool) => tool.name === "confluence_page_attachments")!;
+    const read = tools.find((tool) => tool.name === "confluence_read_attachment")!;
+    expect(JSON.parse(await list.run({ id: "101" })).map((attachment: { title: string }) => attachment.title)).toEqual(["limits.csv", "deck.pdf"]);
+    const out = await read.run({ pageId: "101", attachmentId: "att1" });
+    expect(out).toBe("confluence:101 — attachment limits.csv\n\nplan,max_seats\nfree,5\nteam,50");
+    expect(read.records!({ pageId: "101", attachmentId: "att1" }, out)).toEqual(["confluence:101"]);
+    expect(downloads.find((request) => request.url.startsWith("https://media.example/"))?.auth).toBe(false);
+    expect(await read.run({ pageId: "101", attachmentId: "att2" })).toMatch(/^NOT_ALLOWED: deck.pdf is application\/pdf/);
+    expect(await list.run({ id: "202" })).toMatch(/^NOT_ALLOWED/);
+    expect(await read.run({ pageId: "202", attachmentId: "att1" })).toMatch(/^NOT_ALLOWED/);
+  });
+});
+
 describe("confluence writes", () => {
   let pages: Record<string, { title: string; spaceId: string; version: number; message?: string; body?: string }>;
   let loseNext: boolean;
@@ -182,7 +209,7 @@ describe("confluence writes", () => {
 
   it("offers no write tools without a ledger", () => {
     const readOnly = new ConfluenceConnector({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", allowedSpaceKeys: ["BEACON"] });
-    expect(readOnly.tools().map((tool) => tool.name)).toEqual(["confluence_search", "confluence_read_page", "confluence_page_children"]);
+    expect(readOnly.tools().map((tool) => tool.name)).toEqual(["confluence_search", "confluence_read_page", "confluence_page_children", "confluence_page_attachments", "confluence_read_attachment"]);
     expect(writer().tools().map((tool) => tool.name)).toContain("confluence_update_page");
   });
 });

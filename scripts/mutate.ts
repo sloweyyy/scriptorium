@@ -137,6 +137,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/confluence-connector.test.ts"],
   },
   {
+    control: "a Confluence attachment is read only from a page in an allowed space",
+    file: "packages/connectors/src/confluence.ts",
+    find: "    if (!allowed.has(page.spaceId)) throw new ConfluenceAccessError(",
+    replace: "    if (false) throw new ConfluenceAccessError(",
+    evals: ["evals/confluence-connector.test.ts"],
+  },
+  {
     control: "memories are invisible to retrieval",
     file: "packages/curator/src/search.ts",
     find: "    if (isPrivateNote(relPath)) continue;",

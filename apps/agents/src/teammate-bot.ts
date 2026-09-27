@@ -12,7 +12,7 @@ import {
   jiraTools,
   slackTools,
 } from "@scriptorium/connectors";
-import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type JiraClient } from "@scriptorium/jira";
+import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type CommentRestriction, type JiraClient } from "@scriptorium/jira";
 import { installationToken } from "@scriptorium/publish";
 import { FileApprovalStore, executeApproved, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
 import { DailyBudget, FileEffectLedger, Gate, KeyedQueue, envelopeOf, keys, loadSkills, memoryTools, once, opKey, type AgentEvent, type EffectLedger } from "@scriptorium/runtime";
@@ -174,7 +174,8 @@ export interface TeammateCore {
   /** The weekly digest, if due and not yet posted this week. */
   checkDigest(now?: Date): Promise<void>;
   /** A Jira comment; answered on the ticket, as the Teammate, if it mentions the Teammate. */
-  onJiraComment(input: { issueKey: string; commentId: string; body: string; authorId?: string }): Promise<void>;
+  /** `restriction`: who may see the comment; the reply carries the same. Omitted: public. */
+  onJiraComment(input: { issueKey: string; commentId: string; body: string; authorId?: string; restriction?: CommentRestriction }): Promise<void>;
   /** A Jira issue assigned to the Teammate: it checks readiness and replies on the ticket. */
   onJiraAssigned(input: { issueKey: string; assigneeId: string; changeId: string }): Promise<void>;
   /** A pull request to check against its ticket (from the GitHub webhook). */
@@ -225,6 +226,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const hostConfig = { ...agentConfig, tools: Object.fromEntries(Object.entries(agentConfig.tools).filter(([name]) => available.has(name))) };
   const envelope = envelopeOf(hostConfig);
   // Cards follow the request: its channel thread; a PR → the PR channel; a DM or Jira → notify.
+  /** The visibility each Jira conversation was last asked at (public is `{}`), for replies. */
+  const jiraRestrictions = new Map<string, CommentRestriction>();
   /** A running PR check's summary message, keyed by conversation: its card threads under it. */
   const prThreads = new Map<string, string>();
   const approvalChannel = new SlackApprovalChannel(slack, { fallbackChannel: config.slack.notifyChannel, prChannel: settings.prChannel, threadFor: (key) => prThreads.get(key) });
@@ -331,7 +334,9 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
    */
   async function answerOnJira(key: string, event: AgentEvent): Promise<void> {
     if (!jira) return;
-    const { issueKey, commentId, question } = event.payload as { issueKey: string; commentId: string; question: string };
+    const { issueKey, commentId, question, restriction = {} } = event.payload as { issueKey: string; commentId: string; question: string; restriction?: CommentRestriction };
+    // Whatever the Teammate says next on this ticket's thread is said at this visibility.
+    jiraRestrictions.set(keys.jiraIssue(issueKey), restriction);
     const scope = `jira:${issueKey.split("-")[0]}`;
     const reply = await (await overBudget(key, scope)
       ? Promise.resolve({ kind: "refused" as const, text: LIMIT_NOTICE })
@@ -355,7 +360,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     });
     const body = markdownToJira(`${linked}\n\n_AI-generated — verify before acting · run ${(currentRunId() ?? "").slice(0, 8)}_`);
     const op = opKey("teammate.jira.reply", issueKey, commentId);
-    await once(ledger, op, async () => (await jira.client.addComment(issueKey, body, { op })).id, {
+    await once(ledger, op, async () => (await jira.client.addComment(issueKey, body, { op, restriction })).id, {
       probe: async () => (await jira.client.findCommentByOp(issueKey, op))?.id,
     });
     await audit(config.auditFile, { type: `teammate.jira.${reply.kind}`, actor: "teammate", key, issue: issueKey }).catch(() => undefined);
@@ -400,9 +405,12 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       return;
     }
     const issue = request.key.match(/^jira:issue:(.+)$/);
-    if (issue && jira) {
+    // Only at a visibility this process saw the request asked at. Unknown (a restart since):
+    // say nothing on the ticket — the card's own thread already has the outcome.
+    const restriction = jiraRestrictions.get(request.key);
+    if (issue && jira && restriction) {
       const issueKey = issue[1] as string;
-      await once(ledger, op, async () => (await jira.client.addComment(issueKey, markdownToJira(text), { op })).id, {
+      await once(ledger, op, async () => (await jira.client.addComment(issueKey, markdownToJira(text), { op, restriction })).id, {
         probe: async () => (await jira.client.findCommentByOp(issueKey, op))?.id,
       });
     }
@@ -502,7 +510,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       );
     },
 
-    async onJiraComment({ issueKey, commentId, body, authorId }) {
+    async onJiraComment({ issueKey, commentId, body, authorId, restriction = {} }) {
       if (!jira || !mentionsAccount(body, jira.accountId) || authorId === jira.accountId) return;
       const projects = (settings.jiraProjects.length ? settings.jiraProjects : [config.jira.projectKey ?? ""]).map((project) => project.toUpperCase());
       if (!projects.includes(issueKey.split("-")[0]?.toUpperCase() ?? "")) {
@@ -515,7 +523,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         key: keys.jiraIssue(issueKey),
         kind: "jira.mention",
         actor: { id: `jira:${authorId ?? "unknown"}` },
-        payload: { issueKey, commentId, question: jiraToMarkdown(plainText(body)) },
+        payload: { issueKey, commentId, question: jiraToMarkdown(plainText(body)), restriction },
         receivedAt: new Date().toISOString(),
       };
       const verdict = gate.check(event);

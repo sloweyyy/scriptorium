@@ -297,9 +297,21 @@ describe("pull request webhooks", () => {
 describe("jira comment webhooks", () => {
   it("parses comment_created into what the Teammate needs, and nothing else", async () => {
     const { jiraCommentFrom } = await import("@scriptorium/agents");
-    expect(jiraCommentFrom({ webhookEvent: "comment_created", issue: { key: "DOC-7" }, comment: { id: 10001, body: "hi", author: { accountId: "h1" } } })).toEqual({ issueKey: "DOC-7", commentId: "10001", body: "hi", authorId: "h1" });
+    expect(jiraCommentFrom({ webhookEvent: "comment_created", issue: { key: "DOC-7" }, comment: { id: 10001, body: "hi", author: { accountId: "h1" } } })).toEqual({ issueKey: "DOC-7", commentId: "10001", body: "hi", authorId: "h1", restriction: {} });
     expect(jiraCommentFrom({ webhookEvent: "comment_updated", issue: { key: "DOC-7" }, comment: { id: 1, body: "x" } })).toBeUndefined();
     expect(jiraCommentFrom({ webhookEvent: "comment_created", issue: { key: "DOC-7" }, comment: { id: 1 } })).toBeUndefined();
+  });
+});
+
+describe("restricted Jira comments", () => {
+  it("carry their visibility or JSM internal flag; a visibility we can't read is not answered", async () => {
+    const { jiraCommentFrom } = await import("@scriptorium/agents");
+    const hook = (comment: Record<string, unknown>) => jiraCommentFrom({ webhookEvent: "comment_created", issue: { key: "SD-1" }, comment: { id: 1, body: "hi", ...comment } });
+    expect(hook({ visibility: { type: "role", value: "Service Desk Team" } })?.restriction).toEqual({ visibility: { type: "role", value: "Service Desk Team" } });
+    expect(hook({ jsdPublic: false })?.restriction).toEqual({ internal: true });
+    expect(hook({ properties: [{ key: "sd.public.comment", value: { internal: true } }] })?.restriction).toEqual({ internal: true });
+    expect(hook({ jsdPublic: true })?.restriction).toEqual({});
+    expect(hook({ visibility: { type: "team", value: 7 } })).toBeUndefined();
   });
 });
 
@@ -318,6 +330,7 @@ describe("ADF comment bodies", () => {
       commentId: "9",
       body: "[~accountid:tm-1] when do digests go out?",
       authorId: "h1",
+      restriction: {},
     });
   });
 });

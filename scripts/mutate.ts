@@ -144,6 +144,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-e2e.test.ts"],
   },
   {
+    control: "a reply to a restricted Jira comment keeps its restriction",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "(await jira.client.addComment(issueKey, body, { op, restriction })).id",
+    replace: "(await jira.client.addComment(issueKey, body, { op })).id",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
     control: "every Teammate write is approve-tier",
     file: "apps/agents/src/agents/teammate.ts",
     find: "      jira_create_issue: write,",

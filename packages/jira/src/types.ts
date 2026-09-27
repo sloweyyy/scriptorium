@@ -16,6 +16,16 @@ export interface JiraAttachment {
   created?: string;
 }
 
+/**
+ * Who may see a comment. Jira restricts one to a role or group (`visibility`); Jira Service
+ * Management marks one internal (the `sd.public.comment` property). A reply to a restricted
+ * comment must carry the same restriction, or it repeats a private conversation in public.
+ */
+export interface CommentRestriction {
+  visibility?: { type: "role" | "group"; value: string; identifier?: string };
+  internal?: boolean;
+}
+
 export interface JiraComment {
   id: string;
   /** Wiki markup / plain text: REST v2 keeps bodies as strings (v3 would hand back ADF). */

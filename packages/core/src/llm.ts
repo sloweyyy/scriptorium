@@ -68,11 +68,19 @@ export type ImageMediaType = "image/png" | "image/jpeg" | "image/webp" | "image/
  * `run` takes `unknown` on purpose: it validates with `inputSchema` itself, so arguments
  * arriving from either dialect are checked in exactly one place.
  */
+/**
+ * What the platform tells a tool about the call beyond its arguments. Set by the policy
+ * layer only: a tool never learns who approved it from its own input, which the model wrote.
+ */
+export interface ToolRunContext {
+  approval?: { id: string; approvedBy?: string };
+}
+
 export interface ToolSpec {
   name: string;
   description: string;
   inputSchema: z.ZodObject;
-  run(input: unknown): Promise<string>;
+  run(input: unknown, context?: ToolRunContext): Promise<string>;
 }
 
 export interface ImageInput {

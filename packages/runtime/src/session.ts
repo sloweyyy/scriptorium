@@ -48,7 +48,9 @@ async function runOnClaude(options: SessionOptions, maxRounds: number): Promise<
     model: modelId(),
     max_tokens: options.maxTokens,
     system: options.system,
-    tools: options.tools.map((tool) => betaZodTool(tool)),
+    // The SDK passes its own context as run()'s second argument. Only the policy layer may
+    // hand a tool context (who approved it), so the SDK's is dropped here, never forwarded.
+    tools: options.tools.map((tool) => betaZodTool({ ...tool, run: (input: unknown) => tool.run(input) })),
     messages: [{ role: "user", content: options.prompt }],
     max_iterations: maxRounds,
   });

@@ -143,6 +143,13 @@ export const MUTANTS: Mutant[] = [
     replace: "if (!jira || authorId === jira.accountId) return;",
     evals: ["evals/teammate-e2e.test.ts"],
   },
+  {
+    control: "every Teammate write is approve-tier",
+    file: "apps/agents/src/agents/teammate.ts",
+    find: "      jira_create_issue: write,",
+    replace: '      jira_create_issue: "allow",',
+    evals: ["evals/agent-policy.test.ts"],
+  },
 ];
 
 function run(evals: string[]): boolean {

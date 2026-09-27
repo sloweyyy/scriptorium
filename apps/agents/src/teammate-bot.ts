@@ -156,6 +156,8 @@ export interface TeammateCore {
   checkDigest(now?: Date): Promise<void>;
   /** A Jira comment; answered on the ticket, as the Teammate, if it mentions the Teammate. */
   onJiraComment(input: { issueKey: string; commentId: string; body: string; authorId?: string }): Promise<void>;
+  /** A Jira issue assigned to the Teammate: it checks readiness and replies on the ticket. */
+  onJiraAssigned(input: { issueKey: string; assigneeId: string; changeId: string }): Promise<void>;
   /** A pull request to check against its ticket (from the GitHub webhook). */
   onPullRequest(input: { repo: string; number: number; author?: string; deliveryId?: string }): Promise<void>;
   drain(deadlineMs: number): Promise<boolean>;
@@ -416,6 +418,25 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: event.key, reason: verdict.reason }).catch(() => undefined);
         return;
       }
+      queue.push(event);
+    },
+
+    async onJiraAssigned({ issueKey, assigneeId, changeId }) {
+      if (!jira || assigneeId !== jira.accountId) return;
+      const projects = (settings.jiraProjects.length ? settings.jiraProjects : [config.jira.projectKey ?? ""]).map((project) => project.toUpperCase());
+      if (!projects.includes(issueKey.split("-")[0]?.toUpperCase() ?? "")) return;
+      const event: AgentEvent = {
+        id: `jira-assigned:${changeId}`,
+        source: "jira",
+        key: keys.jiraIssue(issueKey),
+        kind: "jira.mention",
+        actor: { id: "jira:assignment" },
+        // Answered like a mention, keyed on the change so a redelivery is one reply.
+        payload: { issueKey, commentId: `assigned-${changeId}`, question: `You were assigned jira:${issueKey}. Check whether it is ready to be worked on, and reply with the verdict and what is missing.` },
+        receivedAt: new Date().toISOString(),
+      };
+      const verdict = gate.check(event);
+      if (!verdict.accepted) return;
       queue.push(event);
     },
 

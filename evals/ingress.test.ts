@@ -315,3 +315,12 @@ describe("ADF comment bodies", () => {
     });
   });
 });
+
+describe("jira assignment webhooks", () => {
+  it("reads who an issue was assigned to from the changelog", async () => {
+    const { jiraAssignmentFrom } = await import("@scriptorium/agents");
+    expect(jiraAssignmentFrom({ webhookEvent: "jira:issue_updated", issue: { key: "DOC-9" }, changelog: { id: "10500", items: [{ field: "assignee", fieldId: "assignee", to: "tm-1" }] } })).toEqual({ issueKey: "DOC-9", assigneeId: "tm-1", changeId: "10500" });
+    expect(jiraAssignmentFrom({ webhookEvent: "jira:issue_updated", issue: { key: "DOC-9" }, changelog: { items: [{ field: "status", to: "3" }] } })).toBeUndefined();
+    expect(jiraAssignmentFrom({ webhookEvent: "jira:issue_updated", issue: { key: "DOC-9" }, changelog: { items: [{ fieldId: "assignee", to: null }] } })).toBeUndefined();
+  });
+});

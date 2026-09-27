@@ -56,6 +56,17 @@ export interface IngressHooks {
   pullRequest?: (input: { repo: string; number: number; author?: string; deliveryId?: string }) => Promise<void>;
   /** A Jira comment was created — the Teammate answers it if it is mentioned. */
   jiraComment?: (input: JiraCommentEvent) => Promise<void>;
+  /** A Jira issue was assigned to someone — the Teammate acts if it is the assignee. */
+  jiraAssigned?: (input: { issueKey: string; assigneeId: string; changeId: string }) => Promise<void>;
+}
+
+/** `jira:issue_updated` whose changelog moved the assignee: who to, and the change's id. */
+export function jiraAssignmentFrom(payload: unknown): { issueKey: string; assigneeId: string; changeId: string } | undefined {
+  const body = payload as { webhookEvent?: string; issue?: { key?: string }; changelog?: { id?: string | number; items?: Array<{ field?: string; fieldId?: string; to?: string | null }> } };
+  if (body.webhookEvent !== "jira:issue_updated" || typeof body.issue?.key !== "string") return undefined;
+  const change = body.changelog?.items?.find((item) => item.fieldId === "assignee" || item.field === "assignee");
+  if (!change?.to) return undefined;
+  return { issueKey: body.issue.key, assigneeId: change.to, changeId: String(body.changelog?.id ?? `${body.issue.key}:${change.to}`) };
 }
 
 export interface JiraCommentEvent {
@@ -299,6 +310,10 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
         }
         // Answer before working: Jira gives up in seconds, and the ledger makes a retry safe.
         send(response, 202, { accepted: true, issue: key, event });
+        const assignment = jiraAssignmentFrom(payload);
+        if (assignment && hooks.jiraAssigned) {
+          await hooks.jiraAssigned(assignment).catch((error: unknown) => console.warn(`[ingress] teammate assignment ${assignment.issueKey}: ${error instanceof Error ? error.message : error}`));
+        }
         const jiraComment = jiraCommentFrom(payload);
         if (jiraComment && hooks.jiraComment) {
           await hooks.jiraComment(jiraComment).catch((error: unknown) => console.warn(`[ingress] teammate jira comment ${jiraComment.issueKey}: ${error instanceof Error ? error.message : error}`));

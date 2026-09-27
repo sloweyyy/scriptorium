@@ -50,6 +50,8 @@ interface StubComment {
 
 /** Drop the response to the next comment POST after storing it. */
 let loseNextCommentResponse = false;
+/** Fail the Nth comment POST from now WITHOUT storing it (a plain network error). */
+let failCommentPostIn = 0;
 
 let tmpRoot: string;
 let vault: Vault;
@@ -129,6 +131,7 @@ function stubJira(): void {
     if (url.includes("/search")) return json({ issues: [issue] });
     if (url.includes("/comment") && method === "GET") return json({ comments });
     if (url.includes("/comment") && method === "POST") {
+      if (failCommentPostIn > 0 && --failCommentPostIn === 0) throw new TypeError("fetch failed: connect ECONNRESET");
       const body = JSON.parse(String(init?.body ?? "{}")) as { body: string; properties?: unknown };
       const posted: StubComment = {
         id: `bot-${comments.length + 1}`,
@@ -778,5 +781,23 @@ describe("a crash or an error mid-batch loses nothing and repeats nothing (H4)",
     expect(comments.length).toBe(before);
     vi.mocked(generateText).mockReset();
     vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
+  });
+});
+
+describe("a command retried after the feedback before it landed", () => {
+  it("still posts the command's own reply — the revision's comment is not mistaken for it", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    // The revision's comment posts; the help reply after it fails outright.
+    failCommentPostIn = 2;
+    comments.push(human("f1", "shorten the intro"), human("c1", "help"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: new Date(Date.now() + 1000).toISOString() } };
+    (await startScribeJira(settings, vault)).stop();
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: new Date(Date.now() + 2000).toISOString() } };
+    (await startScribeJira(settings, vault)).stop();
+
+    const bodies = comments.filter((comment) => comment.author.accountId === "bot-1").map((comment) => comment.body);
+    expect(bodies.filter((body) => body.includes("Revised draft"))).toHaveLength(1);
+    expect(bodies.filter((body) => body.includes("How to work with me") && !body.includes("Reading this ticket now"))).toHaveLength(1);
   });
 });

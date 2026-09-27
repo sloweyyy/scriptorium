@@ -1327,11 +1327,44 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
     await audit(ctx.config.auditFile, { type: "jira.approve.held", actor: "scribe", issue: key, reason: "unseen-revision" });
   };
 
-  // Feedback comments are marked done only once the revision that used them succeeded.
+  /**
+   * One unit of work for one triggering comment: its replies are op-keyed to IT (so a retry
+   * resumes instead of repeating), and a failure is counted against IT — three strikes and
+   * it is set aside with a note. Feedback and commands are separate units: a revision's
+   * replies used to consume the next command's reply numbers, so a command retried after the
+   * revision landed found "its" reply already done — the revision comment — and never posted.
+   */
+  const attempt = async (triggerId: string, markDone: string[], work: () => Promise<void>): Promise<void> => {
+    ctx.triggers.set(key, { id: triggerId, seq: 0 });
+    try {
+      await work();
+      await ctx.state.markProcessed(key, markDone);
+      if (ctx.state.get(key)?.failing?.commentId === triggerId) await ctx.state.patch(key, { failing: undefined });
+    } catch (error) {
+      const failing = ctx.state.get(key)?.failing;
+      const attempts = failing?.commentId === triggerId ? failing.attempts + 1 : 1;
+      if (attempts < MAX_COMMAND_ATTEMPTS) {
+        await ctx.state.patch(key, { failing: { commentId: triggerId, attempts } });
+        throw error;
+      }
+      // Set aside, loudly: retrying something that fails the same way forever costs a model
+      // call per poll and tells the reviewer nothing new.
+      await ctx.state.patch(key, { failing: undefined });
+      await ctx.state.markProcessed(key, markDone);
+      await say(ctx, key, `⚠️ I tried that ${MAX_COMMAND_ATTEMPTS} times and it kept failing:\n\n{{${errorMessage(error)}}}\n\nI've set that comment aside. Comment again once the cause is fixed.`);
+    } finally {
+      ctx.triggers.delete(key);
+    }
+  };
+
+  // Feedback is applied as its own unit, keyed to its last comment, and marked done only
+  // once the revision that used it succeeded.
   const pendingFeedbackIds: string[] = [];
   const flushAndMark = async (): Promise<void> => {
-    await flushFeedback();
-    if (pendingFeedbackIds.length) await ctx.state.markProcessed(key, pendingFeedbackIds.splice(0));
+    if (!pendingFeedback.length) return;
+    const ids = [...pendingFeedbackIds];
+    await attempt(`feedback:${ids.at(-1)}`, ids, flushFeedback);
+    pendingFeedbackIds.length = 0;
   };
 
   for (const comment of comments) {
@@ -1353,11 +1386,13 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
       continue;
     }
 
+    // Feedback that came before this command is applied first — as its own unit.
+    await flushAndMark();
+
     // Mark-after-act: a comment is done only when its command finished. A crash or an
     // error mid-way leaves it (and everything after it) for the next tick, and the op-keyed
     // replies make that retry safe — it resumes, it does not repeat itself.
-    ctx.triggers.set(key, { id: comment.id, seq: 0 });
-    try {
+    await attempt(comment.id, [comment.id], async () => {
       // Anything explicit — a mention or a typed command — makes this a thread the agent is
       // in, so the plain-English feedback that follows applies even without the label.
       // A human command also resets the "already reported this error" memory: whoever typed
@@ -1366,7 +1401,6 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
       // human asking, and re-reporting the same error every poll is noise.
       const retrying = ctx.state.get(key)?.failing?.commentId === comment.id;
       await ctx.state.patch(key, retrying ? { engaged: true } : { engaged: true, lastError: undefined });
-      await flushAndMark();
 
       switch (command.kind) {
         case "wake":
@@ -1406,23 +1440,7 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
           await runLessonDecision(ctx, key, "revoke", command.id, authorName(comment), comment.author?.accountId);
           break;
       }
-      await ctx.state.markProcessed(key, [comment.id]);
-      if (ctx.state.get(key)?.failing?.commentId === comment.id) await ctx.state.patch(key, { failing: undefined });
-    } catch (error) {
-      const failing = ctx.state.get(key)?.failing;
-      const attempts = failing?.commentId === comment.id ? failing.attempts + 1 : 1;
-      if (attempts < MAX_COMMAND_ATTEMPTS) {
-        await ctx.state.patch(key, { failing: { commentId: comment.id, attempts } });
-        throw error;
-      }
-      // Set aside, loudly: retrying a command that fails the same way forever costs a model
-      // call per poll and tells the reviewer nothing new.
-      await ctx.state.patch(key, { failing: undefined });
-      await ctx.state.markProcessed(key, [comment.id]);
-      await say(ctx, key, `⚠️ I tried that ${MAX_COMMAND_ATTEMPTS} times and it kept failing:\n\n{{${errorMessage(error)}}}\n\nI've set that comment aside. Comment again once the cause is fixed.`);
-    } finally {
-      ctx.triggers.delete(key);
-    }
+    });
   }
   await flushAndMark();
 

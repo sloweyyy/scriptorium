@@ -114,6 +114,7 @@ const TOOL_PROGRESS: Record<string, string> = {
   jira_children: "Reading the epic's issues",
   jira_get_issue: "Reading a Jira issue",
   slack_read_thread: "Reading the thread",
+  slack_read_channel: "Reading the channel",
   github_get_pull: "Reading the pull request",
 };
 

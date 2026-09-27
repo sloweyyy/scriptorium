@@ -72,7 +72,7 @@ export interface TeammateTurn {
  * Tools narrowed to the turn they serve. Checked BEFORE policy, so an out-of-bounds call
  * never becomes an approval card at all:
  * - `slack_read_thread` reads only the thread the agent was asked in, not any thread in an
- *   allowed channel (a turn in C1 could read C2's);
+ *   allowed channel (a turn in C1 could read C2's), and `slack_read_channel` only its channel;
  * - `memory_save` may only scope to everyone, this channel, or the asker themself — the
  *   model does not get to file a memory about another team or another person.
  */
@@ -85,6 +85,17 @@ export function bindToTurn(tools: ToolSpec[], turn: TeammateTurn): ToolSpec[] {
         run: async (input: unknown, context?: ToolRunContext) => {
           const { channel, thread_ts } = (input ?? {}) as { channel?: unknown; thread_ts?: unknown };
           if (channel !== turn.channel || thread_ts !== turn.threadTs) return "NOT_ALLOWED: you may read only the thread you were asked in.";
+          return tool.run(input, context);
+        },
+      };
+    }
+    if (tool.name === "slack_read_channel") {
+      return {
+        ...tool,
+        run: async (input: unknown, context?: ToolRunContext) => {
+          // Only the channel it was asked in: from anywhere else it would hand a private
+          // channel's messages to someone who isn't in it.
+          if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return "NOT_ALLOWED: you may read only the channel you were asked in.";
           return tool.run(input, context);
         },
       };

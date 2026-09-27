@@ -167,6 +167,7 @@ memory — posts an approval card that a `TEAMMATE_APPROVERS` click carries out 
 | Job | How |
 |---|---|
 | Cited answers across the vault, Confluence and Jira | `answer-with-citations`; uncited claims are refused, misses become gap tickets (deduped) |
+| What did I miss? | `channel-catchup`; reads the channel it was asked in (up to 72h, on demand, nothing kept): decided / still open / waiting on you, each point cited to its message |
 | Thread → Jira ticket | `thread-to-ticket`; reads the thread it was asked in, proposes the issue on a card |
 | Is this ticket ready? | `readiness-check`; verdict plus what is missing, cited |
 | Remember this | `remember`; scoped memory (person / channel / global), human-approved, never reaches published docs |

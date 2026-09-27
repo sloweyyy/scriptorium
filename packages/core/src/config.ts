@@ -146,6 +146,8 @@ export interface TeammateSettings extends SlackAppTokens {
 export interface SlackSettings {
   /** Channel id for publish announcements and draft-approval buttons. Optional. */
   notifyChannel?: string;
+  /** `https://<workspace>.slack.com` — turns a `slack:<channel>/<ts>` citation into a link. */
+  workspaceUrl?: string;
 }
 
 /**
@@ -311,7 +313,7 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       pollMs: envNumber("JIRA_POLL_MS", 15_000),
       stateDir: path.resolve(repoRoot, env("STATE_DIR") ?? ".scriptorium-state"),
     },
-    slack: { notifyChannel: env("SLACK_NOTIFY_CHANNEL") },
+    slack: { notifyChannel: env("SLACK_NOTIFY_CHANNEL"), workspaceUrl: env("SLACK_WORKSPACE_URL") },
     sites: {
       external: env("EXTERNAL_SITE_URL")?.replace(/\/+$/, ""),
       internal: env("INTERNAL_SITE_URL")?.replace(/\/+$/, ""),

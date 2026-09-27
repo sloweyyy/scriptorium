@@ -12,6 +12,8 @@ export interface SearchHit {
 
 export interface VaultIndex {
   search(query: string, limit?: number): SearchHit[];
+  /** Present on a hybrid index (see `withEmbeddings`); preferred over `search` when it is. */
+  searchAsync?(query: string, limit?: number): Promise<SearchHit[]>;
   size: number;
 }
 

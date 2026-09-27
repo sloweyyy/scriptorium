@@ -175,7 +175,7 @@ export function qaTools(vault: Vault, index: VaultIndex): ToolSpec[] {
       description:
         "Full-text search over the knowledge vault. Returns note paths, titles, and matching snippets. Call this before answering any question about the product.",
       inputSchema: z.object({ query: z.string().describe("Search terms — keywords, not a full sentence.") }),
-      run: ({ query }) => JSON.stringify(index.search(query)),
+      run: async ({ query }) => JSON.stringify(index.searchAsync ? await index.searchAsync(query) : index.search(query)),
       records: (_input, output) => {
         const hits = ownJson(output);
         return Array.isArray(hits) ? hits.flatMap((hit) => (typeof hit?.relPath === "string" ? [hit.relPath.replace(/\.md$/, "")] : [])) : [];

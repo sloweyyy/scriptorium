@@ -1,5 +1,5 @@
 import { audit, type ToolRunContext, type ToolSpec, type Vault } from "@scriptorium/core";
-import { buildIndex, enforceGrounding, fileGapNote, parseQaAnswer, qaTools, type GapInput } from "@scriptorium/curator";
+import { buildRetrievalIndex, enforceGrounding, fileGapNote, parseQaAnswer, qaTools, type GapInput } from "@scriptorium/curator";
 import type { GuardDeps } from "@scriptorium/policy";
 import { assembleAgent, listMemories, memoryTools, renderMemories, runSession, scopesFor, SessionError, type AgentConfig, type Skill } from "@scriptorium/runtime";
 
@@ -88,7 +88,7 @@ export interface TeammateDeps {
 }
 
 export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): Promise<TeammateReply> {
-  const vaultTools = qaTools(deps.vault, await buildIndex(deps.vault));
+  const vaultTools = qaTools(deps.vault, await buildRetrievalIndex(deps.vault));
   const agent = assembleAgent(deps.config, [...vaultTools, ...memoryTools(deps.vault, deps.signingKey), ...deps.connectorTools], deps.skills, { ...deps.guardDeps, requestedBy: turn.askedBy });
   // Only this channel's and this person's approved memories — never another team's.
   const memory = renderMemories(await listMemories(deps.vault, scopesFor(turn)));

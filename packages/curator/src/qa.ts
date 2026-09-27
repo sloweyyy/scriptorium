@@ -1,6 +1,6 @@
 import type { ToolSpec, Vault } from "@scriptorium/core";
 import { runSession, SessionError } from "@scriptorium/runtime";
-import { buildIndex } from "./search";
+import { buildRetrievalIndex } from "./hybrid";
 import { QA_MAX_TOKENS, QA_SYSTEM_PROMPT, enforceGrounding, parseQaAnswer, qaTools, type QaAnswer } from "./qa-contract";
 
 /**
@@ -26,7 +26,7 @@ export async function answerQuestion(vault: Vault, question: string, options: An
   const used = new Set<string>();
   const retrieved: string[] = [];
   const records = new Set<string>();
-  const tools = record(observe(qaTools(vault, await buildIndex(vault)), options.onTool), used, retrieved, records);
+  const tools = record(observe(qaTools(vault, await buildRetrievalIndex(vault)), options.onTool), used, retrieved, records);
   try {
     const text = await runSession({ system: QA_SYSTEM_PROMPT, prompt: question, tools, maxTokens: QA_MAX_TOKENS });
     return await enforceGrounding(vault, parseQaAnswer(text, question), { usedOverview: used.has("vault_overview"), retrieved, records });

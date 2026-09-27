@@ -6,3 +6,4 @@ export * from "./qa-contract";
 export * from "./search";
 export * from "./watcher";
 export * from "./staleness";
+export * from "./hybrid";

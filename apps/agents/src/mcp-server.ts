@@ -1,5 +1,5 @@
 import type { Vault } from "@scriptorium/core";
-import { answerQuestion, buildIndex, qaTools } from "@scriptorium/curator";
+import { answerQuestion, buildRetrievalIndex, qaTools } from "@scriptorium/curator";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
@@ -14,7 +14,7 @@ import { z } from "zod";
 export async function createKnowledgeMcpServer(vault: Vault, options: { withAsk?: boolean } = {}): Promise<McpServer> {
   const server = new McpServer({ name: "scriptorium-knowledge", version: "0.1.0" });
 
-  for (const tool of qaTools(vault, await buildIndex(vault))) {
+  for (const tool of qaTools(vault, await buildRetrievalIndex(vault))) {
     server.registerTool(
       tool.name,
       { description: tool.description, inputSchema: tool.inputSchema, annotations: { readOnlyHint: true, openWorldHint: false } },

@@ -93,6 +93,9 @@ describe("a plan", () => {
     expect((await runUnderPolicy(envelope, plan, steps("A", "B", "C"), deps)).kind).toBe("pending");
     expect(created).toEqual([]);
     const request = cards[0]!;
+    // The card a person approves from lists every step, not the plan cut as one field.
+    expect(request.summary).toContain("Step 3 · jira_create_issue");
+    expect(request.summary).toContain("• summary: C");
     expect((await decideApproval(store, envelope, request.id, "approved", { accountId: "slack:UPM" })).ok).toBe(true);
 
     // Step 2 fails once: the approval is given back; step 1 is not done twice on the retry.

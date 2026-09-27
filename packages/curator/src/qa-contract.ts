@@ -78,13 +78,31 @@ function tool<S extends z.ZodObject>(spec: {
   description: string;
   inputSchema: S;
   run: (input: z.output<S>) => Promise<string> | string;
+  records?: (input: z.output<S>, output: string) => string[];
 }): ToolSpec {
   return {
     name: spec.name,
     description: spec.description,
     inputSchema: spec.inputSchema,
     run: async (raw) => spec.run(spec.inputSchema.parse(raw)),
+    ...(spec.records
+      ? {
+          records: (raw: unknown, output: string) => {
+            const parsed = spec.inputSchema.safeParse(raw);
+            return parsed.success ? spec.records!(parsed.data, output) : [];
+          },
+        }
+      : {}),
   };
+}
+
+/** Parse JSON a tool built itself; anything else yields nothing. */
+function ownJson(output: string): unknown {
+  try {
+    return JSON.parse(output);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -147,6 +165,10 @@ export function qaTools(vault: Vault, index: VaultIndex): ToolSpec[] {
             : {}),
         });
       },
+      records: (_input, output) => {
+        const overview = ownJson(output) as { notes?: unknown } | undefined;
+        return Array.isArray(overview?.notes) ? overview.notes.filter((note): note is string => typeof note === "string") : [];
+      },
     }),
     tool({
       name: "search_vault",
@@ -154,6 +176,10 @@ export function qaTools(vault: Vault, index: VaultIndex): ToolSpec[] {
         "Full-text search over the knowledge vault. Returns note paths, titles, and matching snippets. Call this before answering any question about the product.",
       inputSchema: z.object({ query: z.string().describe("Search terms — keywords, not a full sentence.") }),
       run: ({ query }) => JSON.stringify(index.search(query)),
+      records: (_input, output) => {
+        const hits = ownJson(output);
+        return Array.isArray(hits) ? hits.flatMap((hit) => (typeof hit?.relPath === "string" ? [hit.relPath.replace(/\.md$/, "")] : [])) : [];
+      },
     }),
     tool({
       name: "read_note",
@@ -167,12 +193,16 @@ export function qaTools(vault: Vault, index: VaultIndex): ToolSpec[] {
           return retrievalBody(note.frontmatter, note.body).slice(0, READ_NOTE_CHAR_LIMIT);
         } catch {
           // A wrong path is a retrieval mistake the model can recover from, not a crash.
-          return "ERROR: note not found";
+          return NOTE_NOT_FOUND;
         }
       },
+      records: ({ path: relPath }, output) =>
+        output === NOTE_NOT_FOUND || output.startsWith("NOT_ALLOWED") ? [] : [relPath.replace(/\\/g, "/").replace(/^\.?\/+/, "").replace(/\.md$/, "")],
     }),
   ];
 }
+
+const NOTE_NOT_FOUND = "ERROR: note not found";
 
 /**
  * The only place an answer becomes structure. `gap` is what the Slack Curator turns into a
@@ -199,6 +229,11 @@ export interface QaEvidence {
   usedOverview: boolean;
   /** Every tool result returned to the model in this conversation, verbatim. */
   retrieved: readonly string[];
+  /**
+   * The records tools declared they fetched (`ToolSpec.records`). When present it is the
+   * ONLY evidence: text inside a tool's output cannot add to it.
+   */
+  records?: ReadonlySet<string>;
 }
 
 /** `confluence:<page id>`, `jira:<ISSUE-1>` — records outside the vault, cited by source. */
@@ -230,7 +265,8 @@ export async function enforceGrounding(vault: Vault, answer: QaAnswer, evidence:
     if (NOT_CITABLE.some((prefix) => relPath.startsWith(prefix))) continue;
     // A refusal is not evidence: "NOT_ALLOWED: jira:DOC-99 is not an issue key" echoes the
     // id it refused, and counting that as retrieval would ground a claim in nothing.
-    if (!evidence.retrieved.some((result) => !REFUSAL.test(result) && mentions(result, relPath))) continue;
+    const fetched = evidence.records ? evidence.records.has(relPath) : evidence.retrieved.some((result) => !REFUSAL.test(result) && mentions(result, relPath));
+    if (!fetched) continue;
     // A source-qualified citation (`confluence:123`, `jira:DOC-7`) names a record in another
     // system: it counts when a tool returned it in this conversation, which is the only
     // evidence there is — the vault cannot vouch for a Confluence page.

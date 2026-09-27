@@ -81,6 +81,14 @@ export interface ToolSpec {
   description: string;
   inputSchema: z.ZodObject;
   run(input: unknown, context?: ToolRunContext): Promise<string>;
+  /**
+   * The records this call actually fetched — `docs/x`, `confluence:123`, `jira:DOC-7` —
+   * derived from the validated input or from JSON the tool itself built, never from the
+   * CONTENT it returned. Grounding checks citations against this set, so a page, comment
+   * or thread that merely contains the text "jira:DOC-99" cannot pass as evidence for it.
+   * A tool without it contributes no evidence.
+   */
+  records?(input: unknown, output: string): string[];
 }
 
 export interface ImageInput {

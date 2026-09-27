@@ -25,10 +25,11 @@ export async function answerQuestion(vault: Vault, question: string, options: An
   // The evidence the answer is judged against: which tools ran, and what they returned.
   const used = new Set<string>();
   const retrieved: string[] = [];
-  const tools = record(observe(qaTools(vault, await buildIndex(vault)), options.onTool), used, retrieved);
+  const records = new Set<string>();
+  const tools = record(observe(qaTools(vault, await buildIndex(vault)), options.onTool), used, retrieved, records);
   try {
     const text = await runSession({ system: QA_SYSTEM_PROMPT, prompt: question, tools, maxTokens: QA_MAX_TOKENS });
-    return await enforceGrounding(vault, parseQaAnswer(text, question), { usedOverview: used.has("vault_overview"), retrieved });
+    return await enforceGrounding(vault, parseQaAnswer(text, question), { usedOverview: used.has("vault_overview"), retrieved, records });
   } catch (error) {
     // A retrieval loop that exhausts its round cap has searched hard and concluded
     // nothing — which is NOT_IN_KB with extra steps, not a crash. A question whose terms
@@ -59,13 +60,14 @@ function observe(tools: ToolSpec[], onTool: ((name: string) => void) | undefined
 }
 
 /** Keep every tool result, so the answer can be checked against what was actually retrieved. */
-function record(tools: ToolSpec[], used: Set<string>, retrieved: string[]): ToolSpec[] {
+function record(tools: ToolSpec[], used: Set<string>, retrieved: string[], records: Set<string>): ToolSpec[] {
   return tools.map((tool) => ({
     ...tool,
     run: async (input) => {
       used.add(tool.name);
       const result = await tool.run(input);
       retrieved.push(typeof result === "string" ? result : JSON.stringify(result));
+      for (const fetched of tool.records?.(input, result) ?? []) records.add(fetched);
       return result;
     },
   }));

@@ -1,4 +1,4 @@
-import { audit, type ToolSpec, type Vault } from "@scriptorium/core";
+import { audit, type ToolRunContext, type ToolSpec, type Vault } from "@scriptorium/core";
 import { buildIndex, enforceGrounding, fileGapNote, parseQaAnswer, qaTools, type GapInput } from "@scriptorium/curator";
 import type { GuardDeps } from "@scriptorium/policy";
 import { assembleAgent, listMemories, memoryTools, renderMemories, runSession, scopesFor, SessionError, type AgentConfig, type Skill } from "@scriptorium/runtime";
@@ -33,6 +33,45 @@ export interface TeammateTurn {
   askedBy: string;
   /** Slack channel the turn happens in — selects which team memories apply. */
   channel?: string;
+  /** The thread the Teammate was asked in — the only one it may read. */
+  threadTs?: string;
+}
+
+/**
+ * Tools narrowed to the turn they serve. Checked BEFORE policy, so an out-of-bounds call
+ * never becomes an approval card at all:
+ * - `slack_read_thread` reads only the thread the agent was asked in, not any thread in an
+ *   allowed channel (a turn in C1 could read C2's);
+ * - `memory_save` may only scope to everyone, this channel, or the asker themself — the
+ *   model does not get to file a memory about another team or another person.
+ */
+export function bindToTurn(tools: ToolSpec[], turn: TeammateTurn): ToolSpec[] {
+  const scopes = new Set(scopesFor(turn));
+  return tools.map((tool) => {
+    if (tool.name === "slack_read_thread") {
+      return {
+        ...tool,
+        run: async (input: unknown, context?: ToolRunContext) => {
+          const { channel, thread_ts } = (input ?? {}) as { channel?: unknown; thread_ts?: unknown };
+          if (channel !== turn.channel || thread_ts !== turn.threadTs) return "NOT_ALLOWED: you may read only the thread you were asked in.";
+          return tool.run(input, context);
+        },
+      };
+    }
+    if (tool.name === "memory_save") {
+      return {
+        ...tool,
+        run: async (input: unknown, context?: ToolRunContext) => {
+          const scope = (input as { scope?: unknown } | undefined)?.scope;
+          if (typeof scope !== "string" || !scopes.has(scope)) {
+            return `NOT_ALLOWED: from here a memory can be scoped to ${[...scopes].map((value) => `"${value}"`).join(", ")} only.`;
+          }
+          return tool.run(input, context);
+        },
+      };
+    }
+    return tool;
+  });
 }
 
 export interface TeammateDeps {
@@ -62,7 +101,7 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
   const records = new Set<string>();
   /** What each write tool reported — the ONLY text an uncited action reply may carry. */
   const writeOutcomes: string[] = [];
-  const tools = agent.tools.map((tool) => ({
+  const tools = bindToTurn(agent.tools, turn).map((tool) => ({
     ...tool,
     run: async (input: unknown) => {
       used.add(tool.name);

@@ -65,3 +65,19 @@ describe("thread context", () => {
     expect(await threadContext(client, "C1", "1.2", "1.2")).toBeUndefined();
   });
 });
+
+describe("tools bound to the turn", () => {
+  it("reads only the thread it was asked in, and scopes memories to here or the asker", async () => {
+    const { bindToTurn } = await import("@scriptorium/agents");
+    const { z } = await import("zod");
+    const ran: string[] = [];
+    const tool = (name: string) => ({ name, description: name, inputSchema: z.object({}), run: async () => (ran.push(name), "ok") });
+    const [read, save] = bindToTurn([tool("slack_read_thread"), tool("memory_save")], { question: "q", askedBy: "slack:U1", channel: "C1", threadTs: "1.0" });
+    expect(await read!.run({ channel: "C1", thread_ts: "1.0" })).toBe("ok");
+    expect(await read!.run({ channel: "C2", thread_ts: "9.9" })).toMatch(/^NOT_ALLOWED/);
+    expect(await read!.run({ channel: "C1", thread_ts: "2.0" })).toMatch(/^NOT_ALLOWED/);
+    for (const scope of ["global", "channel:C1", "person:slack:U1"]) expect(await save!.run({ text: "x is y.", scope })).toBe("ok");
+    for (const scope of ["channel:C2", "person:slack:U2"]) expect(await save!.run({ text: "x is y.", scope })).toMatch(/^NOT_ALLOWED/);
+    expect(ran).toEqual(["slack_read_thread", "memory_save", "memory_save", "memory_save"]);
+  });
+});

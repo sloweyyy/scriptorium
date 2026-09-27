@@ -548,3 +548,71 @@ describe("board transitions", () => {
     expect(moves).toEqual(["In Review"]);
   });
 });
+
+describe("approving a revision nobody has seen", () => {
+  it("holds a comment approval that arrives in the same poll as feedback", async () => {
+    // "Fix the typo in step 2" then "approve", both before the next poll: the approval was
+    // given to the draft on the ticket, and the revision it would publish is one the
+    // reviewer has never read.
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+
+    comments.push(human("h1", "fix the typo in step 2"), human("h2", "approve"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T13:00:00.000+0000" } };
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+
+    expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(0);
+    expect(await vault.listNotes("docs")).toHaveLength(0);
+    expect(comments.at(-1)?.body).toContain("haven't seen yet");
+
+    // Having now seen it, the next approval publishes.
+    comments.push(human("h3", "approve"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T14:00:00.000+0000" } };
+    const third = await startScribeJira(settings, vault);
+    third.stop();
+    expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(1);
+  });
+
+  it("holds a drag to Approved made while feedback was still being applied", async () => {
+    const settings = config();
+    const stateDir = settings.jira.stateDir;
+    await fs.mkdir(path.join(stateDir, "drafts"), { recursive: true });
+    await fs.writeFile(path.join(stateDir, "drafts", "DOC-1.md"), CLEAN_DRAFT);
+    await fs.writeFile(
+      path.join(stateDir, "jira-state.json"),
+      JSON.stringify({
+        version: 1,
+        issues: {
+          "DOC-1": { hasDraft: true, engaged: true, docSlug: "incident-timeline-embed", sourceFingerprint: "seeded", processedComments: [], lastStatus: "In Review", lastUpdated: "2026-08-20T10:00:00.000+0000" },
+        },
+      }),
+    );
+    comments.push(human("h1", "the intro should name the audience"));
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Done" }, updated: "2026-08-20T15:00:00.000+0000" } };
+    changelog = [{ author: { displayName: "Reviewer", accountId: "human-1" }, items: [{ field: "status", toString: "Done" }] }];
+
+    const run = await startScribeJira(settings, vault);
+    run.stop();
+
+    expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(0);
+    expect(comments.at(-1)?.body).toContain("haven't seen yet");
+    expect(status()).toBe("In Review");
+  });
+});
+
+describe("the Slack approve button", () => {
+  it("refuses a card posted for an earlier draft, and publishes the draft it names", async () => {
+    const { draftFingerprint } = await import("@scriptorium/agents");
+    const settings = config();
+    const handle = await startScribeJira(settings, vault);
+    handle.stop();
+
+    await expect(handle.approve("DOC-1", "Pat (slack:U1)", "0000000000000000")).rejects.toThrow(/draft has changed/);
+    expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(0);
+
+    await handle.approve("DOC-1", "Pat (slack:U1)", draftFingerprint(CLEAN_DRAFT));
+    expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(1);
+  });
+});

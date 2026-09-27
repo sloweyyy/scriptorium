@@ -62,6 +62,11 @@ export interface QaAnswer {
    * from. A person's unverified claim must not enter the pipeline wearing a gap's clothes.
    */
   handoff: string | null;
+  /**
+   * Set when the reply states things but cites no note that exists in the vault. The
+   * prompt forbids that; this is the check that does not depend on the model obeying it.
+   */
+  ungrounded?: true;
 }
 
 /**
@@ -185,4 +190,55 @@ export function parseQaAnswer(text: string, question: string): QaAnswer {
     gap: gapMatch && !handoffMatch ? (gapMatch[1]?.trim() || question) : null,
     handoff: handoffMatch ? (handoffMatch[1]?.trim() || question) : null,
   };
+}
+
+/** What the retrieval loop actually did — the evidence an answer is judged against. */
+export interface QaEvidence {
+  /** `vault_overview` ran: an answer about the vault's own shape may name no single note. */
+  usedOverview: boolean;
+  /** Every tool result returned to the model in this conversation, verbatim. */
+  retrieved: readonly string[];
+}
+
+/** `confluence:<page id>`, `jira:<ISSUE-1>` — records outside the vault, cited by source. */
+const EXTERNAL_CITATION = /^(confluence:\d+|jira:[A-Z][A-Z0-9_]*-\d+)$/;
+
+/** Queues and drafts, not knowledge: never evidence for a claim about the product. */
+const NOT_CITABLE = ["_gaps/", "_inbox/"];
+
+/**
+ * No citation, no claim — enforced on the answer, not only requested in the prompt.
+ *
+ * A reply that is neither a gap nor a handoff must cite at least one note that exists in
+ * the vault AND came back from a tool in this conversation. A citation to a note that
+ * does not exist, or one the model never retrieved, is dropped: a model can write a
+ * plausible `[[docs/...]]` as easily as a plausible fact. The one exception is an answer
+ * built from `vault_overview` — "nothing is documented about X yet" names no note and is
+ * still true. What fails is marked `ungrounded`, and a surface must refuse it rather than
+ * post it. It is NOT turned into a gap: a gap opens a documentation ticket, and an answer
+ * the model improvised is no evidence that documentation is missing.
+ */
+export async function enforceGrounding(vault: Vault, answer: QaAnswer, evidence: QaEvidence): Promise<QaAnswer> {
+  if (answer.gap || answer.handoff) return answer;
+  const citations: string[] = [];
+  for (const citation of answer.citations) {
+    const relPath = citation.replace(/#.*$/, "").replace(/\.md$/, "");
+    if (NOT_CITABLE.some((prefix) => relPath.startsWith(prefix))) continue;
+    if (!evidence.retrieved.some((result) => result.includes(relPath))) continue;
+    // A source-qualified citation (`confluence:123`, `jira:DOC-7`) names a record in another
+    // system: it counts when a tool returned it in this conversation, which is the only
+    // evidence there is — the vault cannot vouch for a Confluence page.
+    if (EXTERNAL_CITATION.test(relPath) || (await noteExists(vault, relPath))) citations.push(citation);
+  }
+  if (citations.length || evidence.usedOverview) return { ...answer, citations };
+  return { ...answer, citations: [], ungrounded: true };
+}
+
+async function noteExists(vault: Vault, relPath: string): Promise<boolean> {
+  try {
+    return (await vault.exists(`${relPath}.md`)) || (await vault.exists(relPath));
+  } catch {
+    // A citation that escapes the vault is not a note in it.
+    return false;
+  }
 }

@@ -23,6 +23,8 @@ export interface JiraComment {
   created: string;
   updated?: string;
   author?: JiraUser;
+  /** Entity properties, present only when listed with `expand=properties`. */
+  properties?: Array<{ key: string; value: unknown }>;
 }
 
 export interface JiraIssueFields {

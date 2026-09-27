@@ -12,6 +12,7 @@ import {
   type Vault,
 } from "@scriptorium/core";
 import { organizePublishedDoc } from "@scriptorium/curator";
+import { FileEffectLedger, once, opKey, type EffectLedger } from "@scriptorium/runtime";
 import { publishApprovedDoc, pushInternalPlane } from "./docs-repo";
 import { draftFingerprint } from "./slack-approval";
 import { announceDraftForApproval, announcePublished } from "./slack-notify";
@@ -73,6 +74,10 @@ interface Ctx {
   botAccountId: string;
   /** Per-issue serialisation — see withIssueLock. */
   locks: Map<string, Promise<unknown>>;
+  /** Exactly-once record of the agent's own comments (op-keyed; see `say`). */
+  effects: EffectLedger;
+  /** The human comment currently being acted on, per issue, and how many replies it has had. */
+  triggers: Map<string, { id: string; seq: number }>;
 }
 
 /**
@@ -333,9 +338,33 @@ async function handBack(ctx: Ctx, key: string, issue: JiraIssue): Promise<void> 
 }
 
 /** Post a markdown comment as Jira wiki markup, and remember it so it never reads as feedback. */
-async function say(ctx: Ctx, key: string, markdown: string): Promise<void> {
-  const comment = await ctx.client.addComment(key, markdownToJira(markdown));
-  await ctx.state.markProcessed(key, [comment.id]);
+/**
+ * Post the agent's comment. While a human comment is being acted on, each reply is an
+ * op-keyed effect — (issue, triggering comment, nth reply) — so a retry after a crash finds
+ * the reply it already posted instead of posting it again.
+ */
+async function say(ctx: Ctx, key: string, markdown: string): Promise<JiraComment> {
+  const trigger = ctx.triggers.get(key);
+  if (!trigger) {
+    const comment = await ctx.client.addComment(key, markdownToJira(markdown));
+    await ctx.state.markProcessed(key, [comment.id]);
+    return comment;
+  }
+  const op = opKey("jira.say", key, trigger.id, trigger.seq++);
+  const { result } = await once(
+    ctx.effects,
+    op,
+    async () => {
+      const posted = await ctx.client.addComment(key, markdownToJira(markdown), { op });
+      return { id: posted.id, created: posted.created };
+    },
+    { probe: async () => {
+      const found = await ctx.client.findCommentByOp(key, op);
+      return found ? { id: found.id, created: found.created } : undefined;
+    }, meta: { issue: key, trigger: trigger.id } },
+  );
+  await ctx.state.markProcessed(key, [result.id]);
+  return { id: result.id, created: result.created, body: markdown };
 }
 
 interface PrdSource {
@@ -705,7 +734,7 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
   });
 
   await ctx.client.uploadAttachment(key, `draft-${slug}.md`, result.markdown, "text/markdown");
-  await say(
+  const posted = await say(
     ctx,
     key,
     draftComment({
@@ -716,6 +745,7 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
       revision: false,
     }),
   );
+  await ctx.state.patch(key, { draftPostedAt: posted.created });
   // A draft exists and the next move is a human's — so it goes back to them, by name.
   await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
   await handBack(ctx, key, issue);
@@ -774,7 +804,7 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
   const known = ctx.state.get(key);
   const slug = known?.docSlug ?? docSlug(issue.fields.summary);
   await ctx.client.uploadAttachment(key, `draft-${slug}.md`, result.markdown, "text/markdown");
-  await say(
+  const posted = await say(
     ctx,
     key,
     draftComment({
@@ -790,8 +820,20 @@ async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promis
       revision: true,
     }),
   );
+  await ctx.state.patch(key, { draftPostedAt: posted.created });
   await audit(ctx.config.auditFile, { type: "jira.draft.revised", actor: "scribe", issue: key, feedback });
 }
+
+/** Was this approval given to the draft currently on the ticket, or to an earlier one? */
+export function approvesCurrentDraft(approvalCreated: string | undefined, draftPostedAt: string | undefined): boolean {
+  if (!draftPostedAt || !approvalCreated) return true;
+  const approved = Date.parse(approvalCreated);
+  const drafted = Date.parse(draftPostedAt);
+  return Number.isNaN(approved) || Number.isNaN(drafted) || approved >= drafted;
+}
+
+/** A comment whose command failed this many times is set aside, with a note, not retried forever. */
+export const MAX_COMMAND_ATTEMPTS = 3;
 
 /**
  * Someone said the agent's name. This path must never end in silence — that is the whole
@@ -1258,73 +1300,101 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
     await audit(ctx.config.auditFile, { type: "jira.approve.held", actor: "scribe", issue: key, reason: "unseen-revision" });
   };
 
+  // Feedback comments are marked done only once the revision that used them succeeded.
+  const pendingFeedbackIds: string[] = [];
+  const flushAndMark = async (): Promise<void> => {
+    await flushFeedback();
+    if (pendingFeedbackIds.length) await ctx.state.markProcessed(key, pendingFeedbackIds.splice(0));
+  };
+
   for (const comment of comments) {
     if (ctx.state.isProcessed(key, comment.id)) continue;
     // `hasDraft` is read fresh: a draft posted earlier in this same batch changes what a
     // mention means, and the parser needs the current answer, not the one from the top.
     const command = parseCommand(comment, ctx.botAccountId, { hasDraft: Boolean(ctx.state.get(key)?.hasDraft) });
-    await ctx.state.markProcessed(key, [comment.id]);
 
     // Someone else's conversation: on a mention-only ticket the agent has never taken part
     // in, plain prose is people talking to each other and must not trigger a revise.
     // Commands and mentions still act — being answerable is the reason for watching at all.
-    if (command.kind === "feedback" && !autoDraft && !engaged(ctx.state.get(key))) continue;
+    if (command.kind === "ignore" || (command.kind === "feedback" && !autoDraft && !engaged(ctx.state.get(key)))) {
+      await ctx.state.markProcessed(key, [comment.id]);
+      continue;
+    }
+    if (command.kind === "feedback") {
+      pendingFeedback.push(command.text);
+      pendingFeedbackIds.push(comment.id);
+      continue;
+    }
 
-    // Anything explicit — a mention or a typed command — makes this a thread the agent is
-    // in, so the plain-English feedback that follows applies even without the label. It has
-    // to be recorded even when the command produced no draft (a PRD-less `draft`, say),
-    // or the follow-up that supplies the PRD would be dropped as someone else's talk.
-    // A human command also resets the "already reported this error" memory: whoever typed
-    // `draft` after an error was told to, and must hear the result — even the same error.
-    if (command.kind !== "feedback" && command.kind !== "ignore") await ctx.state.patch(key, { engaged: true, lastError: undefined });
+    // Mark-after-act: a comment is done only when its command finished. A crash or an
+    // error mid-way leaves it (and everything after it) for the next tick, and the op-keyed
+    // replies make that retry safe — it resumes, it does not repeat itself.
+    ctx.triggers.set(key, { id: comment.id, seq: 0 });
+    try {
+      // Anything explicit — a mention or a typed command — makes this a thread the agent is
+      // in, so the plain-English feedback that follows applies even without the label.
+      // A human command also resets the "already reported this error" memory: whoever typed
+      // `draft` after an error was told to, and must hear the result — even the same error.
+      // Only on the first attempt: an automatic retry of the same comment is not a new
+      // human asking, and re-reporting the same error every poll is noise.
+      const retrying = ctx.state.get(key)?.failing?.commentId === comment.id;
+      await ctx.state.patch(key, retrying ? { engaged: true } : { engaged: true, lastError: undefined });
+      await flushAndMark();
 
-    switch (command.kind) {
-      case "ignore":
-        break;
-      case "wake":
-        await flushFeedback();
-        await runWake(ctx, issue);
-        break;
-      case "feedback":
-        pendingFeedback.push(command.text);
-        break;
-      case "help":
-        await flushFeedback();
-        await say(ctx, key, HELP);
-        break;
-      case "unclear":
-        // Neither published nor rewritten: a near-miss on the one irreversible command gets
-        // a question, and the reviewer's next comment decides.
-        await flushFeedback();
-        await say(
-          ctx,
-          key,
-          `That reads like an approval, so I haven't published or changed anything yet. If you meant it, comment exactly \`${command.suggestion}\`. If it was feedback, rephrase it without starting on "approve" and I'll revise.`,
-        );
-        break;
-      case "draft":
-        await flushFeedback();
-        await runDraft(ctx, issue, { force: true });
-        break;
-      case "approve-doc": {
-        await flushFeedback();
-        const allowed = mayApproveOnJira(ctx.config.jira, ctx.botAccountId, comment.author?.accountId);
-        if (!allowed.ok) await say(ctx, key, allowed.reason);
-        else if (revisedThisTick) await holdUnseenRevision();
-        else await runPublish(ctx, issue, authorName(comment));
-        break;
+      switch (command.kind) {
+        case "wake":
+          await runWake(ctx, issue);
+          break;
+        case "help":
+          await say(ctx, key, HELP);
+          break;
+        case "unclear":
+          // Neither published nor rewritten: a near-miss on the one irreversible command
+          // gets a question, and the reviewer's next comment decides.
+          await say(
+            ctx,
+            key,
+            `That reads like an approval, so I haven't published or changed anything yet. If you meant it, comment exactly \`${command.suggestion}\`. If it was feedback, rephrase it without starting on "approve" and I'll revise.`,
+          );
+          break;
+        case "draft":
+          await runDraft(ctx, issue, { force: true });
+          break;
+        case "approve-doc": {
+          const allowed = mayApproveOnJira(ctx.config.jira, ctx.botAccountId, comment.author?.accountId);
+          if (!allowed.ok) await say(ctx, key, allowed.reason);
+          // Older than the draft on the ticket = given to an earlier draft. Holds across
+          // crashes and retries, where "revised in this tick" alone would not.
+          else if (revisedThisTick || !approvesCurrentDraft(comment.created, ctx.state.get(key)?.draftPostedAt)) await holdUnseenRevision();
+          else await runPublish(ctx, issue, authorName(comment));
+          break;
+        }
+        case "approve-lesson":
+          await runLessonDecision(ctx, key, "approve", command.id, authorName(comment), comment.author?.accountId);
+          break;
+        case "reject-lesson":
+          await runLessonDecision(ctx, key, "reject", command.id, authorName(comment), comment.author?.accountId);
+          break;
       }
-      case "approve-lesson":
-        await flushFeedback();
-        await runLessonDecision(ctx, key, "approve", command.id, authorName(comment), comment.author?.accountId);
-        break;
-      case "reject-lesson":
-        await flushFeedback();
-        await runLessonDecision(ctx, key, "reject", command.id, authorName(comment), comment.author?.accountId);
-        break;
+      await ctx.state.markProcessed(key, [comment.id]);
+      if (ctx.state.get(key)?.failing?.commentId === comment.id) await ctx.state.patch(key, { failing: undefined });
+    } catch (error) {
+      const failing = ctx.state.get(key)?.failing;
+      const attempts = failing?.commentId === comment.id ? failing.attempts + 1 : 1;
+      if (attempts < MAX_COMMAND_ATTEMPTS) {
+        await ctx.state.patch(key, { failing: { commentId: comment.id, attempts } });
+        throw error;
+      }
+      // Set aside, loudly: retrying a command that fails the same way forever costs a model
+      // call per poll and tells the reviewer nothing new.
+      await ctx.state.patch(key, { failing: undefined });
+      await ctx.state.markProcessed(key, [comment.id]);
+      await say(ctx, key, `⚠️ I tried that ${MAX_COMMAND_ATTEMPTS} times and it kept failing:\n\n{{${errorMessage(error)}}}\n\nI've set that comment aside. Comment again once the cause is fixed.`);
+    } finally {
+      ctx.triggers.delete(key);
     }
   }
-  await flushFeedback();
+  await flushAndMark();
 
   // Inputs may have arrived after the first look — retry only when they actually changed,
   // and only where a draft was asked for: either the label requests one standing, or a
@@ -1399,7 +1469,16 @@ export async function startScribeJira(config: AppConfig, vault: Vault): Promise<
   const client = jiraClient(config.jira);
   const me = await client.myself();
   const state = await JiraState.open(config.jira.stateDir);
-  const ctx: Ctx = { config, vault, client, state, botAccountId: me.accountId, locks: new Map() };
+  const ctx: Ctx = {
+    config,
+    vault,
+    client,
+    state,
+    botAccountId: me.accountId,
+    locks: new Map(),
+    effects: new FileEffectLedger(path.join(config.jira.stateDir, "effects.json")),
+    triggers: new Map(),
+  };
   const jql = defaultJql(config.jira);
 
   // A fresh poller re-checks every blocked ticket's links once. Cheap — bounded by the

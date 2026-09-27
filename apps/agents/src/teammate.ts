@@ -18,6 +18,31 @@ import { assembleAgent, listMemories, memoryTools, renderMemories, runSession, s
  *   loop failed closed. Never posted as an answer.
  */
 
+/** What each write does, in words a person would use. */
+const WRITE_DESCRIPTIONS: Record<string, string> = {
+  jira_comment: "comment on the Jira issue",
+  jira_create_issue: "create a Jira issue",
+  confluence_create_page: "create a Confluence page",
+  confluence_update_page: "update the Confluence page",
+  memory_save: "remember that",
+  github_pr_comment: "comment on the pull request",
+  slack_reply: "reply in the thread",
+};
+
+/**
+ * A write tool's outcome as a sentence for the person who asked. Tool results are written
+ * for the MODEL ("APPROVAL_PENDING … Tell the user it is waiting") and must never reach a
+ * human verbatim.
+ */
+export function describeOutcome(tool: string, result: string): string {
+  const what = WRITE_DESCRIPTIONS[tool] ?? tool;
+  const reason = result.replace(/^[A-Z_]+:\s*/, "").split(/(?<=\.)\s/)[0] ?? "";
+  if (result.startsWith("APPROVAL_PENDING")) return `⏳ Waiting for approval to ${what}. An approver has been asked; nothing is done until they say yes.`;
+  if (result.startsWith("DENIED")) return `🚫 I'm not allowed to ${what}.`;
+  if (result.startsWith("NOT_ALLOWED") || result.startsWith("NOT_DONE")) return `⚠️ I couldn't ${what}: ${reason}`;
+  return `✅ ${result.split("\n")[0]}`;
+}
+
 export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "slack_reply", "confluence_create_page", "confluence_update_page", "memory_save", "github_pr_comment"]);
 
 export type TeammateReply =
@@ -108,7 +133,7 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
       const result = await tool.run(input);
       retrieved.push(result);
       for (const fetched of tool.records?.(input, result) ?? []) records.add(fetched);
-      if (WRITE_TOOLS.has(tool.name)) writeOutcomes.push(`${tool.name}: ${result.split("\n")[0]}`);
+      if (WRITE_TOOLS.has(tool.name)) writeOutcomes.push(describeOutcome(tool.name, result));
       return result;
     },
   }));
@@ -127,7 +152,8 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
     });
   } catch (error) {
     if (error instanceof SessionError && error.failure === "round-cap") text = `NOT_IN_KB: ${turn.question}`;
-    else if (error instanceof SessionError) return { kind: "refused", text: `I couldn't finish that (${error.failure}), so I won't give a partial answer.` };
+    // The failure type is for the audit log (`llm` events, the run page), not the reader.
+    else if (error instanceof SessionError) return { kind: "refused", text: "I couldn't finish that, so I won't give a partial answer. Try again, or narrow the question." };
     else throw error;
   }
 
@@ -142,12 +168,12 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
 
   if (judged.gap) {
     const gap = await fileGapNote(deps.vault, { question: turn.question, missing: judged.gap, askedBy: turn.askedBy, auditFile: deps.auditFile, openTicket: deps.openTicket });
-    return { kind: "gap", text: `Not in the knowledge base yet, so I won't guess. I've filed it as a documentation gap (${gap.relPath}).`, gapPath: gap.relPath, ticket: gap.ticket };
+    return { kind: "gap", text: "I couldn't find this in our docs, so I won't guess. I've asked for it to be written.", gapPath: gap.relPath, ticket: gap.ticket };
   }
   if (judged.ungrounded) {
     // A write happened (or was asked for): report exactly what the tools said about it, not
     // the model's uncited prose around it — that prose is where an unsupported claim hides.
-    if (acted) return { kind: "action", text: writeOutcomes.map((outcome) => `• ${outcome}`).join("\n") };
+    if (acted) return { kind: "action", text: writeOutcomes.join("\n") };
     return { kind: "refused", text: "I couldn't tie an answer to any record I retrieved, so I won't state one. Try naming the feature, page or ticket you mean." };
   }
   if (acted && !judged.citations.length) return { kind: "action", text: judged.text };

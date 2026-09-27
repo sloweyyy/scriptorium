@@ -56,7 +56,7 @@ Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
 | Symptom | Look at | Usual cause |
 |---|---|---|
 | The Teammate doesn't reply | audit `teammate.ignored` lines, which carry the reason | channel not in `TEAMMATE_SLACK_CHANNELS`, the bot not invited, or a message from another bot |
-| "I couldn't finish that" | the run page or `pnpm trace <run>` → `teammate.error` | provider quota or outage, or a connector 5xx |
+| "I couldn't finish that" | the run page or `pnpm trace <run>` → `teammate.error` | provider quota or outage, or a connector 5xx. Set `MODEL_FALLBACK` so an overloaded model is retried once on another (audited as `llm.fallback`) |
 | An approval card never appears | audit `policy.approval.unavailable` | the bot can't post in that channel. The write did **not** run |
 | Approved, but "couldn't carry it out" | the run page → `policy.run.failed` | the connector failed. The approval was given back: an approver clicks **Retry** in the thread |
 | A house rule stopped applying | lesson frontmatter `restored_unverified: true`, or a missing `approval_sig` | the signing key was set after the rule was approved, or the rule was edited in the repo. Re-approve it |

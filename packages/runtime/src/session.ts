@@ -36,7 +36,20 @@ export interface SessionOptions {
   maxRounds?: number;
   /** What the run cost, summed over every round. Called once, when the loop ends. */
   onUsage?: (usage: SessionUsage) => void;
+  /** The primary model was overloaded or failing and `MODEL_FALLBACK` answered instead. */
+  onFallback?: (info: { from: string; to: string; status: number }) => void;
 }
+
+/**
+ * The model to try when the primary is overloaded or erroring (`MODEL_FALLBACK`). Only for
+ * 5xx/529 responses — the model never saw the request, or failed on its side — never for a
+ * refusal, a truncation or a bad request, which a second model would not fix.
+ */
+export function fallbackModelId(): string | undefined {
+  return process.env.MODEL_FALLBACK?.trim() || undefined;
+}
+
+const RETRYABLE_STATUS = new Set([500, 502, 503, 504, 529]);
 
 /**
  * Tokens for one session, all rounds. `input` is the TRUE input: the API reports cached
@@ -76,13 +89,25 @@ export const DEFAULT_MAX_ROUNDS = 12;
 
 export async function runSession(options: SessionOptions): Promise<string> {
   const maxRounds = options.maxRounds ?? DEFAULT_MAX_ROUNDS;
-  return llmProvider() === "gemini" ? runOnGemini(options, maxRounds) : runOnClaude(options, maxRounds);
+  if (llmProvider() === "gemini") return runOnGemini(options, maxRounds);
+  const primary = modelId();
+  try {
+    return await runOnClaude(options, maxRounds, primary);
+  } catch (error) {
+    // One retry, on a different model, only when the provider itself failed. A retried turn
+    // is safe: reads repeat, a pending approval is not asked twice, and writes are op-keyed.
+    const status = (error as { status?: unknown } | undefined)?.status;
+    const fallback = fallbackModelId();
+    if (typeof status !== "number" || !RETRYABLE_STATUS.has(status) || !fallback || fallback === primary) throw error;
+    options.onFallback?.({ from: primary, to: fallback, status });
+    return runOnClaude(options, maxRounds, fallback);
+  }
 }
 
-async function runOnClaude(options: SessionOptions, maxRounds: number): Promise<string> {
+async function runOnClaude(options: SessionOptions, maxRounds: number, model: string): Promise<string> {
   const provider = llmProvider();
   const runner = anthropic().beta.messages.toolRunner({
-    model: modelId(),
+    model,
     max_tokens: options.maxTokens,
     system: options.system,
     // The SDK passes its own context as run()'s second argument. Only the policy layer may

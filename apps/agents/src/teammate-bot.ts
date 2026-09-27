@@ -11,7 +11,7 @@ import {
   handleApprovalClick,
 } from "@scriptorium/connectors";
 import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type CommentRestriction, type JiraClient } from "@scriptorium/jira";
-import { FileApprovalStore, executeApproved, mayApprove, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
+import { FileApprovalStore, PLAN_TOOL, executeApproved, mayApprove, planTool, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
 import { DailyBudget, FileEffectLedger, Gate, KeyedQueue, envelopeOf, keys, loadSkills, memoryTools, once, opKey, type AgentEvent } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
@@ -110,9 +110,11 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const skills = await loadSkills(path.join(config.repoRoot, "skills"));
   const agentConfig = teammateConfig({ selfAccountIds: [self], approvers: (settings.approvers ?? []).map((id) => `slack:${id}`), people: settings.people });
   // Restrict to the connectors actually configured here: a tool the host can't provide is not offered.
-  const available = new Set([...connectorTools.map((tool) => tool.name), "vault_overview", "search_vault", "read_note", "memory_save"]);
+  const available = new Set([...connectorTools.map((tool) => tool.name), "vault_overview", "search_vault", "read_note", "memory_save", PLAN_TOOL]);
   const hostConfig = { ...agentConfig, tools: Object.fromEntries(Object.entries(agentConfig.tools).filter(([name]) => available.has(name))) };
   const envelope = envelopeOf(hostConfig);
+  // A plan's steps are the raw connector tools: the plan's own approval is what gates them.
+  connectorTools.push(planTool(envelope, [...connectorTools]));
   // Cards follow the request: its channel thread; a PR → the PR channel; a DM or Jira → notify.
   /** Triage is rate-capped per project per hour: a bulk import is not N model calls and N comments. */
   const triageRate = new HourlyCap(settings.triagePerHour ?? 20);

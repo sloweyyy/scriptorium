@@ -227,6 +227,12 @@ export function describeRequest(request: ApprovalRequest): string {
       return `Remember (${text(args.scope, 60)}): “${text(args.text, 200)}”`;
     case "github_pr_comment":
       return `Comment on pull request ${text(args.repo, 80)}#${text(args.number, 10)}`;
+    case "propose_plan": {
+      // Every step, in order, from the stored arguments: the approver approves exactly this list.
+      const steps = Array.isArray(args.steps) ? (args.steps as Array<{ tool?: unknown; args?: unknown }>) : [];
+      const lines = steps.map((step, index) => `${index + 1}. ${describeRequest({ ...request, tool: String(step.tool ?? ""), args: step.args })}`);
+      return [`Carry out a ${steps.length}-step plan: “${text(args.title)}”`, ...lines].join("\n");
+    }
     default:
       return `Run ${request.tool}`;
   }

@@ -58,6 +58,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/policy.test.ts"],
   },
   {
+    control: "a plan can't include a step that needs a different approval",
+    file: "packages/policy/src/plan.ts",
+    find: "    if (!sameRule(envelope.tools[step.tool], rule)) return",
+    replace: "    if (false) return",
+    evals: ["evals/plan.test.ts"],
+  },
+  {
     control: "approvals bind to the exact arguments",
     file: "packages/policy/src/approvals.ts",
     find: "request.argsHash === hash &&\n        request.status === \"approved\" &&",

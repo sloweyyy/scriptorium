@@ -37,10 +37,18 @@ let tmpRoot: string;
 let vault: Vault;
 let posted: Posted[];
 
+/** Posted messages, as they read NOW: an update replaces the text of the message it targets. */
 const slack = {
   chat: {
-    postMessage: async (args: Posted) => (posted.push(args), { ok: true, ts: `9.${posted.length}` }),
-    update: async () => ({ ok: true }),
+    postMessage: async (args: Posted) => {
+      posted.push({ ...args });
+      return { ok: true, ts: `9.${posted.length}` };
+    },
+    update: async (args: { ts: string; text: string; blocks?: unknown[] }) => {
+      const index = Number(args.ts.split(".")[1]) - 1;
+      if (posted[index]) posted[index] = { ...posted[index]!, text: args.text, blocks: args.blocks };
+      return { ok: true };
+    },
   },
   conversations: { replies: async () => ({ messages: [] }) },
 };
@@ -83,6 +91,8 @@ describe("teammate, end to end", () => {
     expect(posted[0]).toMatchObject({ channel: "C1", thread_ts: "1.0" });
     expect(posted[0]?.text).toContain("docs/digest-emails");
     expect(posted[0]?.text).toContain("AI-generated — verify before acting");
+    // The "looking into it" acknowledgement became the answer; none is left behind.
+    expect(posted.some((message) => message.text.includes("Looking into it"))).toBe(false);
     const audit = await fs.readFile(path.join(tmpRoot, "audit.jsonl"), "utf8");
     expect(audit).toContain('"type":"teammate.ignored"');
   });

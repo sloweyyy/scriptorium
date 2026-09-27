@@ -118,14 +118,26 @@ export class SlackApprovalChannel implements ApprovalChannel {
     const target = cardTarget(request, this.fallbackChannel);
     // Nowhere to show it means nobody can approve it: throw, and the tool does not run.
     if (!target) throw new Error("no Slack channel to post the approval card in");
-    const posted = await this.client.chat.postMessage({ ...target, text: `Approval needed: ${request.summary}`, blocks: approvalBlocks(request) as never });
+    const posted = await this.client.chat.postMessage({ ...target, text: `Approval needed: ${escapeMrkdwn(request.tool)}`, blocks: approvalBlocks(request) as never });
     if (!posted.ok) throw new Error(`Slack refused the approval card: ${posted.error ?? "unknown error"}`);
   }
 }
 
+/**
+ * Slack's three control characters, escaped. The summary is text the MODEL wrote (tool
+ * arguments), and unescaped it could render `<https://evil|docs.beacon.example>` as an
+ * innocent link on the very card a human approves from, or ping `<!channel>`.
+ */
+export function escapeMrkdwn(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export function approvalBlocks(request: ApprovalRequest): unknown[] {
+  // Fenced as well as escaped: inside a code block nothing is formatted, linked or mentioned,
+  // so what the approver reads is exactly the text that will run.
+  const shown = escapeMrkdwn(request.summary).replace(/```/g, "ˋˋˋ");
   return [
-    { type: "section", text: { type: "mrkdwn", text: `*Approval needed* — ${request.agent} wants to run \`${request.tool}\`\n${request.summary}` } },
+    { type: "section", text: { type: "mrkdwn", text: `*Approval needed* — ${escapeMrkdwn(request.agent)} wants to run \`${escapeMrkdwn(request.tool)}\`\n\`\`\`${shown}\`\`\`` } },
     {
       type: "actions",
       elements: [
@@ -171,8 +183,8 @@ export async function handleApprovalClick(
     await client.chat.update({
       channel: click.channel,
       ts: click.messageTs,
-      text: `${verdict} by ${click.userName ?? click.userId}: ${request.summary}`,
-      blocks: [{ type: "section", text: { type: "mrkdwn", text: `${verdict} by <@${click.userId}> — \`${request.tool}\`\n${request.summary}` } }] as never,
+      text: `${verdict} by ${escapeMrkdwn(click.userName ?? click.userId ?? "")}: ${escapeMrkdwn(request.tool)}`,
+      blocks: [{ type: "section", text: { type: "mrkdwn", text: `${verdict} by <@${click.userId}> — \`${escapeMrkdwn(request.tool)}\`\n\`\`\`${escapeMrkdwn(request.summary).replace(/```/g, "ˋˋˋ")}\`\`\`` } }] as never,
     });
   }
   return { ok: true, message: `${verdict}.` };

@@ -1,0 +1,72 @@
+// Everything the project page shows. Keep it current: numbers from `pnpm eval` / `pnpm mutate`,
+// one timeline entry per merged pull request. index.html only renders this.
+window.SITE = {
+  updated: "28 September 2026",
+
+  stats: [
+    { value: "500+", label: "evals, deterministic, on every commit" },
+    { value: "31", label: "guardrails proven by mutation testing" },
+    { value: "30+", label: "tools, every write approve-tier" },
+    { value: "12", label: "reviewed pull requests merged" },
+  ],
+
+  capabilities: [
+    { title: "Cited answers", text: "Answers from the docs vault, Confluence, Jira, GitHub and Slack. Every claim cites a record a tool actually fetched; otherwise it says it doesn't know and files a gap.", where: "Slack mention, DM, /teammate, Jira" },
+    { title: "Thread → ticket", text: "Turns a discussion into a well-formed Jira issue, proposed on an approval card, or through the \"File as a ticket\" message shortcut.", where: "Slack" },
+    { title: "Jira edits", text: "Move, assign, label and link issues. The assignee's name must match exactly one person, and a link checks both issues are in allowed projects.", where: "approve-tier" },
+    { title: "Several changes, one approval", text: "A plan puts the tickets from a meeting and their links on a single card, every step listed. Each step runs exactly once, and a refusal stops the plan.", where: "propose_plan" },
+    { title: "What did I miss?", text: "Catches you up on the channel you ask in: what was decided, what's still open, and what's waiting on you, each point cited to its message.", where: "Slack, read on demand, nothing kept" },
+    { title: "Ticket triage", text: "A newly filed ticket gets one reply saying whether it's ready, what's missing, and which issues it may duplicate. It changes nothing on the ticket.", where: "Jira, opt-in per project" },
+    { title: "Sprint reports", text: "A project's open sprint as done / in progress / not started / looks stuck, with every issue cited.", where: "Jira" },
+    { title: "Release notes", text: "What merged since a date, grouped for readers into new / improved / fixed, every line cited to its PR. It's published only if someone asks, and only on approval.", where: "GitHub" },
+    { title: "PR checks", text: "Checks a pull request against the ticket it implements, flags where the docs no longer match, and proposes one advisory comment.", where: "GitHub webhook" },
+    { title: "Confluence, whole trees", text: "Search, read pages, walk page trees and read text attachments, with every page and child checked against the allowed spaces.", where: "Confluence" },
+    { title: "Reminders", text: "\"Remind us Friday at 9\" is approved once for its exact text, channel and time, then posted once, escaped, and only in the channel that asked.", where: "Slack" },
+    { title: "An approver's inbox", text: "The App Home tab lists what's waiting for your approval, linked to each card. Requests from private conversations aren't described there.", where: "Slack App Home" },
+    { title: "Team memory", text: "It remembers only what a human approved, scoped to a person, a channel or everyone. Memories expire and are signed.", where: "human-gated" },
+    { title: "Weekly digest", text: "A cited summary of what moved in Jira and which doc gaps opened, posted exactly once a week.", where: "scheduled" },
+    { title: "Docs from PRDs (Scribe)", text: "The original agent drafts user docs from a PRD and designs on a Jira ticket, revises on feedback, and publishes only on approval.", where: "Jira, human-gated" },
+  ],
+
+  rules: [
+    { title: "No approval, no write", text: "Every write is approve-tier and waits for a listed approver. The approval is signed, single-use, and bound by hash to the exact arguments on the card." },
+    { title: "The requester can't approve", text: "Separation of duties compares people, not accounts, so asking on Jira and clicking Approve in Slack is still approving yourself." },
+    { title: "No citation, no claim", text: "Grounding is checked against the records the tools actually returned. A refusal, or a record merely mentioned inside a fetched page, is never evidence." },
+    { title: "Exactly once", text: "Every write is op-keyed and probes the outside world before retrying, so a lost response or a restart never posts twice." },
+    { title: "Fail closed", text: "Unset means less. An unreadable control file means paused, a truncated model reply isn't an answer, and a restriction it can't read gets no reply." },
+    { title: "Held to the conversation", text: "It reads only the thread or channel it was asked in, answers internal Jira comments at the same visibility, and plans can't escape those bounds." },
+    { title: "Stop it now", text: "Admins can pause it, make it read-only, or switch off a single tool, at once and without a redeploy. A pause stops approved-but-pending work too." },
+    { title: "A record you can check", text: "The audit log is hash-chained: an edited, removed or reordered line is detected. A run viewer shows what each answer did and cost." },
+  ],
+
+  timeline: [
+    { when: "August 2026", title: "docloop: a two-agent documentation pipeline", text: "Scribe drafted user docs from PRDs on Jira, behind a human gate. Curator organised an Obsidian vault and answered from it in Slack with citations. Feedback that generalised became house rules, which a human approved before they applied.", tags: ["Scribe", "Curator", "house rules", "Jira", "Slack"] },
+    { when: "27 Sep, early", pr: 2, title: "Platform foundations", text: "Rebuilt as one policy-enforced engine: allow / approve / deny per tool, approvals bound to an argument hash, an event gate that logs its reasons, one lane per conversation, exactly-once effects, and a fail-closed model loop. Plus a round of security fixes.", tags: ["policy", "runtime", "connectors", "security"] },
+    { when: "27 Sep", pr: 3, title: "The Teammate", text: "A general, governed teammate in Slack, with Jira and Confluence connectors, a read-only MCP server, team memory, a weekly digest, a run viewer and hybrid retrieval.", tags: ["Teammate", "MCP", "memory", "observability"] },
+    { when: "27 Sep", pr: 8, title: "Identities, PR checks, first-week hardening", text: "Its own Atlassian and GitHub identities, automatic PR checks, spend caps, memory expiry, and review fixes: internal Jira comments answered privately, failed approvals retryable, restarts recovered.", tags: ["GitHub", "spend caps", "review fixes"] },
+    { when: "27 Sep", pr: 10, title: "Separation of duties across surfaces", text: "People linked across Slack, Jira and GitHub, turns cut off by a restart closed honestly, a total daily cap, and duplicate-safe replies on busy tickets.", tags: ["policy", "reliability"] },
+    { when: "27 Sep", pr: 11, title: "Jira edits and channel catch-up", text: "Move, assign, label and link issues. Channel catch-up, triage of new tickets, and answers to edited mentions. The busiest file split apart.", tags: ["Jira", "Slack", "triage"] },
+    { when: "27 Sep", pr: 12, title: "Plans, reminders, the approvals inbox", text: "One approval for a multi-step plan, approved reminders, sprint reports, release notes, Confluence page trees, /teammate and the File-as-a-ticket shortcut, and an App Home inbox.", tags: ["plans", "reminders", "App Home"] },
+    { when: "27 Sep, late", pr: 13, title: "Production readiness", text: "An admin kill switch, waiting out rate limits, a hash-chained audit log, Confluence attachments, bounded lists that say when they stopped short, and a DM scope fix.", tags: ["kill switch", "audit", "rate limits"] },
+  ],
+
+  findings: [
+    { sev: "High", issue: "A question in an internal Jira comment got a public reply, visible to customers.", fix: "Replies copy the comment's visibility. A restriction it can't read gets no reply at all." },
+    { sev: "High", issue: "A multi-step plan's card showed only the first 400 characters, so a later step's comment body could be approved unseen.", fix: "The card lists every step and every argument. A plan too long for one card is refused, never cut." },
+    { sev: "High", issue: "A plan could schedule reminders in channels other than the one that asked.", fix: "The per-conversation checks are one function, applied to single calls and to every plan step alike." },
+    { sev: "High", issue: "An approved action whose connector failed was stuck for a week with no way to retry.", fix: "The failure is reported in the thread, with a Retry button for approvers." },
+    { sev: "High", issue: "With no approver list set, the Teammate moving a ticket to Approved would have published a doc.", fix: "Another agent's move or comment is never a publish approval." },
+    { sev: "Medium", issue: "A late \"Searching…\" progress update could overwrite the final answer.", fix: "Delivery waits for any update in flight and stops new ones." },
+    { sev: "Medium", issue: "Someone could ask for a change on Jira and approve it themselves from Slack.", fix: "Separation of duties compares linked people, not account ids." },
+    { sev: "Medium", issue: "A redeploy mid-answer left \"Looking into it…\" in the thread forever.", fix: "Open answers are recorded and closed with an honest notice on the next start." },
+  ],
+
+  packages: [
+    { name: "packages/policy", text: "Tiers, approvals bound to an args hash, approver rules, separation of duties, multi-step plans." },
+    { name: "packages/runtime", text: "Events, the gate, per-conversation queue, exactly-once effects, the fail-closed model loop, memory, budgets." },
+    { name: "packages/connectors", text: "Jira, Confluence, Slack and GitHub tools. Allow-listed reads, words instead of query language, validated responses." },
+    { name: "packages/curator", text: "The vault: organising, hybrid retrieval, and the grounding contract every answer passes." },
+    { name: "packages/scribe", text: "Drafting docs from PRDs, the deterministic lint, publishing, and house rules." },
+    { name: "apps/agents", text: "The surfaces: the Slack Teammate, the Jira poller and webhooks, App Home, reminders, admin controls." },
+  ],
+};

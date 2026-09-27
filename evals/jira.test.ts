@@ -384,3 +384,21 @@ describe("the poller sees every matching ticket", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("Jira's JSON is checked where it enters", () => {
+  it("fails loudly, naming the field, when a load-bearing field is missing", async () => {
+    const { parseComments, parseIssue, parseMyself } = await import("@scriptorium/jira");
+    expect(() => parseMyself({ displayName: "Scribe" })).toThrow(/account: accountId/);
+    expect(() => parseIssue({ id: "1", fields: {} })).toThrow(/issue: key/);
+    expect(() => parseComments([{ body: "hi", created: "now" }])).toThrow(/comment list: 0\.id/);
+  });
+
+  it("is lenient about everything it does not depend on", async () => {
+    const { parseComments, parseIssue } = await import("@scriptorium/jira");
+    const issue = parseIssue({ id: "1", key: "DOC-7", fields: { summary: null, customfield_10020: [{ x: 1 }] }, expand: "x" });
+    expect(issue.fields.summary).toBe("");
+    expect((issue.fields as unknown as Record<string, unknown>).customfield_10020).toEqual([{ x: 1 }]);
+    expect(parseComments([{ id: "5", body: null, created: "2026-01-01", author: null }])).toEqual([{ id: "5", body: "", created: "2026-01-01", author: undefined }]);
+    expect(parseComments(undefined)).toEqual([]);
+  });
+});

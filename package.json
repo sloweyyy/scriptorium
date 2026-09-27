@@ -14,7 +14,8 @@
     "jira:doctor": "tsx scripts/jira-doctor.ts",
     "seed:corpus": "tsx scripts/seed-corpus.ts",
     "mcp": "tsx scripts/mcp.ts",
-    "trace": "tsx scripts/trace.ts"
+    "trace": "tsx scripts/trace.ts",
+    "mutate": "tsx scripts/mutate.ts"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",

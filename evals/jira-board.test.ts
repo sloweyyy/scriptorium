@@ -651,3 +651,51 @@ describe("who may approve on Jira", () => {
     expect(comments.at(-1)?.body).toContain("couldn't tell who approved");
   });
 });
+
+describe("a lesson learned on one ticket shapes the next (TODO #6)", () => {
+  const RULE = "Always state the timezone for any scheduled time.";
+
+  async function learnOnDoc1(decision: "approve lesson" | "reject lesson" | null): Promise<void> {
+    const { DISTILL_SYSTEM_PROMPT } = await import("@scriptorium/scribe");
+    vi.mocked(generateText).mockImplementation(async (options: GenerateOptions) =>
+      options.system === DISTILL_SYSTEM_PROMPT ? `LESSON: ${RULE}` : CLEAN_DRAFT,
+    );
+    const settings = config();
+    let clock = 13;
+    const tick = async (...bodies: string[]) => {
+      bodies.forEach((body, index) => comments.push(human(`h${clock}-${index}`, body)));
+      issue = { ...issue, fields: { ...(issue.fields as object), updated: `2026-08-20T${clock++}:00:00.000+0000` } };
+      (await startScribeJira(settings, vault)).stop();
+    };
+    (await startScribeJira(settings, vault)).stop();
+    await tick("always state which timezone the send time uses");
+    await tick("approve");
+    if (decision) await tick(decision);
+  }
+
+  async function draftDoc2(): Promise<string> {
+    vi.mocked(generateText).mockClear();
+    comments = [];
+    issue = { ...issue, key: "DOC-2", id: "2", fields: { ...(issue.fields as object), summary: "Document digest emails", status: { name: "To Do" }, updated: "2026-08-21T09:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    const draftCall = vi.mocked(generateText).mock.calls.find(([options]) => !String((options as GenerateOptions).system).includes("review one piece of feedback"));
+    return String((draftCall?.[0] as GenerateOptions | undefined)?.prompt ?? "");
+  }
+
+  it("an approved lesson from DOC-1 is in DOC-2's draft prompt, and reported as applied", async () => {
+    await learnOnDoc1("approve lesson");
+    const prompt = await draftDoc2();
+    expect(prompt).toContain(RULE);
+    expect(comments.some((comment) => comment.body.includes("L-001"))).toBe(true);
+  });
+
+  it("a lesson left proposed, or rejected, never reaches DOC-2", async () => {
+    await learnOnDoc1(null);
+    expect(await draftDoc2()).not.toContain(RULE);
+  });
+
+  it("a rejected lesson never reaches DOC-2", async () => {
+    await learnOnDoc1("reject lesson");
+    expect(await draftDoc2()).not.toContain(RULE);
+  });
+});

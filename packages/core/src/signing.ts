@@ -39,9 +39,19 @@ export function approvalSigningKey(): string | undefined {
   return process.env.SCRIPTORIUM_SIGNING_KEY || undefined;
 }
 
+/**
+ * A frontmatter value as the string it was written as. An unquoted ISO timestamp — which is
+ * how Obsidian's property editor saves one — parses as a Date; it is still that timestamp.
+ */
+export function frontmatterString(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (value instanceof Date && Number.isFinite(value.getTime())) return value.toISOString();
+  return undefined;
+}
+
 /** The terms a lesson or memory's signature covers, from its frontmatter. */
 export function approvalTerms(frontmatter: Record<string, unknown>): Record<string, string | undefined> {
-  const pick = (key: string) => (typeof frontmatter[key] === "string" ? (frontmatter[key] as string) : undefined);
+  const pick = (key: string) => frontmatterString(frontmatter[key]);
   return { scope: pick("scope"), check_present: pick("check_present"), check_absent: pick("check_absent"), expires_at: pick("expires_at") };
 }
 

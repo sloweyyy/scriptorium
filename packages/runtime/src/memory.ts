@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { approvalSignature, approvalSigningKey, approvalVerified, type ToolSpec, type Vault } from "@scriptorium/core";
+import { approvalSignature, approvalSigningKey, approvalVerified, frontmatterString, type ToolSpec, type Vault } from "@scriptorium/core";
 import { z } from "zod";
 
 /**
@@ -37,8 +37,11 @@ export async function listMemories(vault: Vault, scopes: readonly string[], now 
     // repo webhook, a hand edit): no valid signature, no memory — once a key is configured.
     if (!approvalVerified(note.frontmatter, note.body)) continue;
     // Expired: kept on file as the record, but no longer applied. Re-approval means a new memory.
-    const expiresAt = note.frontmatter.expires_at;
-    if (typeof expiresAt === "string" && Date.parse(expiresAt) <= now.getTime()) continue;
+    // An expiry that is present but unreadable counts as passed: fail closed.
+    if (note.frontmatter.expires_at !== undefined) {
+      const expiresAt = Date.parse(frontmatterString(note.frontmatter.expires_at) ?? "");
+      if (!Number.isFinite(expiresAt) || expiresAt <= now.getTime()) continue;
+    }
     memories.push({ id, scope, text: note.body.trim(), approvedBy: typeof approvedBy === "string" ? approvedBy : undefined, relPath });
   }
   return memories.sort((a, b) => a.id.localeCompare(b.id));

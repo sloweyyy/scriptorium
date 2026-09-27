@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { currentRunId } from "./run";
 
 const exec = promisify(execFile);
 
@@ -14,7 +15,8 @@ export interface AuditEvent {
 /** Append-only JSONL log — one line per gated action, never rewritten. */
 export async function audit(file: string, event: AuditEvent): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.appendFile(file, JSON.stringify({ ts: new Date().toISOString(), ...event }) + "\n");
+  const run = currentRunId();
+  await fs.appendFile(file, JSON.stringify({ ts: new Date().toISOString(), ...(run ? { run } : {}), ...event }) + "\n");
 }
 
 /**

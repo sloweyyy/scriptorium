@@ -14,7 +14,7 @@ export function teammateConfig(input: { selfAccountIds: string[]; approvers: str
     name: "Teammate",
     description: "a governed AI teammate for a product team, working in Slack, Jira and Confluence.",
     selfAccountIds: input.selfAccountIds,
-    skills: ["answer-with-citations", "thread-to-ticket", "readiness-check", "remember", "weekly-digest", "pr-check", "status-update", "channel-catchup", "triage"],
+    skills: ["answer-with-citations", "thread-to-ticket", "readiness-check", "remember", "weekly-digest", "pr-check", "status-update", "channel-catchup", "triage", "release-notes"],
     tools: {
       vault_overview: "allow",
       search_vault: "allow",
@@ -28,6 +28,7 @@ export function teammateConfig(input: { selfAccountIds: string[]; approvers: str
       slack_read_thread: "allow",
       slack_read_channel: "allow",
       github_get_pull: "allow",
+      github_list_merged: "allow",
       jira_comment: write,
       jira_create_issue: write,
       jira_transition: write,

@@ -1,0 +1,45 @@
+name: live-evals
+# The checks that need a real model: grounded Q&A, change-vs-question handoff, the
+# prompt-injection red team, and hybrid retrieval on the golden set. Weekly and on demand,
+# never on every push — they cost tokens, and a model's day-to-day variance is not a
+# reason to block a merge. A red run here is a finding to look at, with the run log.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+permissions:
+  contents: read
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Secrets live only in this protected environment, never in the default CI job.
+    environment: live-evals
+    env:
+      RUN_LLM_EVALS: "1"
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      MODEL: ${{ vars.MODEL }}
+    steps:
+      - name: Skip when no model credential is configured
+        id: gate
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "No ANTHROPIC_API_KEY in the live-evals environment — nothing to run." >> "$GITHUB_STEP_SUMMARY"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true'
+      - uses: pnpm/action-setup@v4
+        if: steps.gate.outputs.run == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        if: steps.gate.outputs.run == 'true'
+      - name: Live evals
+        if: steps.gate.outputs.run == 'true'
+        run: npx vitest run evals/qa.test.ts evals/handoff.test.ts evals/teammate-redteam.test.ts evals/hybrid-retrieval.test.ts

@@ -37,7 +37,7 @@ function config(): AppConfig {
     port: 0,
     scribe: {},
     curator: {},
-    teammate: { channels: [], jiraProjects: [], confluenceSpaces: [], digestWeekday: 1, digestHour: 9 },
+    teammate: { channels: [], jiraProjects: [], confluenceSpaces: [], githubRepos: [], allowDms: false, digestWeekday: 1, digestHour: 9 },
     slack: {},
     sites: {},
     webhook: { jiraSecret: JIRA_SECRET, githubSecret: GITHUB_SECRET, jiraHmacSecret: JIRA_HMAC },
@@ -262,5 +262,84 @@ describe("run viewer", () => {
     } finally {
       await new Promise<void>((resolve) => viewer.close(() => resolve()));
     }
+  });
+});
+
+describe("pull request webhooks", () => {
+  it("hands opened, reopened and ready-for-review PRs to the Teammate — never drafts or other actions", async () => {
+    const { pullRequestFrom } = await import("@scriptorium/agents");
+    const pr = (action: string, draft = false) => ({ action, pull_request: { number: 12, draft, user: { login: "dev" } }, repository: { full_name: "Org/App" } });
+    expect(pullRequestFrom("pull_request", pr("opened"))).toEqual({ repo: "org/app", number: 12, author: "dev" });
+    expect(pullRequestFrom("pull_request", pr("ready_for_review"))).toMatchObject({ number: 12 });
+    expect(pullRequestFrom("pull_request", pr("opened", true))).toBeUndefined();
+    expect(pullRequestFrom("pull_request", pr("closed"))).toBeUndefined();
+    expect(pullRequestFrom("push", pr("opened"))).toBeUndefined();
+  });
+
+  it("a signed pull_request delivery reaches the hook once", async () => {
+    const seen: Array<{ repo: string; number: number }> = [];
+    const hooked = startIngress({ config: config(), hooks: { pullRequest: async (input) => void seen.push(input) } });
+    await new Promise<void>((resolve) => hooked.once("listening", resolve));
+    const at = `http://127.0.0.1:${(hooked.address() as AddressInfo).port}`;
+    try {
+      const body = JSON.stringify({ action: "opened", pull_request: { number: 7, user: { login: "dev" } }, repository: { full_name: "org/app" } });
+      const headers = { ...signed(body), "x-github-event": "pull_request", "x-github-delivery": "pr-1" };
+      await fetch(`${at}/github/webhook`, { method: "POST", headers, body });
+      await fetch(`${at}/github/webhook`, { method: "POST", headers, body });
+      await settle();
+      expect(seen).toMatchObject([{ repo: "org/app", number: 7 }]);
+    } finally {
+      await new Promise<void>((resolve) => hooked.close(() => resolve()));
+    }
+  });
+});
+
+describe("jira comment webhooks", () => {
+  it("parses comment_created into what the Teammate needs, and nothing else", async () => {
+    const { jiraCommentFrom } = await import("@scriptorium/agents");
+    expect(jiraCommentFrom({ webhookEvent: "comment_created", issue: { key: "DOC-7" }, comment: { id: 10001, body: "hi", author: { accountId: "h1" } } })).toEqual({ issueKey: "DOC-7", commentId: "10001", body: "hi", authorId: "h1", restriction: {} });
+    expect(jiraCommentFrom({ webhookEvent: "comment_updated", issue: { key: "DOC-7" }, comment: { id: 1, body: "x" } })).toBeUndefined();
+    expect(jiraCommentFrom({ webhookEvent: "comment_created", issue: { key: "DOC-7" }, comment: { id: 1 } })).toBeUndefined();
+  });
+});
+
+describe("restricted Jira comments", () => {
+  it("carry their visibility or JSM internal flag; a visibility we can't read is not answered", async () => {
+    const { jiraCommentFrom } = await import("@scriptorium/agents");
+    const hook = (comment: Record<string, unknown>) => jiraCommentFrom({ webhookEvent: "comment_created", issue: { key: "SD-1" }, comment: { id: 1, body: "hi", ...comment } });
+    expect(hook({ visibility: { type: "role", value: "Service Desk Team" } })?.restriction).toEqual({ visibility: { type: "role", value: "Service Desk Team" } });
+    expect(hook({ jsdPublic: false })?.restriction).toEqual({ internal: true });
+    expect(hook({ properties: [{ key: "sd.public.comment", value: { internal: true } }] })?.restriction).toEqual({ internal: true });
+    expect(hook({ jsdPublic: true })?.restriction).toEqual({});
+    expect(hook({ visibility: { type: "team", value: 7 } })).toBeUndefined();
+  });
+});
+
+describe("ADF comment bodies", () => {
+  it("keep a pasted issue link (a smart card) as its URL", async () => {
+    const { adfToText } = await import("@scriptorium/agents");
+    const adf = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "is " }, { type: "inlineCard", attrs: { url: "https://x.atlassian.net/browse/DOC-42" } }, { type: "text", text: " ready?" }] }] };
+    expect(adfToText(adf)).toBe("is https://x.atlassian.net/browse/DOC-42 ready?\n");
+  });
+
+  it("are read, mentions included, instead of being dropped", async () => {
+    const { jiraCommentFrom } = await import("@scriptorium/agents");
+    const adf = { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: "tm-1", text: "@Teammate" } }, { type: "text", text: " when do digests go out?" }] }] };
+    expect(jiraCommentFrom({ webhookEvent: "comment_created", issue: { key: "DOC-1" }, comment: { id: "9", body: adf, author: { accountId: "h1" } } })).toEqual({
+      issueKey: "DOC-1",
+      commentId: "9",
+      body: "[~accountid:tm-1] when do digests go out?",
+      authorId: "h1",
+      restriction: {},
+    });
+  });
+});
+
+describe("jira assignment webhooks", () => {
+  it("reads who an issue was assigned to from the changelog", async () => {
+    const { jiraAssignmentFrom } = await import("@scriptorium/agents");
+    expect(jiraAssignmentFrom({ webhookEvent: "jira:issue_updated", issue: { key: "DOC-9" }, changelog: { id: "10500", items: [{ field: "assignee", fieldId: "assignee", to: "tm-1" }] } })).toEqual({ issueKey: "DOC-9", assigneeId: "tm-1", changeId: "10500" });
+    expect(jiraAssignmentFrom({ webhookEvent: "jira:issue_updated", issue: { key: "DOC-9" }, changelog: { items: [{ field: "status", to: "3" }] } })).toBeUndefined();
+    expect(jiraAssignmentFrom({ webhookEvent: "jira:issue_updated", issue: { key: "DOC-9" }, changelog: { items: [{ fieldId: "assignee", to: null }] } })).toBeUndefined();
   });
 });

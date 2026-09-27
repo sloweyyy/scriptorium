@@ -104,6 +104,12 @@ The model is untrusted too. It proposes; the platform decides what runs.
   into the vault (a restore, a docs-repo webhook, a hand edit), it doesn't apply without a
   valid signature. (`packages/core/src/signing.ts`; `evals/approval-signing.test.ts`)
 
+- A Jira comment restricted to a role or group, or marked internal in Jira Service
+  Management, is answered at the same visibility. A restriction it can't read is not
+  answered at all. An approval outcome is said on the ticket only at a visibility the
+  process saw the request asked at. (`apps/agents/src/ingress.ts` `commentRestriction`;
+  `evals/teammate-e2e.test.ts`, mutant in `scripts/mutate.ts`)
+
 ### 8. Record: every action is attributable
 - The audit log is append-only JSONL, and every line inside a run carries the run's id.
   Every publish is a git commit naming its approver. Effects are exactly-once through
@@ -117,13 +123,16 @@ The model is untrusted too. It proposes; the platform decides what runs.
   - `parentId` isn't validated.
   - The vault path guard doesn't resolve symlinks.
   - A card truncates long arguments; the approval is still bound to the full text by hash.
+  - Scribe's own replies on its doc tickets don't yet copy a comment's restriction (the
+    Teammate's do). Keep Scribe's project out of Jira Service Management.
 
 - **Set `SCRIPTORIUM_SIGNING_KEY`.** Without it, approvals are unsigned and the docs repo's
   internal branch is trusted. Rules approved before the key was set are unsigned and stop
   applying once it is set, so re-approve them.
-- Atlassian writes are made with one person's API token. A scoped service-account token
-  would make the agent its own identity in Jira and Confluence.
-- The Teammate acts on Jira only from Slack in v1. Answering inside Jira needs a second
-  Atlassian identity, so it doesn't share Scribe's.
+- Scribe's Atlassian writes still use one person's API token. The Teammate writes only
+  under its own service account (`TEAMMATE_ATLASSIAN_EMAIL`/`_TOKEN`). Without one, its Jira
+  and Confluence tools are read-only: it never borrows another agent's identity to write.
+- The Teammate answers on Jira tickets only under its own Atlassian account, and only when
+  that account is mentioned. It replies once per triggering comment (op-keyed).
 - Prompt-injection resistance is structural and cannot be proved deterministically. It
   needs a live red-team suite behind `RUN_LLM_EVALS`.

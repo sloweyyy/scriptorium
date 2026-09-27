@@ -1,4 +1,4 @@
-import type { ToolSpec, Vault } from "@scriptorium/core";
+import { audit, type ToolSpec, type Vault } from "@scriptorium/core";
 import { buildIndex, enforceGrounding, fileGapNote, parseQaAnswer, qaTools, type GapInput } from "@scriptorium/curator";
 import type { GuardDeps } from "@scriptorium/policy";
 import { assembleAgent, listMemories, memoryTools, renderMemories, runSession, scopesFor, SessionError, type AgentConfig, type Skill } from "@scriptorium/runtime";
@@ -71,7 +71,14 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
 
   let text: string;
   try {
-    text = await runSession({ system, prompt, tools, maxTokens: 4_096 });
+    text = await runSession({
+      system,
+      prompt,
+      tools,
+      maxTokens: 4_096,
+      // Cost on the record, under the run's id: `pnpm trace` shows what each answer cost.
+      onUsage: (usage) => void audit(deps.auditFile, { type: "llm.usage", actor: deps.config.name, ...usage }).catch(() => undefined),
+    });
   } catch (error) {
     if (error instanceof SessionError && error.failure === "round-cap") text = `NOT_IN_KB: ${turn.question}`;
     else if (error instanceof SessionError) return { kind: "refused", text: `I couldn't finish that (${error.failure}), so I won't give a partial answer.` };

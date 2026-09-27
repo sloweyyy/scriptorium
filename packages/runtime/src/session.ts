@@ -34,6 +34,42 @@ export interface SessionOptions {
   maxTokens: number;
   /** Model turns before giving up. Same budget on both providers, so both fail alike. */
   maxRounds?: number;
+  /** What the run cost, summed over every round. Called once, when the loop ends. */
+  onUsage?: (usage: SessionUsage) => void;
+}
+
+/**
+ * Tokens for one session, all rounds. `input` is the TRUE input: the API reports cached
+ * reads and cache writes separately from `input_tokens`, and reading only the latter makes
+ * a cached run look nearly free and an uncached one look the same as a cached one.
+ */
+export interface SessionUsage {
+  provider: string;
+  rounds: number;
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+  output: number;
+}
+
+interface UsageLike {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+}
+
+export function sumUsage(provider: string, usages: readonly (UsageLike | undefined)[]): SessionUsage {
+  const total = { provider, rounds: usages.length, input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+  for (const usage of usages) {
+    const read = usage?.cache_read_input_tokens ?? 0;
+    const write = usage?.cache_creation_input_tokens ?? 0;
+    total.cacheRead += read;
+    total.cacheWrite += write;
+    total.input += (usage?.input_tokens ?? 0) + read + write;
+    total.output += usage?.output_tokens ?? 0;
+  }
+  return total;
 }
 
 export const DEFAULT_MAX_ROUNDS = 12;
@@ -44,7 +80,8 @@ export async function runSession(options: SessionOptions): Promise<string> {
 }
 
 async function runOnClaude(options: SessionOptions, maxRounds: number): Promise<string> {
-  const finalMessage = await anthropic().beta.messages.toolRunner({
+  const provider = llmProvider();
+  const runner = anthropic().beta.messages.toolRunner({
     model: modelId(),
     max_tokens: options.maxTokens,
     system: options.system,
@@ -53,7 +90,23 @@ async function runOnClaude(options: SessionOptions, maxRounds: number): Promise<
     tools: options.tools.map((tool) => betaZodTool({ ...tool, run: (input: unknown) => tool.run(input) })),
     messages: [{ role: "user", content: options.prompt }],
     max_iterations: maxRounds,
+    // Every round resends the same system prompt and tool list; caching them is most of a
+    // multi-round loop's input cost. First-party API only — Vertex is not assumed to take it.
+    ...(provider === "anthropic" ? { cache_control: { type: "ephemeral" as const } } : {}),
   });
+
+  // Iterated, not just awaited, so every round's usage is counted — the final message
+  // carries only the last round's.
+  const usages: Array<UsageLike | undefined> = [];
+  let finalMessage: Awaited<typeof runner>;
+  if (typeof (runner as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function") {
+    for await (const message of runner) usages.push((message as { usage?: UsageLike }).usage);
+    finalMessage = await runner.done();
+  } else {
+    finalMessage = await runner;
+    usages.push((finalMessage as { usage?: UsageLike }).usage);
+  }
+  options.onUsage?.(sumUsage(provider, usages));
 
   // Judge the stop reason BEFORE the text: a truncated or capped turn can still carry text.
   switch (finalMessage.stop_reason) {

@@ -87,7 +87,7 @@ export async function runLessonDecision(
 
   // A house rule shapes every future draft, so deciding one takes at least what publishing
   // one doc takes: a permitted human, on the ticket the rule came from, on a live proposal.
-  const allowed = mayApproveOnJira(ctx.config.jira, ctx.botAccountId, actorAccountId);
+  const allowed = mayApproveOnJira(ctx.config.jira, ctx.botAccountId, actorAccountId, await ctx.otherAgentIds());
   if (!allowed.ok) {
     await say(ctx, key, allowed.reason.replace("publish from this ticket", "decide house rules"));
     return;

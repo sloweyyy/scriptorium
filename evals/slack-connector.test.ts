@@ -142,3 +142,32 @@ describe("where an approval card goes", () => {
     expect(cardTarget(request("jira:issue:DOC-7"), {})).toBeUndefined();
   });
 });
+
+describe("an approval card a person can judge", () => {
+  it("says what will happen, who asked, and the consequence of each button", async () => {
+    const { approvalBlocks, describeRequest } = await import("@scriptorium/connectors");
+    const request = {
+      id: "4f1c2a90-0000", agent: "Teammate", tool: "jira_create_issue", argsHash: "b".repeat(64), key: "slack:thread:C1/1.0",
+      requestedBy: "slack:U1", requestedAt: "", expiresAt: "2026-10-01T09:00:00.000Z", status: "pending" as const,
+      args: { summary: "Digest timezone setting", description: "From the thread." }, summary: "• summary: Digest timezone setting",
+    };
+    expect(describeRequest(request)).toBe("Create a Jira issue: “Digest timezone setting”");
+    const text = JSON.stringify(approvalBlocks(request));
+    expect(text).toContain("Requested by <@U1>");
+    expect(text).toContain("*Approve*: done now, as Teammate · *Reject*: nothing happens");
+    expect(text).toMatch(/<!date\^\d+\^expires/);
+  });
+
+  it("tells the requester when their request is declined", async () => {
+    const { handleApprovalClick, REJECT_ACTION } = await import("@scriptorium/connectors");
+    const { MemoryApprovalStore } = await import("@scriptorium/policy");
+    const store = new MemoryApprovalStore();
+    const envelope = { agent: "Teammate", selfAccountIds: ["slack:UBOT"], tools: { jira_create_issue: { tier: "approve" as const, approvers: ["slack:UPM"] } } };
+    await store.save({ id: "r1", agent: "Teammate", tool: "jira_create_issue", argsHash: "h", key: "slack:thread:C1/1.0", requestedBy: "slack:U1", requestedAt: "", expiresAt: "2099-01-01", status: "pending", summary: "", args: { summary: "X" } });
+    const slack = fakeSlack();
+    await handleApprovalClick(slack.client, store, () => envelope, { action: REJECT_ACTION, requestId: "r1", userId: "UPM", channel: "C1", messageTs: "1.5", threadTs: "1.0" });
+    expect(slack.thread.at(-1)?.text).toMatch(/^<@U1> 🚫 <@UPM> declined: Create a Jira issue/);
+    const refused = await handleApprovalClick(slack.client, store, () => envelope, { action: REJECT_ACTION, requestId: "r1", userId: "U9", channel: "C1" });
+    expect(refused.ok).toBe(false);
+  });
+});

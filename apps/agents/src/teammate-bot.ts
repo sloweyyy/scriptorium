@@ -304,11 +304,17 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         userName: payload.user?.username,
         channel: payload.channel?.id,
         messageTs: payload.message?.ts,
+        threadTs: payload.message?.thread_ts,
       });
       if (!decided.ok || action !== APPROVE_ACTION) return decided.message;
       const request = (await store.all()).find((candidate) => candidate.id === requestId);
       const outcome = await executeApproved(envelope, [...connectorTools, ...memoryTools(vault, config.signingKey)], requestId, guardDepsFor(request?.key ?? ""));
-      const text = outcome.kind === "ran" ? `Done: ${outcome.result}` : `Approved, but not carried out: ${"reason" in outcome ? outcome.reason : outcome.kind}`;
+      const asker = request?.requestedBy?.startsWith("slack:") ? `<@${request.requestedBy.slice("slack:".length)}> ` : "";
+      const text =
+        outcome.kind === "ran"
+          ? `${asker}✅ Done, approved by <@${payload.user?.id}>: ${outcome.result.split("\n")[0]}`
+          : `${asker}⚠️ Approved, but I couldn't carry it out. The approval is kept, so it can be retried.`;
+      if (outcome.kind !== "ran") await audit(config.auditFile, { type: "teammate.approval.not_run", actor: "teammate", request: requestId, outcome: outcome.kind, reason: "reason" in outcome ? outcome.reason : undefined }).catch(() => undefined);
       if (payload.channel?.id) await slack.chat.postMessage({ channel: payload.channel.id, thread_ts: payload.message?.thread_ts ?? payload.message?.ts, text });
       return undefined;
     },

@@ -119,7 +119,7 @@ describe("teammate, end to end", () => {
     expect(await vault.listNotes("_memory")).toHaveLength(0);
 
     expect(await core.onApprovalClick(APPROVE_ACTION, payload("UPM"))).toBeUndefined();
-    expect(posted.at(-1)?.text).toMatch(/^Done: Remembered/);
+    expect(posted.at(-1)?.text).toMatch(/^<@U1> ✅ Done, approved by <@UPM>: Remembered/);
     const [memory] = await vault.listNotes("_memory");
     expect((await vault.readNote(memory!)).frontmatter).toMatchObject({ scope: "channel:C1", status: "approved", approved_by: "UPM" });
 

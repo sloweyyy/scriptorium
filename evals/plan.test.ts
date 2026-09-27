@@ -55,6 +55,27 @@ afterEach(async () => fs.rm(path.dirname(auditFile), { recursive: true, force: t
 
 const steps = (...summaries: string[]) => ({ title: "Meeting follow-ups", steps: summaries.map((summary) => ({ tool: "jira_create_issue", args: { summary } })) });
 
+describe("a plan's card", () => {
+  it("shows every step's every argument — a comment body in step 3 is not hidden behind step 1", async () => {
+    const { summarizePlan } = await import("@scriptorium/policy");
+    const summary = summarizePlan({
+      title: "t",
+      steps: [
+        { tool: "jira_create_issue", args: { summary: "A", description: "x".repeat(600) } },
+        { tool: "jira_labels", args: { key: "DOC-1" } },
+        { tool: "jira_comment", args: { key: "DOC-1", body: "HIDDEN-PAYLOAD <https://evil.example|docs>" } },
+      ],
+    });
+    expect(summary).toContain("Step 3 · jira_comment");
+    expect(summary).toContain("HIDDEN-PAYLOAD <https://evil.example|docs>");
+  });
+
+  it("a plan too long for one card is refused, never cut", () => {
+    const long = { title: "t", steps: Array.from({ length: 10 }, (_, i) => ({ tool: "jira_create_issue", args: { summary: `${"&".repeat(300)} ${i}` } })) };
+    expect(checkPlan(envelope, tools, long)).toMatch(/too long to show on one approval card/);
+  });
+});
+
 describe("a plan", () => {
   it("is refused before a card when a step needs a different approval, doesn't exist, nests, or has bad arguments", () => {
     expect(checkPlan(envelope, tools, steps("A", "B"))).toBeUndefined();
@@ -77,7 +98,8 @@ describe("a plan", () => {
     // Step 2 fails once: the approval is given back; step 1 is not done twice on the retry.
     let calls = 0;
     const flaky = planTool(envelope, [{ ...createIssue, run: async (input, context) => (++calls === 2 && (failNext = true), createIssue.run(input, context)) }, labels, memory]);
-    await expect(executeApproved(envelope, [flaky], request.id, deps)).rejects.toThrow("503");
+    // Step 1 landed before step 2 failed: the error says so, for "nothing was changed" would be false.
+    await expect(executeApproved(envelope, [flaky], request.id, deps)).rejects.toThrow("PARTIAL: 1 of 3 steps done before step 2 failed.");
     const outcome = await executeApproved(envelope, [flaky], request.id, deps);
     expect(outcome.kind).toBe("ran");
     expect(created).toEqual(["A", "B", "C"]);
@@ -86,7 +108,7 @@ describe("a plan", () => {
 
   it("stops at a refusal, and says what was and wasn't done", async () => {
     const partial = await plan.run(steps("A", "refuse me", "C"), { approval: { id: "ap-1" } });
-    expect(partial.split("\n")[0]).toBe("Plan “Meeting follow-ups”: 1 of 3 steps done; step 2 was refused (HR is outside the Jira projects this agent may use.), so nothing after it was run.");
+    expect(partial.split("\n")[0]).toBe("PARTIAL: plan “Meeting follow-ups”: 1 of 3 steps done; step 2 was refused (HR is outside the Jira projects this agent may use.), so nothing after it was run.");
     expect(created).toEqual(["A"]);
     expect(await plan.run(steps("refuse me", "A"), { approval: { id: "ap-2" } })).toMatch(/^NOT_ALLOWED: plan “Meeting follow-ups” stopped at step 1/);
   });

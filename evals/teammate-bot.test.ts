@@ -43,6 +43,14 @@ describe("teammate slack surface", () => {
     expect(refused.notRun).toBe("refused");
     expect(refused.text).not.toContain("Done");
     expect(refused.text).toContain("HR is outside the Jira projects");
+    // A plan part-way: neither "Done" nor "nothing was changed".
+    const partial = outcomeMessages({ kind: "ran", result: "PARTIAL: plan “t”: 1 of 3 steps done; step 2 was refused (x), so nothing after it was run." }, who);
+    expect(partial.notRun).toBe("partial");
+    expect(partial.text).toContain("only partly done: plan “t”: 1 of 3 steps done");
+    expect(partial.text).not.toContain("✅");
+    const failedMidway = outcomeMessages({ kind: "failed", reason: "PARTIAL: 1 of 3 steps done before step 2 failed." }, who);
+    expect(failedMidway.text).toContain("1 of 3 steps are done");
+    expect(failedMidway.text).not.toContain("nothing was changed");
     const failed = outcomeMessages({ kind: "failed", reason: "ECONNRESET at socket.ts:88" }, who);
     expect(failed.notRun).toBe("failed");
     expect(failed.text + failed.origin).not.toContain("ECONNRESET");

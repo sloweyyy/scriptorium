@@ -229,3 +229,14 @@ describe("a plan's card", () => {
     expect(describeRequest(request)).toBe("Carry out a 2-step plan: “Meeting follow-ups”\n1. Create a Jira issue: “Digest timezone”\n2. Change labels on DOC-7: +needs-docs");
   });
 });
+
+describe("an approval card within Slack's limits", () => {
+  it("keeps every section under 3,000 characters after escaping, whatever the text", async () => {
+    const { approvalBlocks } = await import("@scriptorium/connectors");
+    const steps = Array.from({ length: 10 }, (_, i) => ({ tool: "jira_create_issue", args: { summary: `${"&".repeat(118)} ${i}` } }));
+    const request = { id: "r", agent: "Teammate", tool: "propose_plan", argsHash: "h".repeat(64), summary: "s".repeat(2_700), key: "slack:thread:C1/1.0", requestedAt: "", expiresAt: "2030-01-01T00:00:00Z", status: "pending" as const, args: { title: "&".repeat(120), steps } };
+    for (const block of approvalBlocks(request) as Array<{ type: string; text?: { text: string } }>) {
+      if (block.type === "section") expect(block.text!.text.length).toBeLessThanOrEqual(3_000);
+    }
+  });
+});

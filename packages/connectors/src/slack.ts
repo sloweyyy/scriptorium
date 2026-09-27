@@ -247,14 +247,20 @@ export function approvalBlocks(request: ApprovalRequest): unknown[] {
   // so what the approver reads is exactly the text that will run.
   const shown = escapeMrkdwn(request.summary).replace(/```/g, "ˋˋˋ");
   const expires = Math.floor(Date.parse(request.expiresAt) / 1000);
+  // Slack refuses a section over 3,000 characters, counted AFTER escaping. The headline is
+  // shortened at a line break if it must be; the arguments below always show every step.
+  const described = escapeMrkdwn(describeRequest(request));
+  const headline = described.length > 2_000 ? `${described.slice(0, Math.max(described.lastIndexOf("\n", 2_000), 0))}\n…` : described;
   return [
     {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*Approval needed:* ${escapeMrkdwn(describeRequest(request))}\nRequested by ${requesterMention(request)} · *Approve*: done now, as ${escapeMrkdwn(request.agent)} · *Reject*: nothing happens\n\`\`\`${shown}\`\`\``,
+        text: `*Approval needed:* ${headline}\nRequested by ${requesterMention(request)} · *Approve*: done now, as ${escapeMrkdwn(request.agent)} · *Reject*: nothing happens`,
       },
     },
+    // Fenced, in its own section: its own 3,000-character budget.
+    { type: "section", text: { type: "mrkdwn", text: `\`\`\`${shown}\`\`\`` } },
     {
       type: "actions",
       elements: [

@@ -65,6 +65,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/plan.test.ts"],
   },
   {
+    control: "a plan's card shows every step's arguments",
+    file: "packages/policy/src/guard.ts",
+    find: "(tool.name === PLAN_TOOL ? summarizePlan(input) : summarizeArgs(input))",
+    replace: "summarizeArgs(input)",
+    evals: ["evals/plan.test.ts"],
+  },
+  {
     control: "approvals bind to the exact arguments",
     file: "packages/policy/src/approvals.ts",
     find: "request.argsHash === hash &&\n        request.status === \"approved\" &&",

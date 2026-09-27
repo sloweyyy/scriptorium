@@ -238,6 +238,19 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const store = new FileApprovalStore(path.join(stateDir, "approvals.json"));
   const ledger = new FileEffectLedger(path.join(stateDir, "effects.json"));
   const connectorTools = teammateConnectorTools(config, slack, ledger);
+
+  // A turn is in memory only: a restart mid-answer (a deploy, a crash) loses it, and its
+  // "Looking into it…" would stay forever. Each open placeholder is on the ledger; on boot,
+  // any left open is closed with an honest notice instead.
+  const turnOp = (channel: string, ts: string) => opKey("teammate.turn", channel, ts);
+  for (const record of await ledger.inProgress().catch(() => [])) {
+    const meta = record.meta as { kind?: string; channel?: string; ts?: string } | undefined;
+    if (meta?.kind !== "teammate.turn" || !meta.channel || !meta.ts) continue;
+    const closed = await slack.chat
+      .update({ channel: meta.channel, ts: meta.ts, text: "⚠️ I restarted before I finished this, so it wasn't answered and nothing was changed. Please ask again." })
+      .catch(() => undefined);
+    if (closed?.ok) await ledger.put({ ...record, status: "done", completedAt: new Date().toISOString() });
+  }
   const skills = await loadSkills(path.join(config.repoRoot, "skills"));
   const agentConfig = teammateConfig({ selfAccountIds: [self], approvers: (settings.approvers ?? []).map((id) => `slack:${id}`), people: settings.people });
   // Restrict to the connectors actually configured here: a tool the host can't provide is not offered.
@@ -284,6 +297,10 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         const placeholder = !isHelpRequest(text)
           ? await slack.chat.postMessage({ channel, thread_ts: threadTs, text: "🔎 Looking into it…" }).catch(() => undefined)
           : undefined;
+        const open = placeholder?.ts
+          ? { op: turnOp(channel, placeholder.ts), status: "in-progress" as const, startedAt: new Date().toISOString(), meta: { kind: "teammate.turn", channel, ts: placeholder.ts } }
+          : undefined;
+        if (open) await ledger.put(open).catch(() => undefined);
         // Progress updates are fire-and-forget, so one can land AFTER the answer (a slow call,
         // or a 429 retried after its wait) and leave "Searching…" as the final word. Delivery
         // closes the gate and waits for any update already in flight.
@@ -292,11 +309,15 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         const deliver = async (message: string, blocks?: unknown[]): Promise<void> => {
           finished = true;
           await inFlight;
+          const close = async () => {
+            if (open) await ledger.put({ ...open, status: "done", completedAt: new Date().toISOString() }).catch(() => undefined);
+          };
           if (placeholder?.ts) {
             const updated = await slack.chat.update({ channel, ts: placeholder.ts, text: message, ...(blocks ? { blocks: blocks as never } : {}) }).catch(() => undefined);
-            if (updated?.ok) return;
+            if (updated?.ok) return close();
           }
           await slack.chat.postMessage({ channel, thread_ts: threadTs, text: message, ...(blocks ? { blocks: blocks as never } : {}) });
+          await close();
         };
         try {
           const context = text ? await threadContext(slack, channel, threadTs, ts).catch(() => undefined) : undefined;

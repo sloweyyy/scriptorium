@@ -60,7 +60,9 @@ Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
   the effect de-duplication are per-process. Two overlapping instances during a deploy is
   the one remaining way to double a write (see `docs/security-model.md`, known gaps).
 - **Drain on stop.** SIGTERM drains the queues for up to 8 seconds before exiting.
-  Unfinished work resumes on the next start from its durable state.
+  Unfinished work resumes on the next start from its durable state. A Slack question
+  still being answered is not resumed: on the next start its "Looking into it…" becomes
+  a notice asking the person to ask again.
 - **Never share an Atlassian token between agents.** Two agents on one token are one
   identity, and the permission boundary between them is gone.
 

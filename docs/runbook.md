@@ -60,6 +60,7 @@ Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
 | A reminder never arrived | audit `teammate.reminder.failed` / `teammate.reminder.stale` | the bot isn't in the channel (`/invite @Teammate`), or the service was down for over a day — overdue reminders are dropped, not posted late |
 | `/teammate` says "I don't work in this conversation" | `TEAMMATE_SLACK_CHANNELS` | the channel isn't listed, or it's a DM and `TEAMMATE_ALLOW_DMS` is off |
 | The Home tab is empty or missing | the app's manifest | the app was installed before the Home tab was added: reinstall it from `slack-manifests/teammate.yaml` |
+| Slow replies at busy times | nothing, usually | Jira, Confluence or GitHub rate-limited us (429). Calls wait what the service asks, up to 30s over 3 tries, then fail closed as before |
 | The same Jira comment twice | shouldn't happen: writes are op-keyed | check whether two instances are running (see below) |
 
 ## Stop it now

@@ -45,7 +45,11 @@ interface StubComment {
   body: string;
   created: string;
   author: { accountId: string; displayName: string };
+  properties?: unknown;
 }
+
+/** Drop the response to the next comment POST after storing it. */
+let loseNextCommentResponse = false;
 
 let tmpRoot: string;
 let vault: Vault;
@@ -125,14 +129,20 @@ function stubJira(): void {
     if (url.includes("/search")) return json({ issues: [issue] });
     if (url.includes("/comment") && method === "GET") return json({ comments });
     if (url.includes("/comment") && method === "POST") {
-      const body = JSON.parse(String(init?.body ?? "{}")) as { body: string };
+      const body = JSON.parse(String(init?.body ?? "{}")) as { body: string; properties?: unknown };
       const posted: StubComment = {
         id: `bot-${comments.length + 1}`,
         body: body.body,
         created: new Date().toISOString(),
         author: { accountId: "bot-1", displayName: "Scribe" },
+        ...(body.properties ? { properties: body.properties } : {}),
       };
       comments.push(posted);
+      // Jira stored it; the response never arrives. The case exactly-once exists for.
+      if (loseNextCommentResponse) {
+        loseNextCommentResponse = false;
+        throw new TypeError("fetch failed: socket hang up");
+      }
       return json(posted);
     }
     if (url.includes("/transitions") && method === "GET") {
@@ -164,7 +174,9 @@ function stubJira(): void {
 }
 
 function human(id: string, body: string): StubComment {
-  return { id, body, created: "2026-08-20T12:00:00.000+0000", author: { accountId: "human-1", displayName: "Reviewer" } };
+  // Stamped when posted, like Jira: whether an approval is older than the draft it approves is
+  // decided on these times.
+  return { id, body, created: new Date().toISOString(), author: { accountId: "human-1", displayName: "Reviewer" } };
 }
 
 beforeEach(async () => {
@@ -713,5 +725,58 @@ describe("designs the model cannot take", () => {
     const draftComment = comments.find((comment) => comment.body.includes("full-page-4k.png"));
     expect(draftComment?.body).toMatch(/over 3\.8 MB/);
     expect(comments.some((comment) => comment.body.includes("I hit an error"))).toBe(false);
+  });
+});
+
+describe("a crash or an error mid-batch loses nothing and repeats nothing (H4)", () => {
+  const tickWith = async (settings: AppConfig, ...bodies: string[]) => {
+    bodies.forEach((body, index) => comments.push(human(`c${comments.length}-${index}`, body)));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: new Date(Date.now() + comments.length * 1000).toISOString() } };
+    (await startScribeJira(settings, vault)).stop();
+  };
+
+  it("feedback + approve with a failing revise: both survive to the next poll, and the old approval is held", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    vi.mocked(generateText).mockRejectedValueOnce(new Error("model overloaded"));
+    await tickWith(settings, "shorten the intro", "approve");
+    expect(comments.filter((comment) => comment.body.includes("Revised draft"))).toHaveLength(0);
+
+    await tickWith(settings);
+    const bodies = comments.map((comment) => comment.body);
+    expect(bodies.filter((body) => body.includes("Revised draft"))).toHaveLength(1);
+    // The approve was typed before this revision existed: held, not published.
+    expect(bodies.some((body) => body.includes("haven't seen yet"))).toBe(true);
+    expect(bodies.filter((body) => body.includes("*Published* —"))).toHaveLength(0);
+  });
+
+  it("a reply whose response was lost is found on retry, not posted twice", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    loseNextCommentResponse = true;
+    await tickWith(settings, "help");
+    await tickWith(settings);
+    // First sight posts HELP + "Reading this ticket now…"; the answer to `help` is HELP alone.
+    const answers = comments.filter(
+      (comment) => comment.author.accountId === "bot-1" && comment.body.includes("How to work with me") && !comment.body.includes("Reading this ticket now"),
+    );
+    expect(loseNextCommentResponse).toBe(false);
+    expect(answers).toHaveLength(1);
+  });
+
+  it("a command that keeps failing is set aside after three tries, with a note", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    vi.mocked(generateText).mockRejectedValue(new Error("model overloaded"));
+    await tickWith(settings, "draft");
+    await tickWith(settings);
+    await tickWith(settings);
+    expect(comments.some((comment) => comment.body.includes("I tried that 3 times"))).toBe(true);
+    const before = comments.length;
+    await tickWith(settings);
+    // Set aside means set aside: no fourth attempt, no new noise.
+    expect(comments.length).toBe(before);
+    vi.mocked(generateText).mockReset();
+    vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
   });
 });

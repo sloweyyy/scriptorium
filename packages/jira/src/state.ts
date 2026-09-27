@@ -62,6 +62,13 @@ export interface IssueState {
   lastUpdated?: string;
   /** Last failure reported on the ticket, so a repeating error is not commented every poll. */
   lastError?: string;
+  /**
+   * Jira's `created` time of the comment that posted the current draft. An approval older
+   * than this was given to an EARLIER draft and is not an approval of this one.
+   */
+  draftPostedAt?: string;
+  /** A comment whose command keeps failing: retried, but not forever. */
+  failing?: { commentId: string; attempts: number };
   appliedLessons?: string[];
   feedback?: string[];
   /**

@@ -312,7 +312,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       await audit(config.auditFile, { type: "teammate.error", actor: "teammate", key, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
       return { kind: "refused" as const, text: "I couldn't check this pull request, so nothing was posted to it." };
     });
-    await slack.chat.postMessage({ channel, text: `*PR check* — github:${repo}/pull/${number}\n${formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken })}` });
+    await slack.chat.postMessage({ channel, text: `*PR check* — <https://github.com/${repo}/pull/${number}|${repo}#${number}>\n${formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken })}` });
     await audit(config.auditFile, { type: `teammate.pr.${reply.kind}`, actor: "teammate", key, repo, number }).catch(() => undefined);
   }
 

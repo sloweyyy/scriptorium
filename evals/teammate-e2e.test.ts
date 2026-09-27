@@ -149,7 +149,7 @@ describe("automatic PR checks", () => {
     await settle(core);
     const summaries = posted.filter((message) => message.channel === "CPR");
     expect(summaries).toHaveLength(1);
-    expect(summaries[0]?.text).toContain("github:org/app/pull/12");
+    expect(summaries[0]?.text).toContain("<https://github.com/org/app/pull/12|org/app#12>");
     const audit = await fs.readFile(path.join(tmpRoot, "audit.jsonl"), "utf8");
     expect(audit).toContain("PR checks are not configured for this repo");
   });

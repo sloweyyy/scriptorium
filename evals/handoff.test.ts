@@ -74,7 +74,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (tmpRoot) await fs.rm(tmpRoot, { recursive: true, force: true });
+  if (tmpRoot) await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 describe.runIf(runLive)(`telling a change from a question (${provider})`, () => {

@@ -52,7 +52,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await client.close();
-  await fs.rm(tmpRoot, { recursive: true, force: true });
+  await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 const text = (result: Awaited<ReturnType<Client["callTool"]>>) => (result.content as Array<{ text: string }>)[0]?.text ?? "";

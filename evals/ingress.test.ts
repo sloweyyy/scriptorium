@@ -88,7 +88,7 @@ afterEach(async () => {
   // connection to the closed server would carry its request into nowhere (the rare 120s hang).
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
-  await fs.rm(tmpRoot, { recursive: true, force: true });
+  await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 /** The hooks run after the response is sent, so give the event loop a turn. */

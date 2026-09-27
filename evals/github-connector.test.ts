@@ -82,7 +82,7 @@ describe("github connector", () => {
     expect(cited.ungrounded).toBeUndefined();
     const invented = await enforceGrounding(vault, parseQaAnswer("It adds the setting [[github:org/app/pull/13]].", "q"), { usedOverview: false, retrieved: [], records: new Set(["github:org/app/pull/12"]) });
     expect(invented.ungrounded).toBe(true);
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5 });
   });
 });
 

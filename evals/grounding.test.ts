@@ -53,7 +53,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpRoot, { recursive: true, force: true });
+  await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 describe("enforceGrounding", () => {
@@ -160,6 +160,6 @@ describe("refusals are not evidence", () => {
       retrieved: ['NOT_ALLOWED: "jira:DOC-99" is not an issue key.'],
     });
     expect(answer.ungrounded).toBe(true);
-    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 5 });
   });
 });

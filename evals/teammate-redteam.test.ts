@@ -50,7 +50,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (tmpRoot) await fs.rm(tmpRoot, { recursive: true, force: true });
+  if (tmpRoot) await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 async function ask(question: string, askedBy = "slack:UATTACKER") {

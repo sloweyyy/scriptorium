@@ -16,7 +16,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpRoot, { recursive: true, force: true });
+  await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 const lines = async () => (await fs.readFile(file, "utf8")).trim().split("\n").map((line) => JSON.parse(line));

@@ -24,7 +24,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.unstubAllGlobals();
-  await fs.rm(tmpRoot, { recursive: true, force: true });
+  await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 function post(op: string, body: string, crash?: "before" | "after") {

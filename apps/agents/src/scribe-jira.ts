@@ -1120,7 +1120,7 @@ async function runLessonDecision(
   }
 
   if (decision === "approve") {
-    const lesson = await approveLesson(ctx.vault, id, actor);
+    const lesson = await approveLesson(ctx.vault, id, actor, ctx.config.signingKey);
     if (!lesson) {
       await say(ctx, key, `I can't find lesson \`${id}\` in the vault.`);
       return;

@@ -44,11 +44,13 @@ export interface TeammateDeps {
   guardDeps: GuardDeps;
   auditFile: string;
   openTicket?: GapInput["openTicket"];
+  /** Signs approved memories so a restore from the docs repo cannot forge one. */
+  signingKey?: string;
 }
 
 export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): Promise<TeammateReply> {
   const vaultTools = qaTools(deps.vault, await buildIndex(deps.vault));
-  const agent = assembleAgent(deps.config, [...vaultTools, ...memoryTools(deps.vault), ...deps.connectorTools], deps.skills, { ...deps.guardDeps, requestedBy: turn.askedBy });
+  const agent = assembleAgent(deps.config, [...vaultTools, ...memoryTools(deps.vault, deps.signingKey), ...deps.connectorTools], deps.skills, { ...deps.guardDeps, requestedBy: turn.askedBy });
   // Only this channel's and this person's approved memories — never another team's.
   const memory = renderMemories(await listMemories(deps.vault, scopesFor(turn)));
   const system = memory ? `${agent.system}\n\n${memory}` : agent.system;

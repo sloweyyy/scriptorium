@@ -85,6 +85,9 @@ The model is untrusted too. It proposes; the platform decides what runs.
   docs. Curator's behaviour never changes with either.
   (`evals/lesson-gate.test.ts`, `evals/memory.test.ts`, `evals/curator-isolation.test.ts`)
 
+- Approvals are signed with a deployment-only key, which the repository can't forge.
+  (`packages/core/src/signing.ts`; `evals/approval-signing.test.ts`)
+
 ### 8. Record: every action is attributable
 - The audit log is append-only JSONL, and every line inside a run carries the run's id.
   Every publish is a git commit naming its approver. Effects are exactly-once through
@@ -93,8 +96,11 @@ The model is untrusted too. It proposes; the platform decides what runs.
 
 ## Known gaps
 
-- A restore from the internal branch (`vault-live`) trusts lessons already marked
-  approved, so write access to that branch skips the lesson gate.
+- **Set `SCRIPTORIUM_SIGNING_KEY`.** With it, every approved lesson and memory carries an
+  HMAC over (id, status, body, approver), and a restore from the internal branch downgrades
+  any approved note without a valid signature to a proposal, so write access to the branch
+  can't mint a house rule or edit one. Without it, restores trust the branch. Rules approved
+  before the key was set are unsigned, so re-approve them after setting it.
 - Atlassian writes are made with one person's API token. A scoped service-account token
   would make the agent its own identity in Jira and Confluence.
 - The Teammate acts on Jira only from Slack in v1. Answering inside Jira needs a second

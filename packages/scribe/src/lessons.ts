@@ -1,5 +1,5 @@
 import path from "node:path";
-import { docSlug, type Vault } from "@scriptorium/core";
+import { approvalSignature, docSlug, type Vault } from "@scriptorium/core";
 
 const LESSONS_DIR = "_lessons";
 
@@ -133,7 +133,7 @@ export async function saveLesson(vault: Vault, input: NewLesson): Promise<Lesson
 }
 
 /** Lessons are gated too — a human decides what the system is allowed to learn. */
-export async function approveLesson(vault: Vault, id: string, approvedBy: string): Promise<Lesson | undefined> {
+export async function approveLesson(vault: Vault, id: string, approvedBy: string, signingKey?: string): Promise<Lesson | undefined> {
   const lesson = (await listLessons(vault)).find((candidate) => candidate.id === id);
   if (!lesson) return undefined;
   const note = await vault.readNote(lesson.relPath);
@@ -142,6 +142,7 @@ export async function approveLesson(vault: Vault, id: string, approvedBy: string
     status: "approved",
     approved_by: approvedBy,
     approved_at: new Date().toISOString(),
+    ...(signingKey ? { approval_sig: approvalSignature(signingKey, { id, status: "approved", body: note.body, approvedBy }) } : {}),
   });
   return { ...lesson, status: "approved" };
 }

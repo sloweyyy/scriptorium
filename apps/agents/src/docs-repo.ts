@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { docsRepoReady, parseMarkdown, type AppConfig, type Vault } from "@scriptorium/core";
+import { docsRepoReady, parseMarkdown, verifyApprovalSignature, type AppConfig, type Frontmatter, type Vault } from "@scriptorium/core";
 import { docBranchName, docPullRequestBody, installationToken, openPullRequest, publishVault, type PublishToRepoResult } from "@scriptorium/publish";
 
 const exec = promisify(execFile);
@@ -430,6 +430,21 @@ async function syncFromDocsRepoLocked(config: AppConfig, vault: Vault, paths: re
  * being the weaker of the two was the inconsistency, not the fix. Notes the branch does
  * not carry are never touched, and nothing is ever deleted.
  */
+/**
+ * A lesson or memory arriving from the docs repo as `approved` is believed only if it
+ * carries a valid approval signature — the key is in the deployment, never in the repo, so
+ * write access to the branch cannot mint a house rule. Anything else comes back as a
+ * proposal, marked so a human can see why. Without a configured key there is nothing to
+ * verify against, and the branch is trusted as before (see docs/security-model.md).
+ */
+export function untrustedApprovalsDowngraded(relPath: string, frontmatter: Frontmatter, body: string, signingKey: string | undefined): Frontmatter {
+  if (!signingKey || frontmatter.status !== "approved" || !/^_(lessons|memory)\//.test(relPath)) return frontmatter;
+  const id = typeof frontmatter.id === "string" ? frontmatter.id : "";
+  const approvedBy = typeof frontmatter.approved_by === "string" ? frontmatter.approved_by : undefined;
+  if (verifyApprovalSignature(signingKey, { id, status: "approved", body, approvedBy }, frontmatter.approval_sig)) return frontmatter;
+  return { ...frontmatter, status: "proposed", restored_unverified: true };
+}
+
 export async function hydrateVaultFromDocsRepo(config: AppConfig, vault: Vault): Promise<string[]> {
   if (!docsRepoReady(config.docsRepo)) return [];
   return withRepoLock(() => hydrateVaultFromDocsRepoLocked(config, vault));
@@ -464,7 +479,9 @@ async function hydrateVaultFromDocsRepoLocked(config: AppConfig, vault: Vault): 
       // file: the vault round-trips frontmatter through its own serialiser, so a note it
       // wrote itself is never byte-identical to the blob it came from. Comparing raw would
       // rewrite every note on every boot and report the whole vault as restored.
-      const { frontmatter, body } = parseMarkdown(blob.stdout);
+      const parsed = parseMarkdown(blob.stdout);
+      const body = parsed.body;
+      const frontmatter = untrustedApprovalsDowngraded(relPath, parsed.frontmatter, body, config.signingKey);
       const current = await vault.readNote(relPath).catch(() => undefined);
       if (current && current.body === body && JSON.stringify(current.frontmatter) === JSON.stringify(frontmatter)) {
         continue;

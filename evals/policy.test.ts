@@ -232,3 +232,14 @@ describe("concurrency", () => {
     expect(await store.all()).toHaveLength(5);
   });
 });
+
+describe("who may approve when no list is given", () => {
+  it("nobody — a channel's membership is not an approver list; `*` opts in to any human", async () => {
+    const { mayApprove } = await import("@scriptorium/policy");
+    const open: Envelope = { agent: "a", selfAccountIds: ["bot"], tools: {} };
+    expect(mayApprove(open, { tier: "approve" }, { accountId: "anyone" }).ok).toBe(false);
+    expect(mayApprove(open, { tier: "approve", approvers: [] }, { accountId: "anyone" }).ok).toBe(false);
+    expect(mayApprove(open, { tier: "approve", approvers: ["*"] }, { accountId: "anyone" }).ok).toBe(true);
+    expect(mayApprove(open, { tier: "approve", approvers: ["*"] }, { accountId: "bot" }).ok).toBe(false);
+  });
+});

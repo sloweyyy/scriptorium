@@ -77,6 +77,18 @@ function makeSnippet(body: string, query: string): string {
 }
 
 /** BM25 over the whole vault. Curator navigates from hits by reading notes and following wikilinks. */
+/**
+ * Notes no retrieval tool may return: `_memory/` holds per-person and per-channel memories
+ * that are loaded only into their own scope's prompt. Indexed, any question from any
+ * channel — or any MCP client — could read another person's memory by searching for it.
+ */
+export const PRIVATE_FOLDERS = ["_memory/"] as const;
+
+export function isPrivateNote(relPath: string): boolean {
+  const normalized = relPath.replace(/^\.?\/+/, "");
+  return PRIVATE_FOLDERS.some((folder) => normalized.startsWith(folder));
+}
+
 export async function buildIndex(vault: Vault): Promise<VaultIndex> {
   const mini = new MiniSearch<IndexedNote>({
     fields: ["title", "body"],
@@ -90,6 +102,7 @@ export async function buildIndex(vault: Vault): Promise<VaultIndex> {
 
   let size = 0;
   for (const relPath of await vault.listNotes()) {
+    if (isPrivateNote(relPath)) continue;
     const note = await vault.readNote(relPath);
     const title =
       firstHeading(note.body) ??

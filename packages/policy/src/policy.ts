@@ -12,8 +12,9 @@ export type Tier = "allow" | "approve" | "deny";
 export interface ToolRule {
   tier: Tier;
   /**
-   * Account ids allowed to approve this tool. Empty or absent means any human — but never
-   * one of the agent's own accounts, and never the requester when `separateDuties` is set.
+   * Account ids allowed to approve this tool. Empty or absent means NOBODY: a channel's
+   * membership is not an approver list. `["*"]` opts in to "any human" — still never one of
+   * the agent's own accounts, and never the requester when `separateDuties` is set.
    */
   approvers?: readonly string[];
   /** The human who asked for the action may not also approve it (author ≠ approver). */
@@ -63,7 +64,9 @@ export function mayApprove(
   if (envelope.selfAccountIds.includes(approver.accountId)) {
     return { ok: false, reason: "an agent cannot approve its own action" };
   }
-  if (rule.approvers?.length && !rule.approvers.includes(approver.accountId)) {
+  const anyone = rule.approvers?.includes("*") ?? false;
+  if (!rule.approvers?.length) return { ok: false, reason: "no approvers are configured for this action" };
+  if (!anyone && !rule.approvers.includes(approver.accountId)) {
     return { ok: false, reason: `${approver.name ?? approver.accountId} is not an approver for this action` };
   }
   if (rule.separateDuties && requestedBy && requestedBy === approver.accountId) {

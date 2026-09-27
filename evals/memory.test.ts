@@ -69,3 +69,16 @@ describe("team memory", () => {
     expect(await save!.run({ text: "x is y.", scope: "everyone-everywhere" }, { approval: { id: "a", approvedBy: "p" } })).toMatch(/not a memory scope/);
   });
 });
+
+describe("memories are private to their scope", () => {
+  it("no retrieval tool returns a memory — not search, not read_note, not the overview", async () => {
+    const { buildIndex, qaTools } = await import("@scriptorium/curator");
+    await vault.writeNote("_memory/M-1.md", "Priya's salary expectations are private.", { id: "M-1", scope: "person:slack:UPRIYA", status: "approved" });
+    await vault.writeNote("docs/digest.md", "# Digest\n\nOne email a day.", {});
+    const tools = Object.fromEntries(qaTools(vault, await buildIndex(vault)).map((tool) => [tool.name, tool]));
+    expect(await tools.search_vault!.run({ query: "salary private" })).not.toContain("_memory");
+    expect(await tools.read_note!.run({ path: "_memory/M-1" })).toMatch(/^NOT_ALLOWED/);
+    expect(await tools.read_note!.run({ path: "./_memory/M-1.md" })).toMatch(/^NOT_ALLOWED/);
+    expect(await tools.vault_overview!.run({})).not.toContain("_memory");
+  });
+});

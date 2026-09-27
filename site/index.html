@@ -125,6 +125,24 @@
   .step h3 { margin: 0 0 4px; font-size: 15px; }
   .step p { margin: 0; font-size: 14px; color: var(--muted); }
 
+
+  figure.diagram { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px 20px 16px; box-shadow: var(--shadow); }
+  .diagram-scroll { overflow-x: auto; }
+  .diagram svg { display: block; width: 100%; min-width: 860px; height: auto; color: var(--ink); }
+  .diagram figcaption { margin-top: 14px; color: var(--muted); font-size: 14px; max-width: 80ch; }
+  .dg-box { fill: var(--bg); stroke: var(--line); stroke-width: 1.5; }
+  .dg-hot { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; }
+  .dg-title { font: 600 14px Inter, system-ui, sans-serif; fill: currentColor; }
+  .dg-sub { font: 400 11.5px Inter, system-ui, sans-serif; fill: var(--muted); }
+  .dg-kicker { font: 600 11px Inter, system-ui, sans-serif; letter-spacing: .08em; fill: var(--faint); }
+  .dg-label { font: 500 11.5px Inter, system-ui, sans-serif; fill: var(--muted); }
+  .dg-hottext { fill: var(--accent); font-weight: 600; }
+  .dg-line { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+  .dg-hotline { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 4; }
+  .dg-head { fill: var(--muted); }
+  .dg-head-hot { fill: var(--accent); }
+  .dg-tap { stroke: var(--faint); stroke-width: 1; stroke-dasharray: 2 4; }
+
   pre.arch { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; overflow-x: auto; font-size: 13px; line-height: 1.55; margin: 0; }
 
   footer { border-top: 1px solid var(--line); padding: 36px 0 56px; color: var(--faint); font-size: 14px; }
@@ -209,21 +227,95 @@
   <div class="wrap">
     <h2>Architecture</h2>
     <p class="sub">Files and git are the system of record. No database. An agent is configuration on the same engine: its envelope, its skills and its triggers.</p>
-<pre class="arch">Slack · Jira · GitHub webhooks · timers
-        │
-        ▼
-  ingress ─▶ Gate (reasons) ─▶ one lane per conversation ─▶ agent turn
-                                                              │
-         skills (markdown)  ◀── assembleAgent(config) ────────┤
-                                                              ▼
-                              policy: allow / approve / deny per tool
-                              approvals: signed, single-use, bound to the args hash
-                                                              │
-         connectors: Jira · Confluence · Slack · GitHub ◀─────┤  exactly-once effects
-                                                              ▼
-                     grounding: every claim cites a record a tool fetched
-                                                              │
-                     audit log (hash-chained) · run viewer · spend caps</pre>
+<figure class="diagram">
+      <div class="diagram-scroll">
+      <svg viewBox="0 0 1130 580" role="img" aria-label="Every trigger passes a gate into one agent turn; every tool call goes through the policy. Reads fetch records that the answer must cite; writes wait on an approval card for a named person, then run exactly once. Everything lands in a hash-chained audit log.">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="dg-head"/></marker>
+        <marker id="arrow-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="dg-head-hot"/></marker>
+      </defs>
+            <rect class="dg-box" x="20" y="96" width="150" height="52" rx="10"/>
+      <text class="dg-title" x="95.0" y="118" text-anchor="middle">Slack</text>
+      <text class="dg-sub" x="95.0" y="136" text-anchor="middle">mention · DM · command</text>
+      <rect class="dg-box" x="20" y="160" width="150" height="52" rx="10"/>
+      <text class="dg-title" x="95.0" y="182" text-anchor="middle">Jira</text>
+      <text class="dg-sub" x="95.0" y="200" text-anchor="middle">comments · new issues</text>
+      <rect class="dg-box" x="20" y="224" width="150" height="52" rx="10"/>
+      <text class="dg-title" x="95.0" y="246" text-anchor="middle">GitHub</text>
+      <text class="dg-sub" x="95.0" y="264" text-anchor="middle">pull request opened</text>
+      <rect class="dg-box" x="20" y="288" width="150" height="52" rx="10"/>
+      <text class="dg-title" x="95.0" y="310" text-anchor="middle">Timers</text>
+      <text class="dg-sub" x="95.0" y="328" text-anchor="middle">digest · reminders</text>
+      <text class="dg-kicker" x="95" y="80" text-anchor="middle">TRIGGERS</text>
+      <rect class="dg-box" x="220" y="170" width="128" height="100" rx="10"/>
+      <text class="dg-title" x="284" y="208" text-anchor="middle">Gate + lanes</text>
+      <text class="dg-sub" x="284" y="226" text-anchor="middle">drops with a reason</text>
+      <text class="dg-sub" x="284" y="241" text-anchor="middle">one lane per thread</text>
+      <rect class="dg-box" x="396" y="170" width="132" height="100" rx="10"/>
+      <text class="dg-title" x="462" y="208" text-anchor="middle">Agent turn</text>
+      <text class="dg-sub" x="462" y="226" text-anchor="middle">model + skills</text>
+      <text class="dg-sub" x="462" y="241" text-anchor="middle">held to the thread</text>
+      <rect class="dg-box" x="580" y="170" width="140" height="100" rx="10"/>
+      <text class="dg-title" x="650.0" y="208" text-anchor="middle">Policy</text>
+      <text class="dg-sub" x="650.0" y="226" text-anchor="middle">allow · approve · deny</text>
+      <text class="dg-sub" x="650.0" y="241" text-anchor="middle">per tool</text>
+      <rect class="dg-box" x="580" y="40" width="140" height="64" rx="10"/>
+      <text class="dg-title" x="650" y="64" text-anchor="middle">Admin controls</text>
+      <text class="dg-sub" x="650" y="82" text-anchor="middle">pause · read-only</text>
+      <text class="dg-sub" x="650" y="96" text-anchor="middle">switch a tool off</text>
+      <rect class="dg-box" x="780" y="40" width="150" height="64" rx="10"/>
+      <text class="dg-title" x="855.0" y="60" text-anchor="middle">Connectors</text>
+      <text class="dg-sub" x="855.0" y="78" text-anchor="middle">Jira · Confluence · Slack</text>
+      <text class="dg-sub" x="855.0" y="93" text-anchor="middle">GitHub · docs vault</text>
+      <rect class="dg-box" x="960" y="40" width="150" height="64" rx="10"/>
+      <text class="dg-title" x="1035.0" y="68" text-anchor="middle">Grounding</text>
+      <text class="dg-sub" x="1035.0" y="86" text-anchor="middle">claim ⇔ fetched record</text>
+      <rect class="dg-box" x="960" y="178" width="150" height="84" rx="10"/>
+      <text class="dg-title" x="1035.0" y="208" text-anchor="middle">Cited reply</text>
+      <text class="dg-sub" x="1035.0" y="226" text-anchor="middle">or “not in the docs”</text>
+      <text class="dg-sub" x="1035.0" y="241" text-anchor="middle">→ gap ticket</text>
+      <rect class="dg-box" x="780" y="330" width="150" height="64" rx="10"/>
+      <text class="dg-title" x="855.0" y="350" text-anchor="middle">Approval card</text>
+      <text class="dg-sub" x="855.0" y="368" text-anchor="middle">exact arguments</text>
+      <text class="dg-sub" x="855.0" y="383" text-anchor="middle">hash-bound</text>
+      <rect class="dg-box dg-hot" x="960" y="330" width="150" height="64" rx="10"/>
+      <text class="dg-title" x="1035.0" y="350" text-anchor="middle">Named approver</text>
+      <text class="dg-sub" x="1035.0" y="368" text-anchor="middle">signed · single-use</text>
+      <text class="dg-sub" x="1035.0" y="383" text-anchor="middle">never the requester</text>
+      <rect class="dg-box" x="960" y="430" width="150" height="64" rx="10"/>
+      <text class="dg-title" x="1035.0" y="450" text-anchor="middle">Write, once</text>
+      <text class="dg-sub" x="1035.0" y="468" text-anchor="middle">op-keyed · probed</text>
+      <text class="dg-sub" x="1035.0" y="483" text-anchor="middle">retry-safe</text>
+      <rect class="dg-box" x="220" y="522" width="890" height="40" rx="10"/>
+      <text class="dg-title" x="665" y="547" text-anchor="middle">Audit log — hash-chained: every decision, approval, write and run</text>
+      <polyline class="dg-line" points="170,122 218,196" marker-end="url(#arrow)"/>
+      <polyline class="dg-line" points="170,186 218,212" marker-end="url(#arrow)"/>
+      <polyline class="dg-line" points="170,250 218,228" marker-end="url(#arrow)"/>
+      <polyline class="dg-line" points="170,314 218,244" marker-end="url(#arrow)"/>
+      <polyline class="dg-line" points="348,220 394,220" marker-end="url(#arrow)"/>
+      <text class="dg-label" x="371" y="211" text-anchor="middle">event</text>
+      <polyline class="dg-line" points="528,220 578,220" marker-end="url(#arrow)"/>
+      <text class="dg-label" x="553" y="211" text-anchor="middle">calls</text>
+      <polyline class="dg-line" points="650,104 650,168" marker-end="url(#arrow)"/>
+      <text class="dg-label" x="660" y="140" text-anchor="start">narrows</text>
+      <polyline class="dg-line" points="720,200 750,200 750,72 778,72" marker-end="url(#arrow)"/>
+      <text class="dg-label" x="756" y="140" text-anchor="start">allow: read</text>
+      <polyline class="dg-line" points="930,72 958,72" marker-end="url(#arrow)"/>
+      <polyline class="dg-line" points="1035,104 1035,176" marker-end="url(#arrow)"/>
+      <text class="dg-label" x="1043" y="146" text-anchor="start">cited</text>
+      <polyline class="dg-line dg-hotline" points="720,240 750,240 750,362 778,362" marker-end="url(#arrow-hot)"/>
+      <text class="dg-label dg-hottext" x="756" y="300" text-anchor="start">approve: write</text>
+      <polyline class="dg-line dg-hotline" points="930,362 958,362" marker-end="url(#arrow-hot)"/>
+      <polyline class="dg-line dg-hotline" points="1035,394 1035,428" marker-end="url(#arrow-hot)"/>
+      <text class="dg-label dg-hottext" x="1043" y="416" text-anchor="start">approved</text>
+      <text class="dg-label" x="650" y="292" text-anchor="middle">deny: never offered</text>
+      <line class="dg-tap" x1="284" y1="270" x2="284" y2="520"/>
+      <line class="dg-tap" x1="650" y1="300" x2="650" y2="520"/>
+      <line class="dg-tap" x1="1035" y1="494" x2="1035" y2="520"/>
+      </svg>
+      </div>
+      <figcaption>A read goes out to the connectors, and the answer may cite only records they returned. A write takes the lower path: an approval card, a named person who is not the requester, then one exactly-once write. Admin controls can only narrow the policy, and every step is recorded in the audit log.</figcaption>
+    </figure>
     <div class="grid" id="packages" style="margin-top:16px"></div>
   </div>
 </section>

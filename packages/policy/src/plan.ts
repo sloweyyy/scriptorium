@@ -1,5 +1,6 @@
 import type { ToolRunContext, ToolSpec } from "@scriptorium/core";
 import { z } from "zod";
+import { summarizeArgs } from "./guard";
 import type { Envelope, ToolRule } from "./policy";
 
 /**
@@ -29,6 +30,41 @@ function sameRule(a: ToolRule | undefined, b: ToolRule | undefined): boolean {
   return approvers(a) === approvers(b) && Boolean(a.separateDuties) === Boolean(b.separateDuties);
 }
 
+/**
+ * What the approver reads for a plan: every step, and every argument of it (each capped as
+ * a single call's would be). A whole plan's arguments as one JSON field, cut at 400
+ * characters, hid step 3's comment body behind step 1's — approved unseen.
+ */
+export function summarizePlan(input: unknown): string {
+  const parsed = Plan.safeParse(input);
+  if (!parsed.success) return summarizeArgs(input);
+  return parsed.data.steps
+    .map((step, index) => `Step ${index + 1} · ${step.tool}\n${summarizeArgs(step.args, 400, Number.POSITIVE_INFINITY)}`)
+    .join("\n");
+}
+
+/** Room the card has for the plan's text, as Slack counts it (after `&<>` are escaped). */
+export const PLAN_CARD_CHARS = 2_800;
+
+function escapedLength(text: string): number {
+  return text.length + (text.match(/&/g)?.length ?? 0) * 4 + (text.match(/[<>]/g)?.length ?? 0) * 3;
+}
+
+/**
+ * A step failed after earlier ones landed. The approval is given back, and a retry resumes
+ * at the failed step — but "nothing was changed" would be false, so the count travels.
+ */
+export class PlanPartialError extends Error {
+  constructor(
+    readonly done: number,
+    readonly total: number,
+    readonly failedStep: number,
+    cause: unknown,
+  ) {
+    super(`PARTIAL: ${done} of ${total} steps done before step ${failedStep} failed.`, { cause });
+  }
+}
+
 /** Why this plan can't be proposed, or undefined when it can. */
 export function checkPlan(envelope: Envelope, tools: readonly ToolSpec[], input: unknown): string | undefined {
   const parsed = Plan.safeParse(input);
@@ -41,6 +77,8 @@ export function checkPlan(envelope: Envelope, tools: readonly ToolSpec[], input:
     if (!sameRule(envelope.tools[step.tool], rule)) return `step ${index + 1} (${step.tool}) needs its own approval; it can't be part of a plan.`;
     if (!tool.inputSchema.safeParse(step.args).success) return `step ${index + 1} (${step.tool}) has arguments that tool doesn't accept.`;
   }
+  // Every step must be readable on the card; a plan that doesn't fit is split, never cut.
+  if (escapedLength(summarizePlan(input)) > PLAN_CARD_CHARS) return "the plan is too long to show on one approval card; split it into smaller plans.";
   return undefined;
 }
 
@@ -60,12 +98,18 @@ export function planTool(envelope: Envelope, tools: readonly ToolSpec[]): ToolSp
         const tool = tools.find((candidate) => candidate.name === step.tool) as ToolSpec;
         const approval = context?.approval ? { ...context.approval, id: `${context.approval.id}#${index + 1}` } : undefined;
         // A throw propagates: the guard gives the approval back and a retry resumes here.
-        const result = await tool.run(step.args, approval ? { approval } : undefined);
+        let result: string;
+        try {
+          result = await tool.run(step.args, approval ? { approval } : undefined);
+        } catch (error) {
+          if (done) throw new PlanPartialError(done, steps.length, index + 1, error);
+          throw error;
+        }
         const first = result.split("\n")[0] ?? "";
         if (/^NOT_ALLOWED\b/.test(result)) {
           const reason = first.replace(/^NOT_ALLOWED:\s*/, "");
           const head = done
-            ? `Plan “${title}”: ${done} of ${steps.length} steps done; step ${index + 1} was refused (${reason}), so nothing after it was run.`
+            ? `PARTIAL: plan “${title}”: ${done} of ${steps.length} steps done; step ${index + 1} was refused (${reason}), so nothing after it was run.`
             : `NOT_ALLOWED: plan “${title}” stopped at step 1 (${reason}); nothing was done.`;
           return [head, ...lines].join("\n");
         }

@@ -113,7 +113,9 @@ The model is untrusted too. It proposes; the platform decides what runs.
 - A plan (`propose_plan`) is one approval for several writes, bound by the args hash to the
   ordered steps. It can only hold steps whose own rule is the plan's rule (same approvers,
   same separation of duties), so approving it is what approving each step would have been.
-  A plan that breaks this is refused before a card exists. Each step op-keys on the
+  A plan that breaks this is refused before a card exists. The card lists every step and
+  every one of its arguments, and a plan too long for one card is refused, never cut. A
+  plan that stops part-way says how many steps landed. Each step op-keys on the
   approval id plus its position, so a retry never repeats one. (`packages/policy/src/plan.ts`;
   `evals/plan.test.ts`, mutant in `scripts/mutate.ts`)
 

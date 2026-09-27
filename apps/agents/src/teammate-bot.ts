@@ -325,9 +325,12 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     // Citations as Jira links, not raw `[[wikilinks]]` — the same resolver Slack answers use.
     const citations = reply.kind === "answer" ? reply.citations : [];
     const links = citationLinks(await resolveCitations(vault, config, citations));
-    const linked = reply.text.replace(/\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/g, (whole, target: string) => {
-      const url = links.get(target.trim());
-      return url ? `[${target.trim()}](${url})` : target.trim();
+    // `[[docs/x.md]]` resolves as `docs/x`, and `[[docs/x|Digest emails]]` keeps its label.
+    const linked = reply.text.replace(/\[\[([^\]|#]+)(#[^\]|]*)?(?:\|([^\]]*))?\]\]/g, (_whole, raw: string, _heading: string | undefined, alias: string | undefined) => {
+      const target = raw.trim();
+      const label = alias?.trim() || target;
+      const url = links.get(target) ?? links.get(target.replace(/\.md$/, ""));
+      return url ? `[${label}](${url})` : label;
     });
     const body = markdownToJira(`${linked}\n\n_AI-generated — verify before acting · run ${(currentRunId() ?? "").slice(0, 8)}_`);
     const op = opKey("teammate.jira.reply", issueKey, commentId);

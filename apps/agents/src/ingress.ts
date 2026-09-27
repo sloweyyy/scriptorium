@@ -83,9 +83,11 @@ export interface JiraCommentEvent {
  */
 export function adfToText(node: unknown): string {
   if (!node || typeof node !== "object") return "";
-  const n = node as { type?: string; text?: string; attrs?: { id?: string }; content?: unknown[] };
+  const n = node as { type?: string; text?: string; attrs?: { id?: string; url?: string }; content?: unknown[] };
   if (n.type === "text") return n.text ?? "";
   if (n.type === "mention") return n.attrs?.id ? `[~accountid:${n.attrs.id}]` : "";
+  // A pasted issue or page link becomes a smart card: keep its URL, or "is DOC-42 ready?" reads "is  ready?".
+  if (n.type === "inlineCard" || n.type === "blockCard") return n.attrs?.url ?? "";
   if (n.type === "hardBreak") return "\n";
   const inner = (n.content ?? []).map(adfToText).join("");
   return n.type === "paragraph" || n.type === "heading" || n.type === "listItem" ? `${inner}\n` : inner;

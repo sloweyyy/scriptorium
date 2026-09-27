@@ -206,7 +206,9 @@ describe("the Teammate on Jira", () => {
     await settle(core);
 
     expect(comments).toHaveLength(1);
-    expect(comments[0]?.body).toContain("docs/digest-emails");
+    // A Jira link to the doc, not a raw [[wikilink]].
+    expect(comments[0]?.body).toContain("[docs/digest-emails|https://docs.example/digest-emails]");
+    expect(comments[0]?.body).not.toContain("[[");
     expect(comments[0]?.body).toContain("AI-generated");
     expect(posted).toHaveLength(0);
   });

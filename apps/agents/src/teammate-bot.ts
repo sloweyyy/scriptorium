@@ -244,7 +244,14 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         const placeholder = !isHelpRequest(text)
           ? await slack.chat.postMessage({ channel, thread_ts: threadTs, text: "🔎 Looking into it…" }).catch(() => undefined)
           : undefined;
+        // Progress updates are fire-and-forget, so one can land AFTER the answer (a slow call,
+        // or a 429 retried after its wait) and leave "Searching…" as the final word. Delivery
+        // closes the gate and waits for any update already in flight.
+        let finished = false;
+        let inFlight: Promise<unknown> = Promise.resolve();
         const deliver = async (message: string, blocks?: unknown[]): Promise<void> => {
+          finished = true;
+          await inFlight;
           if (placeholder?.ts) {
             const updated = await slack.chat.update({ channel, ts: placeholder.ts, text: message, ...(blocks ? { blocks: blocks as never } : {}) }).catch(() => undefined);
             if (updated?.ok) return;
@@ -266,9 +273,9 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
           let lastProgress = 0;
           const onTool = (tool: string): void => {
             const now = Date.now();
-            if (!placeholder?.ts || now - lastProgress < 2_000) return;
+            if (finished || !placeholder?.ts || now - lastProgress < 2_000) return;
             lastProgress = now;
-            void slack.chat.update({ channel, ts: placeholder.ts, text: progressText(tool) }).catch(() => undefined);
+            inFlight = slack.chat.update({ channel, ts: placeholder.ts, text: progressText(tool) }).catch(() => undefined);
           };
           const reply = await runTeammateTurn(
             { question: text, askedBy: event.actor.id, channel, threadTs, context },

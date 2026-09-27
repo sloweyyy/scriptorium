@@ -37,6 +37,8 @@ let tmpRoot: string;
 let vault: Vault;
 let posted: Posted[];
 let progressUpdates: string[] = [];
+/** How long a progress update takes to land (a slow call, or a 429 retried later). */
+let progressDelayMs = 0;
 
 /** Posted messages, as they read NOW: an update replaces the text of the message it targets. */
 const slack = {
@@ -46,7 +48,10 @@ const slack = {
       return { ok: true, ts: `9.${posted.length}` };
     },
     update: async (args: { ts: string; text: string; blocks?: unknown[] }) => {
-      if (args.text.startsWith("🔎")) progressUpdates.push(args.text);
+      if (args.text.startsWith("🔎")) {
+        progressUpdates.push(args.text);
+        if (progressDelayMs) await new Promise((resolve) => setTimeout(resolve, progressDelayMs));
+      }
       const index = Number(args.ts.split(".")[1]) - 1;
       if (posted[index]) posted[index] = { ...posted[index]!, text: args.text, blocks: args.blocks };
       return { ok: true };
@@ -77,6 +82,7 @@ beforeEach(async () => {
   await vault.writeNote("docs/digest-emails.md", "# Digest emails\n\nSent at 09:00 in the subscriber's timezone.", { feature: "Digest emails" });
   posted = [];
   progressUpdates = [];
+  progressDelayMs = 0;
 });
 
 afterEach(async () => {
@@ -102,6 +108,17 @@ describe("teammate, end to end", () => {
     expect(progressUpdates).toContain("🔎 Searching our docs…");
     const audit = await fs.readFile(path.join(tmpRoot, "audit.jsonl"), "utf8");
     expect(audit).toContain('"type":"teammate.ignored"');
+  });
+
+  it("a progress update that lands late never overwrites the answer", async () => {
+    progressDelayMs = 50;
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 local time [[docs/digest-emails]]." };
+    await core.onMention({ channel: "C1", ts: "1.0", user: "U1", text: "<@UBOT> when are digests sent?" });
+    await settle(core);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(progressUpdates).toHaveLength(1);
+    expect(posted[0]?.text).toContain("docs/digest-emails");
   });
 
   it("a memory it asks to keep waits on a card; a listed approver's click carries it out, once", async () => {

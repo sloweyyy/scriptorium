@@ -143,6 +143,8 @@ export interface CardRouting {
   prChannel?: string;
   /** The thread a conversation already has in its channel (a PR check's summary), if any. */
   threadFor?: (key: string) => string | undefined;
+  /** Told where each card landed, so it can be linked to later (an approvals inbox). */
+  onPosted?: (request: ApprovalRequest, where: { channel: string; ts: string }) => Promise<void> | void;
 }
 
 /**
@@ -177,6 +179,8 @@ export class SlackApprovalChannel implements ApprovalChannel {
     if (!target) throw new Error("no Slack channel to post the approval card in");
     const posted = await this.client.chat.postMessage({ ...target, text: `Approval needed: ${escapeMrkdwn(request.tool)}`, blocks: approvalBlocks(request) as never });
     if (!posted.ok) throw new Error(`Slack refused the approval card: ${posted.error ?? "unknown error"}`);
+    // Best-effort bookkeeping: the card is posted either way.
+    if (posted.ts) await Promise.resolve(this.routing.onPosted?.(request, { channel: posted.channel ?? target.channel, ts: posted.ts })).catch(() => undefined);
   }
 }
 

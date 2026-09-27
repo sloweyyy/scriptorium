@@ -5,6 +5,8 @@ display_information:
   background_color: "#2D3A8C"
 features:
   app_home:
+    # The approvals inbox: what is waiting for you, linked to each card (read-only).
+    home_tab_enabled: true
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
   bot_user:
@@ -37,6 +39,7 @@ settings:
     bot_events:
       - app_mention
       - message.im
+      - app_home_opened
   # Approval cards: Approve / Reject buttons.
   interactivity:
     is_enabled: true

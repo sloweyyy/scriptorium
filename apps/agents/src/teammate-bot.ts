@@ -107,6 +107,30 @@ export async function threadContext(slack: SlackClient, channel: string, threadT
   return lines.length ? lines.join("\n") : undefined;
 }
 
+/** "help", "what can you do", or an empty mention: answered from a fixed card, no model call. */
+export function isHelpRequest(text: string): boolean {
+  return !text.trim() || /^(help|\?|what can you do\??|how do (i|you) use (this|you)\??)$/i.test(text.trim());
+}
+
+/**
+ * The capabilities card: what to ask, and the one rule a new user must know — writes wait
+ * for a named approver. Fixed text, so first contact never depends on a model.
+ */
+export function helpText(settings: { approvers?: readonly string[]; channels: readonly string[] }): string {
+  const approvers = (settings.approvers ?? []).map((id) => `<@${id}>`).join(", ") || "nobody yet (writes are off)";
+  return [
+    "*I'm the Teammate.* I answer from our docs, Confluence and Jira — always with sources — and I can file and update things for you.",
+    "",
+    "Try:",
+    "• _When do digest emails go out?_",
+    "• _Is DOC-42 ready to start?_",
+    "• _Make a ticket for this_ (in a thread — I read it first)",
+    "• _Remember that release notes go out on Thursdays_",
+    "",
+    `Anything I *write* (a ticket, a comment, a page, a memory) waits for an approver: ${approvers}. If our docs don't cover something, I say so instead of guessing, and ask for it to be written.`,
+  ].join("\n");
+}
+
 export function formatReply(reply: TeammateReply, runId?: string, viewer?: { baseUrl?: string; token?: string }): string {
   const body = toSlackMrkdwn(reply.text);
   const ticket = reply.kind === "gap" && reply.ticket ? `\nRequest: <${reply.ticket.url}|${reply.ticket.key}>` : "";
@@ -190,7 +214,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         // those deliveries are already marked seen, so Slack's redelivery would not bring them back.
         // Acknowledge at once, then turn that same message into the answer: the asker sees the
         // agent is on it, and the thread gets one reply rather than a placeholder plus an answer.
-        const placeholder = text
+        const placeholder = !isHelpRequest(text)
           ? await slack.chat.postMessage({ channel, thread_ts: threadTs, text: "🔎 Looking into it…" }).catch(() => undefined)
           : undefined;
         const deliver = async (message: string, blocks?: unknown[]): Promise<void> => {
@@ -202,9 +226,11 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         };
         try {
           const context = text ? await threadContext(slack, channel, threadTs, ts).catch(() => undefined) : undefined;
-          const reply = text
-            ? await runTeammateTurn({ question: text, askedBy: event.actor.id, channel, threadTs, context }, turnDeps(key))
-            : ({ kind: "action", text: "Hi — ask me about the product, a page or a ticket, or ask me to file one." } as const);
+          if (isHelpRequest(text)) {
+            await deliver(helpText(settings));
+            return;
+          }
+          const reply = await runTeammateTurn({ question: text, askedBy: event.actor.id, channel, threadTs, context }, turnDeps(key));
           const textOut = formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken });
           // An answer's sources are the point of the product: render them as links, the way
           // Curator does — vault notes to their site, Jira/Confluence/GitHub to their pages.
@@ -291,7 +317,16 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     async onDirectMessage(message) {
       // A DM is a conversation with the Teammate by definition: no mention needed. Other
       // bots, edits and joins arrive as subtypes and are never questions.
-      if (!settings.allowDms || message.channel_type !== "im" || message.subtype || message.bot_id) return;
+      if (message.channel_type !== "im" || message.subtype || message.bot_id) return;
+      if (!settings.allowDms) {
+        // Silence reads as broken. Say once per DM where to ask instead — never answer here.
+        const where = settings.channels.length ? `<#${settings.channels[0]}>` : "a channel I've been added to";
+        await once(ledger, opKey("teammate.dm.pointer", message.channel), async () => {
+          await slack.chat.postMessage({ channel: message.channel, text: `I don't answer direct messages here — mention me in ${where} and I'll help there.` });
+          return true;
+        }).catch(() => undefined);
+        return;
+      }
       await core.onMention(message);
     },
 

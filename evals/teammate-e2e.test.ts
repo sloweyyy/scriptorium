@@ -160,8 +160,12 @@ describe("direct messages", () => {
     script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]." };
     const off = await createTeammate(config(), vault, slack as never, "UBOT");
     await off.onDirectMessage({ channel: "D1", channel_type: "im", ts: "1.0", user: "U1", text: "when are digests sent?" });
+    await off.onDirectMessage({ channel: "D1", channel_type: "im", ts: "1.1", user: "U1", text: "hello?" });
     await settle(off);
-    expect(posted).toHaveLength(0);
+    // DMs off: one pointer to where it does answer, never an answer, never a second pointer.
+    expect(posted).toHaveLength(1);
+    expect(posted[0]?.text).toContain("mention me in <#C1>");
+    posted.length = 0;
 
     const on = await createTeammate({ ...config(), teammate: { ...config().teammate, allowDms: true } } as AppConfig, vault, slack as never, "UBOT");
     await on.onDirectMessage({ channel: "D1", channel_type: "im", ts: "2.0", user: "U1", text: "when are digests sent?" });
@@ -205,5 +209,21 @@ describe("the Teammate on Jira", () => {
     expect(comments[0]?.body).toContain("docs/digest-emails");
     expect(comments[0]?.body).toContain("AI-generated");
     expect(posted).toHaveLength(0);
+  });
+});
+
+describe("first contact", () => {
+  it("an empty mention or 'help' gets the capabilities card, with no model call", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [], reply: "SHOULD NOT BE CALLED" };
+    await core.onMention({ channel: "C1", ts: "8.0", user: "U1", text: "<@UBOT>" });
+    await core.onMention({ channel: "C1", ts: "8.1", user: "U1", text: "<@UBOT> help" });
+    await settle(core);
+    expect(posted).toHaveLength(2);
+    for (const message of posted) {
+      expect(message.text).toContain("I'm the Teammate");
+      expect(message.text).toContain("waits for an approver: <@UPM>");
+      expect(message.text).not.toContain("SHOULD NOT BE CALLED");
+    }
   });
 });

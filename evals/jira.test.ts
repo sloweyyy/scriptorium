@@ -317,6 +317,9 @@ describe("mayApproveOnJira", () => {
     const { mayApproveOnJira } = await import("@scriptorium/agents");
     expect(mayApproveOnJira({}, "bot", undefined).ok).toBe(false);
     expect(mayApproveOnJira({}, "bot", "bot").ok).toBe(false);
+    // The Teammate's transition or comment is never a publish approval, approvers or not.
+    expect(mayApproveOnJira({}, "bot", "tm-1", ["tm-1"]).ok).toBe(false);
+    expect(mayApproveOnJira({}, "bot", "human-1", ["tm-1"]).ok).toBe(true);
     expect(mayApproveOnJira({}, "bot", "anyone").ok).toBe(true);
     expect(mayApproveOnJira({ approvers: ["pm"] }, "bot", "anyone").ok).toBe(false);
     expect(mayApproveOnJira({ approvers: ["pm"] }, "bot", "pm").ok).toBe(true);

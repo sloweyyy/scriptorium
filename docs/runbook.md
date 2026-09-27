@@ -17,7 +17,7 @@ Every one of these fails closed: unset means *less* is allowed, never more.
 | `SCRIBE_SLACK_APPROVERS` | the Slack "Approve & publish" button is off | Slack user ids |
 | `TEAMMATE_APPROVERS` | no Teammate write can be approved | Slack user ids |
 | `TEAMMATE_SLACK_CHANNELS` | the Teammate answers nowhere | channel ids, and `/invite @Teammate` in each |
-| `TEAMMATE_ATLASSIAN_EMAIL` / `_TOKEN` | the Teammate reads Jira and Confluence but can't write | a service account with access to only the allowed projects and spaces |
+| `TEAMMATE_ATLASSIAN_EMAIL` / `_TOKEN` | the Teammate reads Jira and Confluence but can't write | a service account with access to only the allowed projects and spaces. Its project role needs Add Comments, Create, Edit, Transition, Assign and Link Issues; `jira_assign` also needs the global *Browse users and groups* permission |
 | `TEAMMATE_JIRA_PROJECTS` / `TEAMMATE_CONFLUENCE_SPACES` | Jira defaults to `JIRA_PROJECT_KEY`; no Confluence | the keys it may read (and, with approval, write) |
 | `TEAMMATE_GITHUB_APP_ID` / `_KEY` / `_REPOS` | no GitHub | the Teammate's own GitHub App, and the `owner/name` repos it may read |
 | `TEAMMATE_PR_CHANNEL` | PRs are never checked automatically | a channel for PR-check summaries; each check's approval card threads under its summary |
@@ -25,6 +25,7 @@ Every one of these fails closed: unset means *less* is allowed, never more.
 | `TEAMMATE_MEMORY_DAYS` | memories lapse after 180 days | days; the expiry is signed with the approval |
 | `TEAMMATE_PEOPLE` | a request made on Jira or GitHub can be approved in Slack by the same person | each approver's Slack, Jira and GitHub accounts, linked (`slack:U1=jira:abc=github:dev; …`) |
 | `TEAMMATE_DAILY_TOKENS` | no spend cap | tokens per UTC day for each channel, Jira project and PR repo; over it the Teammate answers with a notice and no model call |
+| `TEAMMATE_TRIAGE_PROJECTS` | no triage of new tickets | project keys (not Scribe's doc project); the Jira webhook must send *Issue created*. `TEAMMATE_TRIAGE_PER_HOUR` (20) caps each project |
 | `TEAMMATE_DAILY_TOKENS_TOTAL` | no overall cap: each DM is its own scope, so N people each get the full per-scope cap | tokens per UTC day across everything |
 | `TRACE_TOKEN` + `PUBLIC_BASE_URL` | no run viewer, so replies show a bare run id | a long random token and the service URL |
 

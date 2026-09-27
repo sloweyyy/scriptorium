@@ -59,6 +59,8 @@ export interface IngressHooks {
   jiraComment?: (input: JiraCommentEvent) => Promise<void>;
   /** A Jira issue was assigned to someone — the Teammate acts if it is the assignee. */
   jiraAssigned?: (input: { issueKey: string; assigneeId: string; changeId: string }) => Promise<void>;
+  /** A new issue — triaged by the Teammate in the projects that opted in. */
+  jiraCreated?: (input: { issueKey: string; reporterId?: string }) => Promise<void>;
 }
 
 /** `jira:issue_updated` whose changelog moved the assignee: who to, and the change's id. */
@@ -68,6 +70,13 @@ export function jiraAssignmentFrom(payload: unknown): { issueKey: string; assign
   const change = body.changelog?.items?.find((item) => item.fieldId === "assignee" || item.field === "assignee");
   if (!change?.to) return undefined;
   return { issueKey: body.issue.key, assigneeId: change.to, changeId: String(body.changelog?.id ?? `${body.issue.key}:${change.to}`) };
+}
+
+/** A new issue (`jira:issue_created`): what triage needs. */
+export function jiraCreatedFrom(payload: unknown): { issueKey: string; reporterId?: string } | undefined {
+  const body = payload as { webhookEvent?: string; issue?: { key?: string; fields?: { reporter?: { accountId?: string } | null } } };
+  if (body.webhookEvent !== "jira:issue_created" || typeof body.issue?.key !== "string") return undefined;
+  return { issueKey: body.issue.key, reporterId: body.issue.fields?.reporter?.accountId };
 }
 
 export interface JiraCommentEvent {
@@ -116,10 +125,12 @@ export function adfToText(node: unknown): string {
   return n.type === "paragraph" || n.type === "heading" || n.type === "listItem" ? `${inner}\n` : inner;
 }
 
-/** A `comment_created` webhook as the fields the Teammate needs; anything else is not one. */
+/** A `comment_created` or `comment_updated` webhook as the fields the Teammate needs; anything else is not one. */
 export function jiraCommentFrom(payload: unknown): JiraCommentEvent | undefined {
   const body = payload as { webhookEvent?: string; issue?: { key?: string }; comment?: { id?: string | number; body?: unknown; author?: { accountId?: string } } };
-  if (body.webhookEvent !== "comment_created") return undefined;
+  // An edit counts too: adding the forgotten @mention is how people fix a question. The
+  // reply is op-keyed per comment, so an edit to a comment already answered stays answered once.
+  if (body.webhookEvent !== "comment_created" && body.webhookEvent !== "comment_updated") return undefined;
   const issueKey = body.issue?.key;
   const commentId = body.comment?.id;
   const raw = body.comment?.body;
@@ -341,6 +352,10 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
         const assignment = jiraAssignmentFrom(payload);
         if (assignment && hooks.jiraAssigned) {
           await hooks.jiraAssigned(assignment).catch((error: unknown) => console.warn(`[ingress] teammate assignment ${assignment.issueKey}: ${error instanceof Error ? error.message : error}`));
+        }
+        const created = jiraCreatedFrom(payload);
+        if (created && hooks.jiraCreated) {
+          await hooks.jiraCreated(created).catch((error: unknown) => console.warn(`[ingress] teammate triage ${created.issueKey}: ${error instanceof Error ? error.message : error}`));
         }
         const jiraComment = jiraCommentFrom(payload);
         if (jiraComment && hooks.jiraComment) {

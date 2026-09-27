@@ -34,6 +34,20 @@ describe("teammate slack surface", () => {
     expect(scoped.check(mentionToEvent({ channel: "C1", ts: "1.2", user: "UBOT" })).accepted).toBe(false);
   });
 
+  it("an approved action's outcome: done, refused (not 'Done'), or failed without its error text", async () => {
+    const { outcomeMessages } = await import("@scriptorium/agents");
+    const who = { asker: "<@U1> ", approver: "priya", approverMention: "<@UPM>" };
+    const done = outcomeMessages({ kind: "ran", result: "Created jira:DOC-9\nmore" }, who);
+    expect(done).toEqual({ text: "<@U1> ✅ Done, approved by <@UPM>: Created jira:DOC-9", origin: "✅ Done, approved by priya: Created jira:DOC-9" });
+    const refused = outcomeMessages({ kind: "ran", result: "NOT_ALLOWED: HR is outside the Jira projects this agent may use." }, who);
+    expect(refused.notRun).toBe("refused");
+    expect(refused.text).not.toContain("Done");
+    expect(refused.text).toContain("HR is outside the Jira projects");
+    const failed = outcomeMessages({ kind: "failed", reason: "ECONNRESET at socket.ts:88" }, who);
+    expect(failed.notRun).toBe("failed");
+    expect(failed.text + failed.origin).not.toContain("ECONNRESET");
+  });
+
   it("caps a question's length, and says it was cut", () => {
     const long = mentionToEvent({ channel: "C1", ts: "1.0", user: "U9", text: `<@UBOT> ${"x".repeat(10_000)}` });
     expect(long.payload.text.length).toBeLessThan(4_200);
@@ -43,7 +57,7 @@ describe("teammate slack surface", () => {
 
   it("offers only the connectors configured on this host", () => {
     const slackOnly = teammateConnectorTools(config(), slack, new MemoryEffectLedger()).map((tool) => tool.name);
-    expect(slackOnly).toEqual(["slack_read_thread", "slack_reply"]);
+    expect(slackOnly).toEqual(["slack_read_thread", "slack_read_channel", "slack_reply"]);
     // The shared token reads; it never writes as the Teammate.
     const shared = teammateConnectorTools(config({}, true), slack, new MemoryEffectLedger()).map((tool) => tool.name);
     expect(shared).toEqual(expect.arrayContaining(["jira_search", "jira_get_issue", "confluence_search"]));
@@ -115,6 +129,14 @@ describe("tools bound to the turn", () => {
     for (const scope of ["global", "channel:C1", "person:slack:U1"]) expect(await save!.run({ text: "x is y.", scope })).toBe("ok");
     for (const scope of ["channel:C2", "person:slack:U2"]) expect(await save!.run({ text: "x is y.", scope })).toMatch(/^NOT_ALLOWED/);
     expect(ran).toEqual(["slack_read_thread", "memory_save", "memory_save", "memory_save"]);
+  });
+
+  it("reads only the channel it was asked in — never another allowed one", async () => {
+    const { bindToTurn } = await import("@scriptorium/agents");
+    const { z } = await import("zod");
+    const [channel] = bindToTurn([{ name: "slack_read_channel", description: "", inputSchema: z.object({}), run: async () => "ok" }], { question: "q", askedBy: "slack:U1", channel: "C1", threadTs: "1.0" });
+    expect(await channel!.run({ channel: "C1", hours: 24 })).toBe("ok");
+    expect(await channel!.run({ channel: "C_PRIVATE", hours: 24 })).toMatch(/^NOT_ALLOWED/);
   });
 });
 

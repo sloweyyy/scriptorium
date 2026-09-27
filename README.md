@@ -161,18 +161,21 @@ The full threat model, layer by layer and with the eval behind each control, is 
 
 **The Teammate** (`apps/agents/src/teammate-bot.ts`, `slack-manifests/teammate.yaml`) is the
 general agent on it. Skills are markdown in [`skills/`](skills/). It answers only in
-`TEAMMATE_SLACK_CHANNELS`, and every write — a Jira comment or issue, a Confluence page, a
+`TEAMMATE_SLACK_CHANNELS`, and every write — a Jira comment, issue or edit, a Confluence page, a
 memory — posts an approval card that a `TEAMMATE_APPROVERS` click carries out exactly once.
 
 | Job | How |
 |---|---|
 | Cited answers across the vault, Confluence and Jira | `answer-with-citations`; uncited claims are refused, misses become gap tickets (deduped) |
+| What did I miss? | `channel-catchup`; reads the channel it was asked in (up to 72h, on demand, nothing kept): decided / still open / waiting on you, each point cited to its message |
 | Thread → Jira ticket | `thread-to-ticket`; reads the thread it was asked in, proposes the issue on a card |
 | Is this ticket ready? | `readiness-check`; verdict plus what is missing, cited |
 | Remember this | `remember`; scoped memory (person / channel / global), human-approved, never reaches published docs |
 | Weekly digest | `weekly-digest`; what moved in Jira and which doc gaps opened, posted once per week to `TEAMMATE_DIGEST_CHANNEL` |
 | Docs into Confluence | `confluence_create_page` / `confluence_update_page`, approve-tier, allowed spaces only |
+| Move, assign, label, link Jira issues | `jira_transition` / `jira_assign` / `jira_labels` / `jira_link`, approve-tier, allowed projects only (both ends of a link); an assignee must match exactly one person |
 | Status update for an epic | `status-update`; what shipped, what's in flight, what's at risk — every line cited, posted only on approval |
+| Triage new tickets | `triage`; in `TEAMMATE_TRIAGE_PROJECTS`, a new issue gets one reply: ready or not, what's missing, likely duplicates (cited); rate-capped per project, changes nothing |
 | Ready to start? (on assignment) | assigning a ticket to the Teammate runs `readiness-check` and replies on the ticket |
 | Check a PR against its ticket | `pr-check`; on request or automatically when a PR opens, acceptance criteria covered or not, doc drift flagged, one advisory comment behind a card |
 

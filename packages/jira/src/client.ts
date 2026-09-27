@@ -280,6 +280,36 @@ export class JiraClient {
     }
   }
 
+  /** Add and remove labels in one edit; both are idempotent (adding a present label is a no-op). */
+  async editLabels(key: string, add: readonly string[], remove: readonly string[]): Promise<void> {
+    const endpoint = `/rest/api/2/issue/${encodeURIComponent(key)}`;
+    const response = await this.call(endpoint, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ update: { labels: [...add.map((label) => ({ add: label })), ...remove.map((label) => ({ remove: label }))] } }),
+    });
+    if (!response.ok) throw new JiraError(response.status, endpoint, (await response.text()).slice(0, 200));
+  }
+
+  /**
+   * Link two issues so it reads "<inwardKey> <type's outward verb> <outwardKey>", e.g.
+   * "DOC-7 blocks DOC-9". Jira's field names read backwards here — the documented example
+   * `inwardIssue: HSP-1, outwardIssue: MKY-1` (Duplicate) shows as "HSP-1 duplicates MKY-1".
+   */
+  async linkIssues(inwardKey: string, outwardKey: string, type: string): Promise<void> {
+    await this.post("/rest/api/2/issueLink", { type: { name: type }, inwardIssue: { key: inwardKey }, outwardIssue: { key: outwardKey } });
+  }
+
+  /** People matching a name or email — for "assign it to Mai". Active users only. */
+  async findUsers(query: string): Promise<JiraUser[]> {
+    const users = await this.get<Array<{ accountId?: string; displayName?: string; emailAddress?: string; active?: boolean; accountType?: string }>>(
+      `/rest/api/2/user/search?query=${encodeURIComponent(query)}&maxResults=10`,
+    );
+    return (Array.isArray(users) ? users : [])
+      .filter((user) => user.accountId && user.active !== false && (user.accountType ?? "atlassian") === "atlassian")
+      .map((user) => ({ accountId: user.accountId as string, displayName: user.displayName ?? user.accountId as string, ...(user.emailAddress ? { emailAddress: user.emailAddress } : {}) }));
+  }
+
   /** Move the issue by target status name (case-insensitive). Returns false when no such transition exists. */
   async transitionTo(key: string, statusName: string): Promise<boolean> {
     const wanted = statusName.trim().toLowerCase();

@@ -575,7 +575,9 @@ async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: boolean }
     const askedBefore =
       (known?.askedForFields ?? []).join(",") === missing.join(",") &&
       (known?.askedFromOrigin ?? "") === (source.origin ?? "");
-    if (!askedBefore) {
+    // A human typing `draft` always gets an answer, even the same questions again: every
+    // agent message tells them to comment `draft`, and silence reads as being ignored.
+    if (!askedBefore || options.force) {
       await say(
         ctx,
         key,
@@ -1180,7 +1182,9 @@ async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
     // in, so the plain-English feedback that follows applies even without the label. It has
     // to be recorded even when the command produced no draft (a PRD-less `draft`, say),
     // or the follow-up that supplies the PRD would be dropped as someone else's talk.
-    if (command.kind !== "feedback" && command.kind !== "ignore") await ctx.state.patch(key, { engaged: true });
+    // A human command also resets the "already reported this error" memory: whoever typed
+    // `draft` after an error was told to, and must hear the result — even the same error.
+    if (command.kind !== "feedback" && command.kind !== "ignore") await ctx.state.patch(key, { engaged: true, lastError: undefined });
 
     switch (command.kind) {
       case "ignore":

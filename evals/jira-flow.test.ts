@@ -204,6 +204,50 @@ describe("scribe on jira", () => {
   });
 });
 
+describe("a human command always gets an answer", () => {
+  const human = (id: string, body: string) => ({ id, body, created: new Date().toISOString(), author: { accountId: "human-1", displayName: "Reviewer" } });
+
+  it("answers `draft` on an unchanged incomplete PRD instead of staying silent", async () => {
+    // Every agent message says "comment `draft`". Doing exactly that used to get nothing
+    // back: the questions had been asked once, and nothing about the PRD had changed.
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+    const before = comments.length;
+
+    comments.push(human("h1", "draft"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T12:00:00.000+0000" } };
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+
+    const answers = comments.slice(before).filter((comment) => comment.author.accountId === "bot-1");
+    expect(answers.length).toBeGreaterThan(0);
+    expect(answers.at(-1)?.body).toContain("user_goal");
+  });
+
+  it("reports the same error again when a human retries, as they were told to", async () => {
+    // No model in this suite, so a complete PRD's draft throws the same error every time.
+    issue = { ...issue, fields: { ...(issue.fields as object), description: prdInJira("feature: X", "audience: admins", "user_goal: do the thing") } };
+    const settings = config();
+    const first = await startScribeJira(settings, vault);
+    first.stop();
+    const errors = () => comments.filter((comment) => comment.body.includes("I hit an error")).length;
+    expect(errors()).toBe(1);
+
+    comments.push(human("h2", "draft"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T12:30:00.000+0000" } };
+    const second = await startScribeJira(settings, vault);
+    second.stop();
+    expect(errors()).toBe(2);
+
+    // …but a poll nobody asked for stays quiet about an error already reported.
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T12:45:00.000+0000" } };
+    const third = await startScribeJira(settings, vault);
+    third.stop();
+    expect(errors()).toBe(2);
+  });
+});
+
 /** Everything the poller sees but was not labelled as a doc request. */
 function unlabelled(): void {
   issue = { ...issue, fields: { ...(issue.fields as object), labels: [] } };

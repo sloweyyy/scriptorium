@@ -10,6 +10,7 @@
   "dependencies": {
     "@scriptorium/core": "workspace:*",
     "@scriptorium/jira": "workspace:*",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "@scriptorium/runtime": "workspace:*"
   }
 }

@@ -29,6 +29,16 @@ export interface Envelope {
   /** Accounts the agent itself acts as. An approval from one of these is never an approval. */
   selfAccountIds: readonly string[];
   tools: Readonly<Record<string, ToolRule>>;
+  /**
+   * Accounts that are one person across surfaces. Separation of duties compares people, not
+   * accounts: asking as `jira:abc` and approving as `slack:U1` is still approving yourself.
+   */
+  people?: ReadonlyArray<ReadonlyArray<string>>;
+}
+
+/** Are these two accounts the same person, as far as the envelope knows? */
+export function samePerson(envelope: Envelope, a: string, b: string): boolean {
+  return a === b || (envelope.people ?? []).some((person) => person.includes(a) && person.includes(b));
 }
 
 export interface Verdict {
@@ -69,7 +79,7 @@ export function mayApprove(
   if (!anyone && !rule.approvers.includes(approver.accountId)) {
     return { ok: false, reason: `${approver.name ?? approver.accountId} is not an approver for this action` };
   }
-  if (rule.separateDuties && requestedBy && requestedBy === approver.accountId) {
+  if (rule.separateDuties && requestedBy && samePerson(envelope, requestedBy, approver.accountId)) {
     return { ok: false, reason: "the person who asked for this cannot also approve it" };
   }
   return { ok: true };

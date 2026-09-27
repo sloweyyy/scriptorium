@@ -237,10 +237,21 @@ export class JiraClient {
 
   /** The comment an op already produced, if Jira has it. */
   async findCommentByOp(key: string, op: string): Promise<JiraComment | undefined> {
-    const comments = await this.listComments(key, 200, { expandProperties: true });
-    return comments.find((comment) =>
-      comment.properties?.some((property) => property.key === COMMENT_OP_PROPERTY && (property.value as { op?: string } | undefined)?.op === op),
-    );
+    // Newest first, paged: the comment a lost response left behind is recent, and on a busy
+    // ticket it may be comment 250 — a first page of the oldest 200 would miss it, and the
+    // retry would post a duplicate.
+    for (let startAt = 0; startAt < 2_000; startAt += 100) {
+      const data = await this.get<{ comments?: JiraComment[]; total?: number }>(
+        `/rest/api/2/issue/${encodeURIComponent(key)}/comment?orderBy=-created&maxResults=100&startAt=${startAt}&expand=properties`,
+      );
+      const comments = parseComments(data.comments);
+      const found = comments.find((comment) =>
+        comment.properties?.some((property) => property.key === COMMENT_OP_PROPERTY && (property.value as { op?: string } | undefined)?.op === op),
+      );
+      if (found) return found;
+      if (comments.length < 100 || (data.total !== undefined && startAt + comments.length >= data.total)) return undefined;
+    }
+    return undefined;
   }
 
   async listTransitions(key: string): Promise<JiraTransition[]> {

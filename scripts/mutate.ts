@@ -51,6 +51,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/policy.test.ts"],
   },
   {
+    control: "separation of duties holds across surfaces (one person, several accounts)",
+    file: "packages/policy/src/policy.ts",
+    find: "return a === b || (envelope.people ?? []).some((person) => person.includes(a) && person.includes(b));",
+    replace: "return a === b;",
+    evals: ["evals/policy.test.ts"],
+  },
+  {
     control: "approvals bind to the exact arguments",
     file: "packages/policy/src/approvals.ts",
     find: "request.argsHash === hash &&\n        request.status === \"approved\" &&",

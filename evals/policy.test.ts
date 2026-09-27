@@ -139,6 +139,19 @@ describe("approvals", () => {
     expect((await runUnderPolicy(envelope, publish, DRAFT, deps(store))).kind).toBe("pending");
   });
 
+  it("separation of duties compares people, not accounts: asking on one surface and approving on another is still self-approval", async () => {
+    const { store, request } = await pending();
+    const linked: Envelope = { ...envelope, people: [["author-1", "pm-1"]] };
+    expect((await decideApproval(store, linked, request.id, "approved", { accountId: "pm-1" })).ok).toBe(false);
+    expect((await decideApproval(store, linked, request.id, "approved", { accountId: "pm-2" })).ok).toBe(true);
+    const { parsePeople } = await import("@scriptorium/core");
+    expect(parsePeople("slack:U1=jira:abc=github:dev; slack:U2, jira:def ; slack:U3")).toEqual([
+      ["slack:U1", "jira:abc", "github:dev"],
+      ["slack:U2", "jira:def"],
+    ]);
+    expect(parsePeople(undefined)).toEqual([]);
+  });
+
   it("a rejected or expired request cannot be revived", async () => {
     const { store, request } = await pending();
     await decideApproval(store, envelope, request.id, "rejected", { accountId: "pm-1" });

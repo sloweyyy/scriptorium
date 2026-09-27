@@ -123,6 +123,8 @@ The model is untrusted too. It proposes; the platform decides what runs.
   - `parentId` isn't validated.
   - The vault path guard doesn't resolve symlinks.
   - A card truncates long arguments; the approval is still bound to the full text by hash.
+  - Separation of duties across surfaces holds only for accounts linked in `TEAMMATE_PEOPLE`.
+    An unlinked approver who asked on Jira or GitHub can approve their own request in Slack.
   - Scribe's own replies on its doc tickets don't yet copy a comment's restriction (the
     Teammate's do). Keep Scribe's project out of Jira Service Management.
 

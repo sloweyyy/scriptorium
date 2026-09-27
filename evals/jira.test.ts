@@ -345,3 +345,42 @@ describe("reading a PRD out of Confluence", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("the poller sees every matching ticket", () => {
+  const issueN = (n: number) => ({ id: String(n), key: `DOC-${n}`, fields: { summary: `t${n}` } });
+
+  it("pages /search/jql by nextPageToken past the first 100", async () => {
+    const { JiraClient } = await import("@scriptorium/jira");
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: string) => {
+      const url = new URL(String(input));
+      calls.push(url.searchParams.get("nextPageToken") ?? "-");
+      const token = url.searchParams.get("nextPageToken");
+      const max = Number(url.searchParams.get("maxResults"));
+      const start = token ? Number(token) : 0;
+      const issues = Array.from({ length: Math.min(max, 230 - start) }, (_, i) => issueN(start + i));
+      const next = start + issues.length;
+      return new Response(JSON.stringify({ issues, ...(next < 230 ? { nextPageToken: String(next), isLast: false } : { isLast: true }) }), { status: 200 });
+    });
+    const client = new JiraClient({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", projectKey: "DOC" });
+    const all = await client.searchAllIssues("project = DOC");
+    expect(all).toHaveLength(230);
+    expect(all.at(-1)?.key).toBe("DOC-229");
+    vi.unstubAllGlobals();
+  });
+
+  it("pages the legacy /search by startAt", async () => {
+    const { JiraClient } = await import("@scriptorium/jira");
+    vi.stubGlobal("fetch", async (input: string) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/search/jql")) return new Response("", { status: 404 });
+      const start = Number(url.searchParams.get("startAt") ?? 0);
+      const max = Number(url.searchParams.get("maxResults"));
+      const issues = Array.from({ length: Math.max(0, Math.min(max, 150 - start)) }, (_, i) => issueN(start + i));
+      return new Response(JSON.stringify({ issues, total: 150 }), { status: 200 });
+    });
+    const client = new JiraClient({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", projectKey: "DOC" });
+    expect(await client.searchAllIssues("project = DOC")).toHaveLength(150);
+    vi.unstubAllGlobals();
+  });
+});

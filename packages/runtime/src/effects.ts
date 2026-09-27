@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -54,11 +54,28 @@ export class MemoryEffectLedger implements EffectLedger {
   }
 }
 
-/** One JSON file, rewritten atomically; writes are serialized within the process. */
-export class FileEffectLedger implements EffectLedger {
-  private chain: Promise<unknown> = Promise.resolve();
+/**
+ * Writes are serialised per FILE, not per instance: the poller, the Teammate and the
+ * staleness watch each open a ledger on the same `effects.json`, and three independent
+ * chains racing one read-modify-write lost "done" records — an effect then ran twice.
+ */
+const fileChains = new Map<string, Promise<unknown>>();
 
-  constructor(private readonly file: string) {}
+/** One JSON file, rewritten atomically; writes are serialized per file within the process. */
+export class FileEffectLedger implements EffectLedger {
+  private readonly file: string;
+
+  constructor(file: string) {
+    this.file = path.resolve(file);
+  }
+
+  private get chain(): Promise<unknown> {
+    return fileChains.get(this.file) ?? Promise.resolve();
+  }
+
+  private set chain(next: Promise<unknown>) {
+    fileChains.set(this.file, next);
+  }
 
   private async load(): Promise<Record<string, EffectRecord>> {
     try {
@@ -79,7 +96,7 @@ export class FileEffectLedger implements EffectLedger {
       const all = await this.load();
       all[record.op] = record;
       await fs.mkdir(path.dirname(this.file), { recursive: true });
-      const tmp = `${this.file}.${process.pid}.tmp`;
+      const tmp = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
       await fs.writeFile(tmp, JSON.stringify(all, null, 2));
       await fs.rename(tmp, this.file);
     });

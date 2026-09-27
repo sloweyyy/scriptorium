@@ -77,9 +77,17 @@ class Mutex {
 }
 
 /** One JSON file, rewritten atomically — the ledger's pattern, and just as local. */
+/** One lock per approvals file, shared by every store instance opened on it. */
+const fileLocks = new Map<string, Mutex>();
+
 export class FileApprovalStore implements ApprovalStore {
-  private readonly lock = new Mutex();
-  constructor(private readonly file: string) {}
+  private readonly lock: Mutex;
+  private readonly file: string;
+  constructor(file: string) {
+    this.file = path.resolve(file);
+    this.lock = fileLocks.get(this.file) ?? new Mutex();
+    fileLocks.set(this.file, this.lock);
+  }
 
   private async read(): Promise<ApprovalRequest[]> {
     try {
@@ -92,7 +100,7 @@ export class FileApprovalStore implements ApprovalStore {
 
   private async write(requests: ApprovalRequest[]): Promise<void> {
     await fs.mkdir(path.dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.${process.pid}.tmp`;
+    const tmp = `${this.file}.${process.pid}.${randomUUID()}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(requests, null, 2));
     await fs.rename(tmp, this.file);
   }

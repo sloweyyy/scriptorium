@@ -101,24 +101,45 @@ export function formatReply(reply: TeammateReply, runId?: string): string {
   return `${body}${ticket}${footer}`;
 }
 
-export async function startTeammateBot(config: AppConfig, vault: Vault): Promise<() => Promise<void>> {
+export interface TeammateCore {
+  /** A Slack `app_mention`, from Bolt or a test. */
+  onMention(mention: SlackMention): Promise<void>;
+  /** An Approve/Reject click. Returns a message for the clicker, if any (ephemeral). */
+  onApprovalClick(action: string, payload: ApprovalClickPayload): Promise<string | undefined>;
+  /** The weekly digest, if due and not yet posted this week. */
+  checkDigest(now?: Date): Promise<void>;
+  drain(deadlineMs: number): Promise<boolean>;
+}
+
+export interface ApprovalClickPayload {
+  actions?: Array<{ value?: string }>;
+  user?: { id?: string; username?: string };
+  channel?: { id?: string };
+  message?: { ts?: string; thread_ts?: string };
+}
+
+/**
+ * Everything the Teammate does in Slack, with no Bolt in it: the whole path from a mention
+ * to a reply, and from a click to a carried-out action, driven by any Slack client. Bolt
+ * only binds events to it — which is what lets the wiring itself be tested end to end.
+ */
+export async function createTeammate(config: AppConfig, vault: Vault, slack: SlackClient, selfUserId: string): Promise<TeammateCore> {
   const settings = config.teammate;
-  const app = new App({ token: settings.botToken, appToken: settings.appToken, socketMode: true });
-  const identity = await app.client.auth.test();
-  const self = `slack:${identity.user_id}`;
+  const self = `slack:${selfUserId}`;
 
   const stateDir = config.jira.stateDir;
   const store = new FileApprovalStore(path.join(stateDir, "approvals.json"));
   const ledger = new FileEffectLedger(path.join(stateDir, "effects.json"));
-  const connectorTools = teammateConnectorTools(config, app.client, ledger);
+  const connectorTools = teammateConnectorTools(config, slack, ledger);
   const skills = await loadSkills(path.join(config.repoRoot, "skills"));
   const agentConfig = teammateConfig({ selfAccountIds: [self], approvers: (settings.approvers ?? []).map((id) => `slack:${id}`) });
   // Restrict to the connectors actually configured here: a tool the host can't provide is not offered.
   const available = new Set([...connectorTools.map((tool) => tool.name), "vault_overview", "search_vault", "read_note", "memory_save"]);
   const hostConfig = { ...agentConfig, tools: Object.fromEntries(Object.entries(agentConfig.tools).filter(([name]) => available.has(name))) };
   const envelope = envelopeOf(hostConfig);
-  const approvalChannel = new SlackApprovalChannel(app.client, config.slack.notifyChannel);
+  const approvalChannel = new SlackApprovalChannel(slack, config.slack.notifyChannel);
   const guardDepsFor = (key: string): GuardDeps => ({ store, channel: approvalChannel, auditFile: config.auditFile, key });
+  const turnDeps = (key: string) => ({ vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config) });
 
   const gate = new Gate({
     selfIds: [self],
@@ -130,14 +151,11 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
     async (key, events) => {
       for (const event of events) await withRun(async () => {
         const { channel, threadTs, text, ts } = event.payload as { channel: string; threadTs: string; text: string; ts: string };
-        const context = text ? await threadContext(app.client, channel, threadTs, ts).catch(() => undefined) : undefined;
+        const context = text ? await threadContext(slack, channel, threadTs, ts).catch(() => undefined) : undefined;
         const reply = text
-          ? await runTeammateTurn(
-              { question: text, askedBy: event.actor.id, channel, context },
-              { vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config) },
-            )
+          ? await runTeammateTurn({ question: text, askedBy: event.actor.id, channel, context }, turnDeps(key))
           : ({ kind: "action", text: "Hi — ask me about the product, a page or a ticket, or ask me to file one." } as const);
-        await app.client.chat.postMessage({ channel, thread_ts: threadTs, text: formatReply(reply, currentRunId()) });
+        await slack.chat.postMessage({ channel, thread_ts: threadTs, text: formatReply(reply, currentRunId()) });
         await audit(config.auditFile, { type: `teammate.${reply.kind}`, actor: "teammate", key, askedBy: event.actor.id, event: event.id });
       });
     },
@@ -150,27 +168,28 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
     },
   );
 
-  app.event("app_mention", async ({ event }) => {
-    const agentEvent = mentionToEvent(event as SlackMention);
-    const verdict = gate.check(agentEvent);
-    if (!verdict.accepted) {
-      await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: agentEvent.key, reason: verdict.reason });
-      return;
-    }
-    if (!config.hasModelAccess) {
-      const { channel, threadTs } = agentEvent.payload;
-      await app.client.chat.postMessage({ channel, thread_ts: threadTs, text: "⚠️ No model provider is configured, so I can't answer yet." });
-      return;
-    }
-    queue.push(agentEvent);
-  });
+  const digestChannel = settings.digestChannel && settings.channels.includes(settings.digestChannel) ? settings.digestChannel : undefined;
+  if (settings.digestChannel && !digestChannel) console.warn(`[teammate] TEAMMATE_DIGEST_CHANNEL ${settings.digestChannel} is not in TEAMMATE_SLACK_CHANNELS — no digest`);
 
-  for (const action of [APPROVE_ACTION, REJECT_ACTION]) {
-    app.action(action, async ({ ack, body, respond }) => {
-      await ack();
-      const payload = body as { actions?: Array<{ value?: string }>; user?: { id?: string; username?: string }; channel?: { id?: string }; message?: { ts?: string; thread_ts?: string } };
+  return {
+    async onMention(mention) {
+      const agentEvent = mentionToEvent(mention);
+      const verdict = gate.check(agentEvent);
+      if (!verdict.accepted) {
+        await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: agentEvent.key, reason: verdict.reason });
+        return;
+      }
+      if (!config.hasModelAccess) {
+        const { channel, threadTs } = agentEvent.payload;
+        await slack.chat.postMessage({ channel, thread_ts: threadTs, text: "⚠️ No model provider is configured, so I can't answer yet." });
+        return;
+      }
+      queue.push(agentEvent);
+    },
+
+    async onApprovalClick(action, payload) {
       const requestId = payload.actions?.[0]?.value ?? "";
-      const decided = await handleApprovalClick(app.client, store, (agent) => (agent === envelope.agent ? envelope : undefined), {
+      const decided = await handleApprovalClick(slack, store, (agent) => (agent === envelope.agent ? envelope : undefined), {
         action,
         requestId,
         userId: payload.user?.id,
@@ -178,57 +197,65 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
         channel: payload.channel?.id,
         messageTs: payload.message?.ts,
       });
-      if (!decided.ok || action !== APPROVE_ACTION) {
-        await respond({ text: decided.message, response_type: "ephemeral", replace_original: false });
-        return;
-      }
+      if (!decided.ok || action !== APPROVE_ACTION) return decided.message;
       const request = (await store.all()).find((candidate) => candidate.id === requestId);
       const outcome = await executeApproved(envelope, [...connectorTools, ...memoryTools(vault)], requestId, guardDepsFor(request?.key ?? ""));
       const text = outcome.kind === "ran" ? `Done: ${outcome.result}` : `Approved, but not carried out: ${"reason" in outcome ? outcome.reason : outcome.kind}`;
-      if (payload.channel?.id) await app.client.chat.postMessage({ channel: payload.channel.id, thread_ts: payload.message?.thread_ts ?? payload.message?.ts, text });
-    });
-  }
+      if (payload.channel?.id) await slack.chat.postMessage({ channel: payload.channel.id, thread_ts: payload.message?.thread_ts ?? payload.message?.ts, text });
+      return undefined;
+    },
 
-  // The weekly digest: checked hourly, posted once per ISO week (the effects ledger makes a
-  // restart or a second instance a no-op). Only into a channel the Teammate may post in.
-  let digestTimer: NodeJS.Timeout | undefined;
-  const digestChannel = settings.digestChannel;
-  if (digestChannel && settings.channels.includes(digestChannel) && config.hasModelAccess) {
-    const schedule = { weekday: settings.digestWeekday, hour: settings.digestHour };
-    const check = async (): Promise<void> => {
-      const now = new Date();
-      if (!digestDue(now, schedule)) return;
+    async checkDigest(now = new Date()) {
+      if (!digestChannel || !config.hasModelAccess) return;
+      if (!digestDue(now, { weekday: settings.digestWeekday, hour: settings.digestHour })) return;
       await withRun(() =>
         postDigestOnce(
           ledger,
           digestChannel,
           now,
           async () => {
-            const reply = await runTeammateTurn(
-              { question: "Write this week's digest for the team.", askedBy: "cron:digest", channel: digestChannel },
-              { vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(keys.cron("digest")), auditFile: config.auditFile },
-            );
+            const reply = await runTeammateTurn({ question: "Write this week's digest for the team.", askedBy: "cron:digest", channel: digestChannel }, turnDeps(keys.cron("digest")));
             // A refusal is not a digest: throw, so the op stays open and the next hour retries.
             if (reply.kind === "refused") throw new Error(`digest refused: ${reply.text}`);
             return formatReply(reply, currentRunId());
           },
           async (text) => {
-            await app.client.chat.postMessage({ channel: digestChannel, text: `*Weekly digest*\n${text}` });
+            await slack.chat.postMessage({ channel: digestChannel, text: `*Weekly digest*\n${text}` });
           },
         ),
-      ).catch((error) => console.warn(`[teammate] digest: ${error instanceof Error ? error.message : error}`));
-    };
-    digestTimer = setInterval(() => void check(), 60 * 60 * 1000);
-    void check();
-  } else if (digestChannel) {
-    console.warn(`[teammate] TEAMMATE_DIGEST_CHANNEL ${digestChannel} is not in TEAMMATE_SLACK_CHANNELS — no digest`);
+      );
+    },
+
+    drain: (deadlineMs) => queue.drain(deadlineMs),
+  };
+}
+
+export async function startTeammateBot(config: AppConfig, vault: Vault): Promise<() => Promise<void>> {
+  const settings = config.teammate;
+  const app = new App({ token: settings.botToken, appToken: settings.appToken, socketMode: true });
+  const identity = await app.client.auth.test();
+  const core = await createTeammate(config, vault, app.client, String(identity.user_id));
+
+  app.event("app_mention", async ({ event }) => core.onMention(event as SlackMention));
+  for (const action of [APPROVE_ACTION, REJECT_ACTION]) {
+    app.action(action, async ({ ack, body, respond }) => {
+      await ack();
+      const message = await core.onApprovalClick(action, body as ApprovalClickPayload);
+      if (message) await respond({ text: message, response_type: "ephemeral", replace_original: false });
+    });
   }
 
+  // The weekly digest: checked hourly, posted once per ISO week (the effects ledger makes a
+  // restart or a second instance a no-op).
+  const digestCheck = (): void => void core.checkDigest().catch((error) => console.warn(`[teammate] digest: ${error instanceof Error ? error.message : error}`));
+  const digestTimer = setInterval(digestCheck, 60 * 60 * 1000);
+  digestCheck();
+
   await app.start();
-  console.log(`[teammate] ⚡ connected (socket mode) — ${settings.channels.length} channel(s), ${connectorTools.length} connector tool(s)`);
+  console.log(`[teammate] ⚡ connected (socket mode) — ${settings.channels.length} channel(s)`);
   return async () => {
-    if (digestTimer) clearInterval(digestTimer);
-    await queue.drain(8_000);
+    clearInterval(digestTimer);
+    await core.drain(8_000);
     await app.stop();
   };
 }

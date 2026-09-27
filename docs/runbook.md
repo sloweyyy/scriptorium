@@ -19,6 +19,7 @@ Every one of these fails closed: unset means *less* is allowed, never more.
 | `TEAMMATE_SLACK_CHANNELS` | the Teammate answers nowhere | channel ids, and `/invite @Teammate` in each |
 | `TEAMMATE_ATLASSIAN_EMAIL` / `_TOKEN` | the Teammate reads Jira and Confluence but can't write | a service account with access to only the allowed projects and spaces |
 | `TEAMMATE_JIRA_PROJECTS` / `TEAMMATE_CONFLUENCE_SPACES` | Jira defaults to `JIRA_PROJECT_KEY`; no Confluence | the keys it may read (and, with approval, write) |
+| `TEAMMATE_DAILY_TOKENS` | no spend cap | tokens per channel per UTC day; over it the Teammate answers with a notice and no model call |
 | `TRACE_TOKEN` + `PUBLIC_BASE_URL` | no run viewer, so replies show a bare run id | a long random token and the service URL |
 
 Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.

@@ -1,7 +1,7 @@
 import { audit, type ToolRunContext, type ToolSpec, type Vault } from "@scriptorium/core";
 import { buildRetrievalIndex, enforceGrounding, fileGapNote, parseQaAnswer, qaTools, type GapInput } from "@scriptorium/curator";
 import type { GuardDeps } from "@scriptorium/policy";
-import { assembleAgent, listMemories, memoryTools, renderMemories, runSession, scopesFor, SessionError, type AgentConfig, type Skill } from "@scriptorium/runtime";
+import { assembleAgent, listMemories, memoryTools, renderMemories, runSession, scopesFor, SessionError, type AgentConfig, type SessionUsage, type Skill } from "@scriptorium/runtime";
 
 /**
  * One Teammate turn: a question (or a request) in, a decided reply out.
@@ -110,6 +110,8 @@ export interface TeammateDeps {
   openTicket?: GapInput["openTicket"];
   /** Signs approved memories so a restore from the docs repo cannot forge one. */
   signingKey?: string;
+  /** Told what each run cost (all rounds), after the audit line is written. */
+  onUsage?: (usage: SessionUsage) => void;
 }
 
 export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): Promise<TeammateReply> {
@@ -148,7 +150,11 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
       tools,
       maxTokens: 4_096,
       // Cost on the record, under the run's id: `pnpm trace` shows what each answer cost.
-      onUsage: (usage) => void audit(deps.auditFile, { type: "llm.usage", actor: deps.config.name, ...usage }).catch(() => undefined),
+      onUsage: (usage) => {
+        // `scope` is what spend caps are counted against: the channel, else the asker.
+        void audit(deps.auditFile, { type: "llm.usage", actor: deps.config.name, scope: turn.channel ?? turn.askedBy, ...usage }).catch(() => undefined);
+        deps.onUsage?.(usage);
+      },
     });
   } catch (error) {
     if (error instanceof SessionError && error.failure === "round-cap") text = `NOT_IN_KB: ${turn.question}`;

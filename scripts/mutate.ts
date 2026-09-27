@@ -30,6 +30,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/frontmatter-safety.test.ts"],
   },
   {
+    control: "an edited audit line breaks the chain",
+    file: "packages/core/src/audit.ts",
+    find: "    if (prev !== expected && !(chained === 0 && index === 0 && prev === \"genesis\")) {",
+    replace: "    if (false) {",
+    evals: ["evals/audit-chain.test.ts"],
+  },
+  {
     control: "vault path-escape guard",
     file: "packages/core/src/vault.ts",
     find: "if (resolved !== rootAbs && !resolved.startsWith(rootAbs + path.sep)) {",

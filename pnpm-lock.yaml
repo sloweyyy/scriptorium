@@ -35,6 +35,9 @@ importers:
       '@scriptorium/scribe':
         specifier: workspace:*
         version: link:packages/scribe
+      '@slack/web-api':
+        specifier: ^7.19.0
+        version: 7.19.0
       '@types/node':
         specifier: ^26.2.0
         version: 26.2.0

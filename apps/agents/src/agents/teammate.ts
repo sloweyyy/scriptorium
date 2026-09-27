@@ -27,6 +27,8 @@ export function teammateConfig(input: { selfAccountIds: string[]; approvers: str
       slack_read_thread: "allow",
       jira_comment: write,
       jira_create_issue: write,
+      confluence_create_page: write,
+      confluence_update_page: write,
       // Remembering is a write about people and teams: a human approves every memory.
       memory_save: { ...write, separateDuties: false },
     },

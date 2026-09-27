@@ -102,6 +102,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira.test.ts"],
   },
   {
+    control: "another agent's move or comment never approves a Scribe publish",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "  if (otherAgentIds.includes(accountId)) return",
+    replace: "  if (false) return",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
     control: "Confluence reads are space-allow-listed",
     file: "packages/connectors/src/confluence.ts",
     find: "    if (!space) throw new ConfluenceAccessError(",

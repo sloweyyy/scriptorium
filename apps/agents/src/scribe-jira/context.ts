@@ -83,9 +83,17 @@ export function engaged(known: IssueState | undefined): boolean {
  * May this Jira account approve a publish? The same answer for a comment and a board move.
  * Unknown is never yes: an approval nobody can attribute is not an approval.
  */
-export function mayApproveOnJira(settings: { approvers?: readonly string[] }, botAccountId: string | undefined, accountId: string | undefined): { ok: true } | { ok: false; reason: string } {
+export function mayApproveOnJira(
+  settings: { approvers?: readonly string[] },
+  botAccountId: string | undefined,
+  accountId: string | undefined,
+  otherAgentIds: readonly string[] = [],
+): { ok: true } | { ok: false; reason: string } {
   if (!accountId) return { ok: false, reason: "I couldn't tell who approved, so I haven't published." };
   if (botAccountId && accountId === botAccountId) return { ok: false, reason: "My own move is bookkeeping, not an approval." };
+  // Another agent's move or comment is never a human approval — even one a human told it to
+  // make: that human approved the Teammate's action, not this publish.
+  if (otherAgentIds.includes(accountId)) return { ok: false, reason: "Another agent can't approve this. A person needs to comment `approve`." };
   if (settings.approvers?.length && !settings.approvers.includes(accountId)) {
     return { ok: false, reason: "Only the configured approvers can publish from this ticket, so I haven't. Ask one of them to comment `approve`." };
   }

@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import fs from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { docsRepoReady, jiraReady, type AppConfig } from "@scriptorium/core";
+import { docsRepoReady, jiraReady, linesForRun, parseAudit, runPage, type AppConfig } from "@scriptorium/core";
 import { z } from "zod";
 
 /**
@@ -180,6 +181,30 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
             github: Boolean(githubSecret),
           },
         });
+        return;
+      }
+
+      if (request.method === "GET" && route.startsWith("/runs/")) {
+        const token = config.webhook.traceToken;
+        const provided = url.searchParams.get("token") ?? "";
+        // 404 whether the viewer is off or the token is wrong: nothing to learn by probing.
+        if (!token || !secretMatches(provided, token)) {
+          send(response, 404, { error: "not found" });
+          return;
+        }
+        const prefix = decodeURIComponent(route.slice("/runs/".length)).replace(/[^0-9a-f-]/gi, "");
+        const lines = linesForRun(parseAudit(await fs.readFile(config.auditFile, "utf8").catch(() => "")), prefix);
+        const html = runPage(prefix, lines);
+        response.writeHead(lines.length ? 200 : 404, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Content-Length": Buffer.byteLength(html),
+          // A run page holds user questions: never cached, never framed, never scripted.
+          "Cache-Control": "no-store",
+          "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+          "X-Frame-Options": "DENY",
+          "Referrer-Policy": "no-referrer",
+        });
+        response.end(html);
         return;
       }
 

@@ -231,3 +231,36 @@ describe("ingress primitives", () => {
     expect(verifyGitHubSignature(Buffer.from('{"ref":"refs/heads/mai"}'), good, GITHUB_SECRET)).toBe(false);
   });
 });
+
+describe("run viewer", () => {
+  it("is closed without the token, and shows one run's events, escaped, with it", async () => {
+    const auditFile = path.join(tmpRoot, "audit.jsonl");
+    await fs.mkdir(path.dirname(auditFile), { recursive: true });
+    await fs.writeFile(
+      auditFile,
+      [
+        JSON.stringify({ ts: "2026-09-27T10:00:00Z", run: "3f2a9c1b-aaaa", type: "teammate.answer", question: "<script>alert(1)</script>" }),
+        JSON.stringify({ ts: "2026-09-27T10:01:00Z", run: "ffffffff-bbbb", type: "other.run" }),
+      ].join("\n"),
+    );
+    const viewer = startIngress({ config: { ...config(), auditFile, webhook: { ...config().webhook, traceToken: "tok-123" } } as AppConfig, hooks: {} });
+    await new Promise<void>((resolve) => viewer.once("listening", resolve));
+    const at = `http://127.0.0.1:${(viewer.address() as AddressInfo).port}`;
+    try {
+      expect((await fetch(`${at}/runs/3f2a9c1b`)).status).toBe(404);
+      expect((await fetch(`${at}/runs/3f2a9c1b?token=wrong`)).status).toBe(404);
+      const page = await fetch(`${at}/runs/3f2a9c1b?token=tok-123`);
+      expect(page.status).toBe(200);
+      expect(page.headers.get("content-security-policy")).toContain("default-src 'none'");
+      const html = await page.text();
+      expect(html).toContain("teammate.answer");
+      expect(html).not.toContain("<script>alert(1)</script>");
+      expect(html).toContain("&lt;script&gt;");
+      expect(html).not.toContain("other.run");
+      // A short prefix is not "show me everything".
+      expect((await fetch(`${at}/runs/f?token=tok-123`)).status).toBe(404);
+    } finally {
+      await new Promise<void>((resolve) => viewer.close(() => resolve()));
+    }
+  });
+});

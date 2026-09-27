@@ -94,11 +94,17 @@ export async function threadContext(slack: SlackClient, channel: string, threadT
   return lines.length ? lines.join("\n") : undefined;
 }
 
-export function formatReply(reply: TeammateReply, runId?: string): string {
+export function formatReply(reply: TeammateReply, runId?: string, viewer?: { baseUrl?: string; token?: string }): string {
   const body = toSlackMrkdwn(reply.text);
   const ticket = reply.kind === "gap" && reply.ticket ? `\n🎫 <${reply.ticket.url}|${reply.ticket.key}>` : "";
-  const footer = `\n_AI-generated — verify before acting${runId ? ` · run \`${runId.slice(0, 8)}\`` : ""}_`;
-  return `${body}${ticket}${footer}`;
+  const run = runId?.slice(0, 8);
+  // With a viewer configured, the run id is a link to everything the run did.
+  const runLabel = run
+    ? viewer?.baseUrl && viewer.token
+      ? ` · <${viewer.baseUrl.replace(/\/$/, "")}/runs/${run}?token=${encodeURIComponent(viewer.token)}|view run ${run}>`
+      : ` · run \`${run}\``
+    : "";
+  return `${body}${ticket}\n_AI-generated — verify before acting${runLabel}_`;
 }
 
 export interface TeammateCore {
@@ -170,7 +176,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
           const reply = text
             ? await runTeammateTurn({ question: text, askedBy: event.actor.id, channel, threadTs, context }, turnDeps(key))
             : ({ kind: "action", text: "Hi — ask me about the product, a page or a ticket, or ask me to file one." } as const);
-          await deliver(formatReply(reply, currentRunId()));
+          await deliver(formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken }));
           await audit(config.auditFile, { type: `teammate.${reply.kind}`, actor: "teammate", key, askedBy: event.actor.id, event: event.id });
         } catch (error) {
           await audit(config.auditFile, { type: "teammate.error", actor: "teammate", key, event: event.id, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);

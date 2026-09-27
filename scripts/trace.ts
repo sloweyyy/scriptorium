@@ -6,51 +6,9 @@
  * `pnpm trace` with no argument lists the most recent runs.
  */
 import fs from "node:fs/promises";
-import { loadConfig } from "@scriptorium/core";
+import { formatLine, linesForRun, loadConfig, parseAudit, recentRuns } from "@scriptorium/core";
 
-export interface AuditLine {
-  ts: string;
-  run?: string;
-  type: string;
-  [key: string]: unknown;
-}
-
-export function parseAudit(text: string): AuditLine[] {
-  return text
-    .split("\n")
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line) as AuditLine];
-      } catch {
-        return [];
-      }
-    });
-}
-
-export function linesForRun(lines: AuditLine[], prefix: string): AuditLine[] {
-  return lines.filter((line) => line.run?.startsWith(prefix));
-}
-
-export function recentRuns(lines: AuditLine[], limit = 10): Array<{ run: string; started: string; events: number; last: string }> {
-  const runs = new Map<string, { run: string; started: string; events: number; last: string }>();
-  for (const line of lines) {
-    if (!line.run) continue;
-    const entry = runs.get(line.run) ?? { run: line.run, started: line.ts, events: 0, last: line.type };
-    entry.events += 1;
-    entry.last = line.type;
-    runs.set(line.run, entry);
-  }
-  return [...runs.values()].sort((a, b) => b.started.localeCompare(a.started)).slice(0, limit);
-}
-
-export function formatLine(line: AuditLine): string {
-  const { ts, run: _run, type, ...rest } = line;
-  const detail = Object.entries(rest)
-    .map(([key, value]) => `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`)
-    .join(" ");
-  return `${ts}  ${type.padEnd(28)} ${detail}`;
-}
+export { formatLine, linesForRun, parseAudit, recentRuns };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const config = loadConfig();

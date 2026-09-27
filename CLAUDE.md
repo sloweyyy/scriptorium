@@ -18,6 +18,7 @@ RUN_LLM_EVALS=1 LLM_PROVIDER=gemini pnpm eval   # same contract, Gemini transpor
 pnpm draft <prd.md> [images...]   # full Scribe pipeline from the CLI
 pnpm render:wireframes  # samples/wireframes/*.svg -> .png
 pnpm seed:corpus        # corpus/*.md -> vault/reference/ (--inbox to let the watcher file them)
+pnpm mcp                # the vault as a read-only MCP server over stdio
 ```
 
 ## Architecture
@@ -28,6 +29,10 @@ pnpm seed:corpus        # corpus/*.md -> vault/reference/ (--inbox to let the wa
 | `packages/scribe` | input contract → draft (vision) → deterministic lint → revise → publish (fail-closed); lesson store + distiller |
 | `packages/curator` | `_inbox` watcher, organizer + MOC (idempotent regen), BM25 index (minisearch), tool-runner Q&A (`search_vault` + `read_note`), gap notes |
 | `packages/jira` | REST v2 client (search fallback, attachments, transitions), markdown↔wiki markup, comment commands, poller state (gitignored `.scriptorium-state/`) |
+| `packages/policy` | allow/approve/deny per agent + tool; single-use approvals bound to an args hash; approver rules; `executeApproved` |
+| `packages/runtime` | `AgentEvent` + keys, `Gate` (reasons), `KeyedQueue`, exactly-once `once()` + op-keys, fail-closed `runSession`, `AgentConfig`/`assembleAgent` |
+| `packages/connectors` | Confluence/Jira/Slack tools (allow-listed incl. reads, words-not-query-language), `SlackApprovalChannel` |
+| `skills/` | agent skills as markdown (name/description frontmatter) |
 | `apps/agents` | the surfaces: `scribe-jira.ts` (poller + full flow), Bolt Socket-Mode bots, `gap-ticket.ts` (cross-surface loop); manifests in `slack-manifests/` |
 | `corpus/` | optional retrieved reference pages (not shipped), each with `source_url`; seeded into `vault/reference/` (gitignored, regenerate with `pnpm seed:corpus`) |
 | `vault/` | the knowledge plane — plain Obsidian folder, git history = audit trail |
@@ -35,6 +40,10 @@ pnpm seed:corpus        # corpus/*.md -> vault/reference/ (--inbox to let the wa
 
 ## Design decisions (do not regress)
 
+- **Agents are configuration on one policy-enforced engine** (the platform, since
+  2026-09-27). Every tool call goes through `runUnderPolicy`/`guard`; no connector that can
+  write is reachable any other way. Separate identities and envelopes where the permission
+  boundary is — Curator never authors, the Teammate's writes are approve-tier.
 - **Two agents, one system.** Separate identities where the permission boundary is
   (Scribe may author, gated; Curator may only organize/retrieve — never author
   product claims), shared chassis everywhere else. Do not merge the bots.

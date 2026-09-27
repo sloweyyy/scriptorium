@@ -172,6 +172,7 @@ memory — posts an approval card that a `TEAMMATE_APPROVERS` click carries out 
 | Remember this | `remember`; scoped memory (person / channel / global), human-approved, never reaches published docs |
 | Weekly digest | `weekly-digest`; what moved in Jira and which doc gaps opened, posted once per week to `TEAMMATE_DIGEST_CHANNEL` |
 | Docs into Confluence | `confluence_create_page` / `confluence_update_page`, approve-tier, allowed spaces only |
+| Check a PR against its ticket | `pr-check`; on request or automatically when a PR opens, acceptance criteria covered or not, doc drift flagged, one advisory comment behind a card |
 
 **What keeps the docs honest after they ship.** A published doc records its PRD's hash; if
 the PRD changes later, the ticket it was approved on gets one notice per change. A house rule
@@ -243,7 +244,7 @@ agent never pushes `main`.
 
 ## What is verified, and how
 
-**379 scripted checks, none of which need a model or a credential:** `git clone`,
+**413 scripted checks, none of which need a model or a credential:** `git clone`,
 `pnpm install`, `pnpm eval`, green (`RUN_LLM_EVALS=1` adds five live grounded-Q&A checks on
 whichever provider is configured). They cover the guardrails rather than the prose — contract
 refusal, the lint, the ledger and its restart behaviour, the board transitions, the publish
@@ -320,7 +321,7 @@ Checks:
 
 ```bash
 pnpm typecheck
-pnpm eval                     # 379 checks, no API key needed
+pnpm eval                     # 413 checks, no API key needed
 RUN_LLM_EVALS=1 pnpm eval     # + live checks (grounded Q&A, handoff, red team, hybrid golden set)
 ```
 

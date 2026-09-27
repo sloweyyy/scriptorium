@@ -191,6 +191,31 @@ describe("ingress", () => {
 });
 
 describe("ingress primitives", () => {
+  it("works a redelivered Jira or GitHub webhook once, not twice", async () => {
+    const body = JSON.stringify({ webhookEvent: "comment_created", issue: { key: "DOC-7" }, comment: { id: "10001" } });
+    const headers = { ...jiraSigned(body), "x-atlassian-webhook-identifier": "delivery-1" };
+    expect((await fetch(`${base}/jira/webhook/${JIRA_SECRET}`, { method: "POST", headers, body })).status).toBe(202);
+    const replay = await fetch(`${base}/jira/webhook/${JIRA_SECRET}`, { method: "POST", headers, body });
+    expect(await replay.json()).toMatchObject({ accepted: false, reason: "duplicate delivery" });
+
+    const push = JSON.stringify({ ref: "refs/heads/main", commits: [{ modified: ["docs/a.md"] }], head_commit: { id: "abc", url: "https://x" } });
+    const pushHeaders = { ...signed(push), "x-github-delivery": "gh-1" };
+    await fetch(`${base}/github/webhook`, { method: "POST", headers: pushHeaders, body: push });
+    await fetch(`${base}/github/webhook`, { method: "POST", headers: pushHeaders, body: push });
+    await settle();
+    expect(nudged).toEqual(["DOC-7"]);
+    expect(docsChanges.length).toBeLessThanOrEqual(1);
+  });
+
+  it("only remembers authenticated deliveries", async () => {
+    const body = JSON.stringify({ webhookEvent: "comment_created", issue: { key: "DOC-8" } });
+    // A forged delivery with a real-looking id must not poison the genuine one.
+    await fetch(`${base}/jira/webhook/${JIRA_SECRET}`, { method: "POST", headers: { "Content-Type": "application/json", "x-atlassian-webhook-identifier": "delivery-2" }, body });
+    await fetch(`${base}/jira/webhook/${JIRA_SECRET}`, { method: "POST", headers: { ...jiraSigned(body), "x-atlassian-webhook-identifier": "delivery-2" }, body });
+    await settle();
+    expect(nudged).toEqual(["DOC-8"]);
+  });
+
   it("rejects a secret of the wrong length without throwing", () => {
     expect(secretMatches("short", "much-longer-secret")).toBe(false);
     expect(secretMatches("same", "same")).toBe(true);

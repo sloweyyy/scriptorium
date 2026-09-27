@@ -109,7 +109,7 @@ export async function threadContext(slack: SlackClient, channel: string, threadT
 
 export function formatReply(reply: TeammateReply, runId?: string, viewer?: { baseUrl?: string; token?: string }): string {
   const body = toSlackMrkdwn(reply.text);
-  const ticket = reply.kind === "gap" && reply.ticket ? `\n🎫 <${reply.ticket.url}|${reply.ticket.key}>` : "";
+  const ticket = reply.kind === "gap" && reply.ticket ? `\nRequest: <${reply.ticket.url}|${reply.ticket.key}>` : "";
   const run = runId?.slice(0, 8);
   // With a viewer configured, the run id is a link to everything the run did.
   const runLabel = run
@@ -240,7 +240,11 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     if (!jira) return;
     const { issueKey, commentId, question } = event.payload as { issueKey: string; commentId: string; question: string };
     const reply = await runTeammateTurn({ question: `${question}\n\n(Asked on jira:${issueKey}.)`, askedBy: event.actor.id }, turnDeps(key)).catch(
-      (error: unknown) => ({ kind: "refused" as const, text: `I couldn't finish that: ${error instanceof Error ? error.message : String(error)}` }),
+      // The exception belongs in the audit log, not on a ticket other people read.
+      async (error: unknown) => {
+        await audit(config.auditFile, { type: "teammate.error", actor: "teammate", key, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
+        return { kind: "refused" as const, text: "I couldn't finish that, so I haven't answered or changed anything. Try again in a moment." };
+      },
     );
     const body = markdownToJira(`${reply.text}\n\n_AI-generated — verify before acting · run ${(currentRunId() ?? "").slice(0, 8)}_`);
     const op = opKey("teammate.jira.reply", issueKey, commentId);
@@ -257,7 +261,10 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     const reply = await runTeammateTurn(
       { question: `Check pull request github:${repo}/pull/${number} against the Jira ticket it implements, and propose one advisory comment.`, askedBy: event.actor.id },
       turnDeps(key),
-    ).catch((error: unknown) => ({ kind: "refused" as const, text: `I couldn't check it: ${error instanceof Error ? error.message : String(error)}` }));
+    ).catch(async (error: unknown) => {
+      await audit(config.auditFile, { type: "teammate.error", actor: "teammate", key, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
+      return { kind: "refused" as const, text: "I couldn't check this pull request, so nothing was posted to it." };
+    });
     await slack.chat.postMessage({ channel, text: `*PR check* — github:${repo}/pull/${number}\n${formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken })}` });
     await audit(config.auditFile, { type: `teammate.pr.${reply.kind}`, actor: "teammate", key, repo, number }).catch(() => undefined);
   }
@@ -317,7 +324,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
           async () => {
             const reply = await runTeammateTurn({ question: "Write this week's digest for the team.", askedBy: "cron:digest", channel: digestChannel }, turnDeps(keys.cron("digest")));
             // A refusal is not a digest: throw, so the op stays open and the next hour retries.
-            if (reply.kind === "refused") throw new Error(`digest refused: ${reply.text}`);
+            // Neither a refusal nor a gap note is a digest: throw, so the next hour retries.
+            if (reply.kind === "refused" || reply.kind === "gap") throw new Error(`digest not produced (${reply.kind})`);
             return formatReply(reply, currentRunId());
           },
           async (text) => {

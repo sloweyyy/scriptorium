@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@scriptorium/core": "workspace:*"
+    "@scriptorium/core": "workspace:*",
+    "@anthropic-ai/sdk": "^0.128.0"
   }
 }

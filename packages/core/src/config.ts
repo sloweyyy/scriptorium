@@ -145,6 +145,13 @@ export interface WebhookSettings {
    * still Connect/OAuth-only, so registration remains a UI step.
    */
   jiraHmacSecret?: string;
+  /**
+   * Opens the run viewer (`/runs/<id>?token=…`). Unset: no viewer. The page shows a run's
+   * audit trail — questions, tool calls, approvals — so it is a credential, not a nicety.
+   */
+  traceToken?: string;
+  /** Where the ingress is reachable (`https://…run.app`), for "view run" links on replies. */
+  publicBaseUrl?: string;
   /** GitHub signs with HMAC-SHA256, so this is a real shared secret. */
   githubSecret?: string;
 }
@@ -278,6 +285,8 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       jiraSecret: env("JIRA_WEBHOOK_SECRET"),
       jiraHmacSecret: env("JIRA_WEBHOOK_HMAC_SECRET"),
       githubSecret: env("GITHUB_WEBHOOK_SECRET"),
+      traceToken: env("TRACE_TOKEN"),
+      publicBaseUrl: env("PUBLIC_BASE_URL"),
     },
     docsRepo: {
       url: env("DOCS_REPO_URL"),

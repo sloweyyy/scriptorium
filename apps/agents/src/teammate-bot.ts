@@ -11,10 +11,10 @@ import {
   jiraTools,
   slackTools,
 } from "@scriptorium/connectors";
-import { jiraClient } from "@scriptorium/jira";
+import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type JiraClient } from "@scriptorium/jira";
 import { installationToken } from "@scriptorium/publish";
 import { FileApprovalStore, executeApproved, type GuardDeps } from "@scriptorium/policy";
-import { FileEffectLedger, Gate, KeyedQueue, envelopeOf, keys, loadSkills, memoryTools, type AgentEvent, type EffectLedger } from "@scriptorium/runtime";
+import { FileEffectLedger, Gate, KeyedQueue, envelopeOf, keys, loadSkills, memoryTools, once, opKey, type AgentEvent, type EffectLedger } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
 import { gapTicketOpener } from "./gap-ticket";
@@ -128,6 +128,8 @@ export interface TeammateCore {
   onApprovalClick(action: string, payload: ApprovalClickPayload): Promise<string | undefined>;
   /** The weekly digest, if due and not yet posted this week. */
   checkDigest(now?: Date): Promise<void>;
+  /** A Jira comment; answered on the ticket, as the Teammate, if it mentions the Teammate. */
+  onJiraComment(input: { issueKey: string; commentId: string; body: string; authorId?: string }): Promise<void>;
   /** A pull request to check against its ticket (from the GitHub webhook). */
   onPullRequest(input: { repo: string; number: number; author?: string; deliveryId?: string }): Promise<void>;
   drain(deadlineMs: number): Promise<boolean>;
@@ -145,7 +147,13 @@ export interface ApprovalClickPayload {
  * to a reply, and from a click to a carried-out action, driven by any Slack client. Bolt
  * only binds events to it — which is what lets the wiring itself be tested end to end.
  */
-export async function createTeammate(config: AppConfig, vault: Vault, slack: SlackClient, selfUserId: string): Promise<TeammateCore> {
+/** The Teammate's own Jira identity, when it has one — needed to answer on tickets. */
+export interface TeammateJira {
+  client: JiraClient;
+  accountId: string;
+}
+
+export async function createTeammate(config: AppConfig, vault: Vault, slack: SlackClient, selfUserId: string, jira?: TeammateJira): Promise<TeammateCore> {
   const settings = config.teammate;
   const self = `slack:${selfUserId}`;
 
@@ -175,6 +183,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     async (key, events) => {
       for (const event of events) await withRun(async () => {
         if (event.kind === "github.pull_request") return checkPullRequest(key, event);
+        if (event.kind === "jira.mention") return answerOnJira(key, event);
         const { channel, threadTs, text, ts } = event.payload as { channel: string; threadTs: string; text: string; ts: string };
         // One failing turn is answered and logged; it never drops the rest of the batch —
         // those deliveries are already marked seen, so Slack's redelivery would not bring them back.
@@ -211,6 +220,24 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       },
     },
   );
+
+  /**
+   * A question asked on a Jira ticket, answered there — as the Teammate's own account, once
+   * per triggering comment (op-keyed; a webhook redelivery or a retry finds the reply).
+   */
+  async function answerOnJira(key: string, event: AgentEvent): Promise<void> {
+    if (!jira) return;
+    const { issueKey, commentId, question } = event.payload as { issueKey: string; commentId: string; question: string };
+    const reply = await runTeammateTurn({ question: `${question}\n\n(Asked on jira:${issueKey}.)`, askedBy: event.actor.id }, turnDeps(key)).catch(
+      (error: unknown) => ({ kind: "refused" as const, text: `I couldn't finish that: ${error instanceof Error ? error.message : String(error)}` }),
+    );
+    const body = markdownToJira(`${reply.text}\n\n_AI-generated — verify before acting · run ${(currentRunId() ?? "").slice(0, 8)}_`);
+    const op = opKey("teammate.jira.reply", issueKey, commentId);
+    await once(ledger, op, async () => (await jira.client.addComment(issueKey, body, { op })).id, {
+      probe: async () => (await jira.client.findCommentByOp(issueKey, op))?.id,
+    });
+    await audit(config.auditFile, { type: `teammate.jira.${reply.kind}`, actor: "teammate", key, issue: issueKey }).catch(() => undefined);
+  }
 
   /** The pr-check skill, run for a PR the webhook handed over; the card goes to the PR channel. */
   async function checkPullRequest(key: string, event: AgentEvent): Promise<void> {
@@ -289,6 +316,30 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       );
     },
 
+    async onJiraComment({ issueKey, commentId, body, authorId }) {
+      if (!jira || !mentionsAccount(body, jira.accountId) || authorId === jira.accountId) return;
+      const projects = (settings.jiraProjects.length ? settings.jiraProjects : [config.jira.projectKey ?? ""]).map((project) => project.toUpperCase());
+      if (!projects.includes(issueKey.split("-")[0]?.toUpperCase() ?? "")) {
+        await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: keys.jiraIssue(issueKey), reason: "project is outside the Teammate's Jira projects" }).catch(() => undefined);
+        return;
+      }
+      const event: AgentEvent = {
+        id: `jira-comment:${commentId}`,
+        source: "jira",
+        key: keys.jiraIssue(issueKey),
+        kind: "jira.mention",
+        actor: { id: `jira:${authorId ?? "unknown"}` },
+        payload: { issueKey, commentId, question: jiraToMarkdown(plainText(body)) },
+        receivedAt: new Date().toISOString(),
+      };
+      const verdict = gate.check(event);
+      if (!verdict.accepted) {
+        await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: event.key, reason: verdict.reason }).catch(() => undefined);
+        return;
+      }
+      queue.push(event);
+    },
+
     async onPullRequest({ repo, number, author, deliveryId }) {
       // Only allowed repos, and only with somewhere to put the result and the card.
       if (!settings.prChannel || !settings.githubRepos.map((allowed) => allowed.toLowerCase()).includes(repo.toLowerCase())) {
@@ -321,7 +372,13 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
   const settings = config.teammate;
   const app = new App({ token: settings.botToken, appToken: settings.appToken, socketMode: true });
   const identity = await app.client.auth.test();
-  const core = await createTeammate(config, vault, app.client, String(identity.user_id));
+  // On Jira only as itself: its own service account, or not at all.
+  let jira: TeammateJira | undefined;
+  if (jiraReady(config.jira) && settings.atlassianEmail && settings.atlassianToken) {
+    const client = jiraClient({ ...config.jira, email: settings.atlassianEmail, apiToken: settings.atlassianToken });
+    jira = { client, accountId: (await client.myself()).accountId };
+  }
+  const core = await createTeammate(config, vault, app.client, String(identity.user_id), jira);
 
   app.event("app_mention", async ({ event }) => core.onMention(event as SlackMention));
   app.message(async ({ message }) => core.onDirectMessage(message as SlackMention & { channel_type?: string; subtype?: string }));

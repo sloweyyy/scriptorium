@@ -126,6 +126,7 @@ const ingress = startIngress({
   hooks: {
     nudge: scribe ? (issueKey) => scribe!.nudge(issueKey) : undefined,
     pullRequest: (input) => teammate?.onPullRequest(input) ?? Promise.resolve(),
+    jiraComment: (input) => teammate?.onJiraComment(input) ?? Promise.resolve(),
     docsChanged: docsRepoReady(config.docsRepo)
       ? async ({ paths, commitUrl }) => {
           const change = await syncFromDocsRepo(config, vault, paths);

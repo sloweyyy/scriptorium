@@ -22,6 +22,8 @@ export function teammateConfig(input: { selfAccountIds: string[]; approvers: str
       confluence_search: "allow",
       confluence_read_page: "allow",
       confluence_page_children: "allow",
+      confluence_page_attachments: "allow",
+      confluence_read_attachment: "allow",
       jira_search: "allow",
       jira_recent: "allow",
       jira_children: "allow",

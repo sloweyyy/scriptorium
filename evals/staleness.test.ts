@@ -37,7 +37,7 @@ describe("staleness", () => {
   it("a doc is fresh until its PRD's body changes — and stays fresh through Curator's frontmatter edits", async () => {
     await vault.writeNote("prd/maintenance.md", "# Maintenance\n\nReminder 1 hour before start.", { feature: "Maintenance" });
     await publish("maintenance");
-    expect(await checkStaleness(vault)).toEqual([{ doc: "docs/maintenance.md", status: "fresh", source: "prd/maintenance" }]);
+    expect(await checkStaleness(vault)).toMatchObject([{ doc: "docs/maintenance.md", status: "fresh", source: "prd/maintenance" }]);
 
     // Curator re-files the PRD: new frontmatter, same body. Not stale.
     await vault.writeNote("prd/maintenance.md", "# Maintenance\r\n\r\nReminder 1 hour before start.", { feature: "Maintenance", filed: "2026-09-27", related: ["[[docs/maintenance]]"] });
@@ -68,5 +68,31 @@ describe("staleness", () => {
     const staged = await fs.readFile(path.join(dest, "docs", "maintenance.md"), "utf8");
     expect(staged).toContain("Body.");
     expect(staged).not.toContain("source_hash");
+  });
+});
+
+describe("stale docs are reported on their ticket, once per change", () => {
+  it("notifies DOC-7 once for a PRD change, again for a second change, and never for a fresh doc", async () => {
+    const { reportStaleDocs } = await import("@scriptorium/agents");
+    const { MemoryEffectLedger } = await import("@scriptorium/runtime");
+    await vault.writeNote("prd/maintenance.md", "# Maintenance\n\nReminder 1 hour before.", {});
+    await publishDoc({ vault, auditFile: path.join(tmpRoot, "audit.jsonl"), repoRoot: tmpRoot, markdown: "# Maintenance\n\nBody.", approvedBy: "PM", sourcePrd: "prd/maintenance", slug: "maintenance", jiraIssue: "DOC-7" });
+    const ledger = new MemoryEffectLedger();
+    const sent: Array<[string, string]> = [];
+    const run = () => reportStaleDocs({ vault, ledger, auditFile: path.join(tmpRoot, "audit.jsonl"), notify: async (key, markdown) => void sent.push([key, markdown]) });
+
+    await run();
+    expect(sent).toHaveLength(0);
+
+    await vault.writeNote("prd/maintenance.md", "# Maintenance\n\nReminder 24 hours before.", {});
+    await run();
+    await run();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.[0]).toBe("DOC-7");
+    expect(sent[0]?.[1]).toContain("comment `draft`");
+
+    await vault.writeNote("prd/maintenance.md", "# Maintenance\n\nReminder 48 hours before.", {});
+    await run();
+    expect(sent).toHaveLength(2);
   });
 });

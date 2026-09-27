@@ -13,6 +13,10 @@ export interface DocFreshness {
   doc: string;
   status: Freshness;
   source?: string;
+  /** The source's hash now — with `doc`, what identifies ONE change to report once. */
+  currentHash?: string;
+  /** The ticket the doc was approved on, when known: where a stale notice belongs. */
+  jiraIssue?: string;
 }
 
 export async function checkStaleness(vault: Vault): Promise<DocFreshness[]> {
@@ -33,7 +37,8 @@ export async function checkStaleness(vault: Vault): Promise<DocFreshness[]> {
       continue;
     }
     const now = sourceHash((await vault.readNote(sourcePath)).body);
-    report.push({ doc: relPath, status: now === baseline ? "fresh" : "stale", source });
+    const jiraIssue = typeof note.frontmatter.jira_issue === "string" ? note.frontmatter.jira_issue : undefined;
+    report.push({ doc: relPath, status: now === baseline ? "fresh" : "stale", source, currentHash: now, ...(jiraIssue ? { jiraIssue } : {}) });
   }
   return report.sort((a, b) => a.doc.localeCompare(b.doc));
 }

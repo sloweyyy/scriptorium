@@ -72,6 +72,11 @@ const slack = {
   },
   conversations: {
     replies: async () => ({ messages: threadReplies }),
+    // D1 is U1's DM with the bot; D_PEOPLE is a DM between two people the bot isn't in.
+    info: async (args: { channel: string }) => {
+      if (args.channel === "D1") return { ok: true, channel: { id: "D1", is_im: true, user: "U1" } };
+      throw new Error("channel_not_found");
+    },
     history: async (args: { channel: string }) => ({ messages: posted.filter((message) => message.channel === args.channel).map((message, index) => ({ ...message, ts: `9.${index + 1}` })) }),
   },
 };
@@ -105,7 +110,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpRoot, { recursive: true, force: true });
+  await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 describe("teammate, end to end", () => {
@@ -303,6 +308,46 @@ describe("automatic PR checks", () => {
   });
 });
 
+describe("admin controls", () => {
+  it("an admin pauses it: nothing is answered or carried out until they resume; others can't", async () => {
+    const admins = { ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig;
+    const core = await createTeammate(admins, vault, slack as never, "UBOT");
+    script = { calls: [{ name: "memory_save", input: { text: "Release notes go out on Thursdays.", scope: "channel:C1" } }], reply: "Asked." };
+    await core.onMention({ channel: "C1", ts: "3.0", user: "U1", text: "<@UBOT> remember release notes go out on Thursdays" });
+    await settle(core);
+    const card = posted.find((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION))!;
+    const requestId = JSON.stringify(card.blocks).match(/"value":"([0-9a-f-]{36})"/)?.[1] as string;
+
+    expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: "admin pause", commandId: "a0" })).toMatch(/^Only Teammate admins/);
+    expect(await core.onSlashCommand({ channel: "C_ANY", user: "UADMIN", text: "admin pause investigating", commandId: "a1" })).toMatch(/^⏸️ Paused/);
+
+    const again = await createTeammate(admins, vault, slack as never, "UBOT");
+    posted.length = 0;
+    script = { calls: [], reply: "SHOULD NOT BE CALLED" };
+    await again.onMention({ channel: "C1", ts: "4.0", user: "U1", text: "<@UBOT> hello?" });
+    await settle(again);
+    expect(posted.map((message) => message.text)).toEqual(["⏸️ I've been paused by an admin, so I'm not answering or changing anything right now."]);
+    // A click while paused decides nothing: the request is still pending afterwards.
+    const core2 = await createTeammate(admins, vault, slack as never, "UBOT");
+    expect(await core2.onApprovalClick(APPROVE_ACTION, { actions: [{ value: requestId }], user: { id: "UPM", username: "priya" }, channel: { id: "C1" }, message: { ts: "9.1" } })).toContain("paused");
+    expect(await vault.listNotes("_memory")).toHaveLength(0);
+
+    expect(await core2.onSlashCommand({ channel: "C_ANY", user: "UADMIN", text: "admin resume", commandId: "a2" })).toBe("▶️ Resumed.");
+    expect(await core2.onApprovalClick(APPROVE_ACTION, { actions: [{ value: requestId }], user: { id: "UPM", username: "priya" }, channel: { id: "C1" }, message: { ts: "9.1" } })).toBeUndefined();
+    expect(await vault.listNotes("_memory")).toHaveLength(1);
+  });
+
+  it("a tool an admin switched off is not offered, and an approval for it isn't carried out", async () => {
+    const admins = { ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig;
+    const core = await createTeammate(admins, vault, slack as never, "UBOT");
+    expect(await core.onSlashCommand({ channel: "C1", user: "UADMIN", text: "admin deny memory_save", commandId: "a3" })).toBe("🚫 `memory_save` is off.");
+    script = { calls: [{ name: "memory_save", input: { text: "x is y.", scope: "channel:C1" } }], reply: "Asked." };
+    await core.onMention({ channel: "C1", ts: "5.0", user: "U1", text: "<@UBOT> remember x" });
+    await settle(core);
+    expect(posted.some((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION))).toBe(false);
+  });
+});
+
 describe("reminders", () => {
   it("a reminder is approved once, posted once when due, escaped, and only in the channel that asked", async () => {
     const core = await createTeammate(config(), vault, slack as never, "UBOT");
@@ -433,6 +478,13 @@ describe("slash command and shortcut", () => {
     expect(root).toMatchObject({ channel: "C1", text: "<@U1> asked: when are digests sent? &lt;!channel&gt;" });
     expect(answer).toMatchObject({ channel: "C1", thread_ts: "9.1" });
     expect(answer?.text).toContain("docs/digest-emails");
+  });
+
+  it("in DMs, only the invoker's own DM with the Teammate counts", async () => {
+    const core = await createTeammate({ ...config(), teammate: { ...config().teammate, allowDms: true } } as AppConfig, vault, slack as never, "UBOT");
+    expect(await core.onFileAsTicket({ channel: "D_PEOPLE", user: "U1", messageTs: "5.0", shortcutId: "s9" })).toMatch(/^I don't work/);
+    expect(await core.onSlashCommand({ channel: "D1", user: "U2", text: "hi", commandId: "t9" })).toMatch(/^I don't work/);
+    expect(await core.onSlashCommand({ channel: "D1", user: "U1", text: "help", commandId: "t10" })).toContain("I'm the Teammate");
   });
 
   it("'File as a ticket' reads the thread including the message it was used on", async () => {
@@ -603,6 +655,14 @@ describe("spend caps", () => {
     await settle(core);
     expect(posted[0]?.text).toContain("today's usage limit");
     expect(await fs.readFile(auditFile, "utf8")).toContain('"scope":"*"');
+  });
+
+  it("/teammate over the cap answers privately and posts nothing", async () => {
+    await fs.writeFile(path.join(tmpRoot, "audit.jsonl"), JSON.stringify({ ts: new Date().toISOString(), type: "llm.usage", scope: "C1", input: 5_000, output: 0 }) + "\n");
+    const capped = { ...config(), teammate: { ...config().teammate, dailyTokens: 1_000 } } as AppConfig;
+    const core = await createTeammate(capped, vault, slack as never, "UBOT");
+    expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: "when are digests sent?", commandId: "t1" })).toContain("today's usage limit");
+    expect(posted).toEqual([]);
   });
 
   it("a Jira project and a PR repo are capped too — a ticket comment can't spend without limit", async () => {

@@ -24,6 +24,7 @@ import { ASKING_SUBTYPES, capQuestion, formatReply, helpText, isHelpRequest, men
 import { sharesScribeAccount, teammateConnectorTools } from "./teammate-bot/tools";
 import { outcomeMessages } from "./teammate-bot/outcome";
 import { homeBlocks } from "./teammate-bot/home";
+import { OPEN, applyAdminCommand, narrowTools, readControl, writeControl, type Control } from "./teammate-bot/control";
 import { REMINDER_EVENT_TYPE, dueReminders, markReminder, reminderText, reminderTools } from "./teammate-bot/reminders";
 
 export * from "./teammate-bot/messages";
@@ -31,6 +32,7 @@ export * from "./teammate-bot/tools";
 export * from "./teammate-bot/outcome";
 export * from "./teammate-bot/home";
 export * from "./teammate-bot/reminders";
+export * from "./teammate-bot/control";
 
 /**
  * The Teammate in Slack: the whole engine behind one surface.
@@ -160,7 +162,12 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       total.add(ALL, usage.input + usage.output);
     },
   });
-  const turnDeps = (key: string) => ({ vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config), signingKey: config.signingKey });
+  // Runtime controls, re-read for every event and timer run: an admin's pause applies at once.
+  const controlFile = path.join(stateDir, "control.json");
+  let current: Control = OPEN;
+  const refreshControl = async (): Promise<Control> => (current = await readControl(controlFile, config.signingKey));
+  const PAUSED_NOTICE = "⏸️ I've been paused by an admin, so I'm not answering or changing anything right now.";
+  const turnDeps = (key: string) => ({ vault, config: { ...hostConfig, tools: narrowTools(hostConfig.tools, current) }, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config), signingKey: config.signingKey });
 
   const gate = new Gate({
     selfIds: [self],
@@ -172,6 +179,14 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const queue = new KeyedQueue(
     async (key, events) => {
       for (const event of events) await withRun(async () => {
+        if ((await refreshControl()).paused) {
+          await audit(config.auditFile, { type: "teammate.paused", actor: "teammate", key, event: event.id, reason: current.reason }).catch(() => undefined);
+          if (event.source === "slack") {
+            const { channel, threadTs } = event.payload as { channel: string; threadTs: string };
+            await slack.chat.postMessage({ channel, thread_ts: threadTs, text: PAUSED_NOTICE }).catch(() => undefined);
+          }
+          return;
+        }
         if (event.kind === "github.pull_request") return checkPullRequest(key, event);
         if (event.kind === "jira.mention") return answerOnJira(key, event);
         const { channel, threadTs, text, ts } = event.payload as { channel: string; threadTs: string; text: string; ts: string };
@@ -377,7 +392,15 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   }
 
   /** Where the Teammate answers: its channels, and DMs only when they are allowed. */
-  const answersIn = (channel: string): boolean => settings.channels.includes(channel) || (settings.allowDms && channel.startsWith("D"));
+  // A DM counts only when it is the invoker's DM WITH the Teammate: a command or shortcut used
+  // in a DM between two people is not a conversation it is part of (and it can't read one).
+  const answersIn = async (channel: string, user: string): Promise<boolean> => {
+    if (settings.channels.includes(channel)) return true;
+    if (!settings.allowDms || !channel.startsWith("D")) return false;
+    const info = await slack.conversations.info({ channel }).catch(() => undefined);
+    const im = info?.channel as { is_im?: boolean; user?: string } | undefined;
+    return Boolean(im?.is_im && im.user === user);
+  };
   const notHere = (): string =>
     settings.channels.length ? `I don't work in this conversation. Ask me in ${settings.channels.map((id) => `<#${id}>`).join(", ")}.` : "I'm not set up to answer in any channel yet.";
 
@@ -425,10 +448,23 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     },
 
     async onSlashCommand({ channel, user, text, commandId }) {
+      // `/teammate admin …`: private, from anywhere, and only for listed admins.
+      const admin = text.trim().match(/^admin\b(.*)$/is);
+      if (admin) {
+        if (!(settings.admins ?? []).includes(user)) return "Only Teammate admins (`TEAMMATE_ADMINS`) can do that.";
+        const result = applyAdminCommand(await refreshControl(), admin[1] ?? "", `slack:${user}`, new Date(), Object.keys(envelope.tools));
+        if ("control" in result) {
+          await writeControl(controlFile, result.control, config.signingKey);
+          await audit(config.auditFile, { type: "teammate.control.changed", actor: `slack:${user}`, control: result.control }).catch(() => undefined);
+        }
+        return result.message;
+      }
       // A command is typed anywhere; it is answered only where a mention would be.
-      if (!answersIn(channel)) return notHere();
+      if (!(await answersIn(channel, user))) return notHere();
       const question = text.trim();
       if (isHelpRequest(question)) return helpText(settings);
+      // Over today's cap: say so privately, before posting a question nobody will answer.
+      if (await overBudget(keys.slackThread(channel, "command"), channel)) return LIMIT_NOTICE;
       // The command itself is invisible to the channel, so the question is posted first and
       // becomes the thread — the answer and any approval card land under it, where people see them.
       const root = await slack.chat.postMessage({ channel, text: `<@${user}> asked: ${escapeMrkdwn(question)}` }).catch(() => undefined);
@@ -438,7 +474,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     },
 
     async onFileAsTicket({ channel, user, messageTs, threadTs, shortcutId }) {
-      if (!answersIn(channel)) return notHere();
+      if (!(await answersIn(channel, user))) return notHere();
       // The message the shortcut was used on is part of the discussion, not the trigger: no
       // real ts is excluded from the thread, so the model reads that message too.
       await core.onMention({ channel, ts: SHORTCUT_TRIGGER, thread_ts: threadTs ?? messageTs, user, text: "Turn this thread into a Jira ticket.", client_msg_id: `shortcut:${shortcutId}` });
@@ -465,6 +501,18 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
 
     async onApprovalClick(action, payload) {
       const requestId = payload.actions?.[0]?.value ?? "";
+      // Carrying out is a write: paused, or with its tool switched off, nothing is decided or
+      // done and the request stays as it was. A rejection is always allowed.
+      if (action !== REJECT_ACTION) {
+        const control = await refreshControl();
+        const request = (await store.all()).find((candidate) => candidate.id === requestId);
+        if (control.paused) return `${PAUSED_NOTICE} Nothing was decided; try again after they resume.`;
+        const allowed = narrowTools(envelope.tools, control);
+        // A plan approved before a tool was switched off must not carry that tool out after.
+        const steps = request?.tool === PLAN_TOOL ? ((request.args as { steps?: Array<{ tool?: unknown }> } | undefined)?.steps ?? []).map((step) => String(step.tool)) : [];
+        const off = request ? [request.tool, ...steps].find((tool) => !(tool in allowed)) : undefined;
+        if (off) return `An admin has switched \`${off}\` off for now. Nothing was decided or done.`;
+      }
       const where = { channel: payload.channel?.id, threadTs: payload.message?.thread_ts ?? payload.message?.ts };
       if (action === RETRY_ACTION) {
         // A retry decides nothing new: the request is already approved. It only asks a
@@ -496,6 +544,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     },
 
     async checkReminders(now = new Date()) {
+      // Paused: reminders wait (and are dropped if a day overdue by the time it resumes).
+      if ((await refreshControl()).paused) return;
       const { due, stale } = await dueReminders(reminders, now.getTime());
       for (const reminder of due) {
         // Probed, not just op-keyed: a post that landed before a crash or a timeout is found
@@ -524,6 +574,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     },
 
     async checkDigest(now = new Date()) {
+      if ((await refreshControl()).paused) return;
       if (!digestChannel || !config.hasModelAccess) return;
       if (!digestDue(now, { weekday: settings.digestWeekday, hour: settings.digestHour })) return;
       await withRun(() =>

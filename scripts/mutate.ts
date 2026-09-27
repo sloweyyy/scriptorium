@@ -30,6 +30,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/frontmatter-safety.test.ts"],
   },
   {
+    control: "an edited audit line breaks the chain",
+    file: "packages/core/src/audit.ts",
+    find: "    if (prev !== expected && !(chained === 0 && index === 0 && prev === \"genesis\")) {",
+    replace: "    if (false) {",
+    evals: ["evals/audit-chain.test.ts"],
+  },
+  {
     control: "vault path-escape guard",
     file: "packages/core/src/vault.ts",
     find: "if (resolved !== rootAbs && !resolved.startsWith(rootAbs + path.sep)) {",
@@ -70,6 +77,20 @@ export const MUTANTS: Mutant[] = [
     find: "(tool.name === PLAN_TOOL ? summarizePlan(input) : summarizeArgs(input))",
     replace: "summarizeArgs(input)",
     evals: ["evals/plan.test.ts"],
+  },
+  {
+    control: "a control file that doesn't verify means paused",
+    file: "apps/agents/src/teammate-bot/control.ts",
+    find: "return { ...OPEN, paused: true, reason: \"the control file's signature does not match\" };",
+    replace: "return control;",
+    evals: ["evals/control.test.ts"],
+  },
+  {
+    control: "paused, the Teammate answers and carries out nothing",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "        if ((await refreshControl()).paused) {\n          await audit(",
+    replace: "        if (false) {\n          await audit(",
+    evals: ["evals/teammate-e2e.test.ts"],
   },
   {
     control: "approvals bind to the exact arguments",
@@ -134,6 +155,13 @@ export const MUTANTS: Mutant[] = [
     file: "packages/connectors/src/confluence.ts",
     find: "      .filter((child) => allowed.has(child.spaceId ?? parent.spaceId))\n",
     replace: "",
+    evals: ["evals/confluence-connector.test.ts"],
+  },
+  {
+    control: "a Confluence attachment is read only from a page in an allowed space",
+    file: "packages/connectors/src/confluence.ts",
+    find: "    if (!allowed.has(page.spaceId)) throw new ConfluenceAccessError(",
+    replace: "    if (false) throw new ConfluenceAccessError(",
     evals: ["evals/confluence-connector.test.ts"],
   },
   {

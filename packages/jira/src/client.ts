@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import type { JiraSettings } from "@scriptorium/core";
+import { fetchWithBackoff, type JiraSettings } from "@scriptorium/core";
 import { parseComments, parseIssue, parseIssues, parseMyself } from "./schemas";
 import type { CommentRestriction, JiraAttachment, JiraComment, JiraIssue, JiraRemoteLink, JiraTransition, JiraUser } from "./types";
 
@@ -61,7 +61,7 @@ export class JiraClient {
   }
 
   private async call(endpoint: string, init: RequestInit = {}): Promise<Response> {
-    return fetch(`${this.base}${endpoint}`, {
+    return fetchWithBackoff(`${this.base}${endpoint}`, {
       ...init,
       headers: { Authorization: this.authHeader, Accept: "application/json", ...(init.headers ?? {}) },
     });

@@ -215,7 +215,7 @@ describe("a Slack message as a citation", () => {
     expect(read.ungrounded).toBeUndefined();
     const invented = await enforceGrounding(vault, parseQaAnswer("Digests move to 07:00 [[slack:C1/1712000999.000100]].", "q"), { usedOverview: false, retrieved: [], records });
     expect(invented.ungrounded).toBe(true);
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5 });
   });
 });
 

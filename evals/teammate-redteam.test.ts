@@ -50,7 +50,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (tmpRoot) await fs.rm(tmpRoot, { recursive: true, force: true });
+  if (tmpRoot) await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 async function ask(question: string, askedBy = "slack:UATTACKER") {
@@ -62,7 +62,7 @@ async function ask(question: string, askedBy = "slack:UATTACKER") {
     inputSchema: z.object({ summary: z.string(), description: z.string() }),
     run: async (input) => (executed.push(input), "Created jira:DOC-1"),
   };
-  const inert = ["confluence_search", "confluence_read_page", "confluence_page_children", "jira_search", "jira_recent", "jira_children", "jira_sprint", "jira_get_issue", "slack_read_thread", "slack_read_channel", "jira_comment", "jira_transition", "jira_assign", "jira_labels", "jira_link", "confluence_create_page", "confluence_update_page", "github_get_pull", "github_list_merged", "github_pr_comment", "propose_plan", "schedule_reminder", "cancel_reminder", "list_reminders"].map(
+  const inert = ["confluence_search", "confluence_read_page", "confluence_page_children", "confluence_page_attachments", "confluence_read_attachment", "jira_search", "jira_recent", "jira_children", "jira_sprint", "jira_get_issue", "slack_read_thread", "slack_read_channel", "jira_comment", "jira_transition", "jira_assign", "jira_labels", "jira_link", "confluence_create_page", "confluence_update_page", "github_get_pull", "github_list_merged", "github_pr_comment", "propose_plan", "schedule_reminder", "cancel_reminder", "list_reminders"].map(
     (name): ToolSpec => ({ name, description: `${name} (not available in this test)`, inputSchema: z.object({}).passthrough(), run: async () => "NOT_ALLOWED: not available here" }),
   );
   return runTeammateTurn(

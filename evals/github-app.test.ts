@@ -106,7 +106,7 @@ describe("installation tokens", () => {
       const token = await installationToken({ appId: "4242", privateKey: keyPath, repo: "o/r" });
       expect(token).toBe("ghs_installation");
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 5 });
     }
   });
 

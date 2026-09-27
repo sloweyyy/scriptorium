@@ -31,7 +31,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpRoot, { recursive: true, force: true });
+  await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 async function stagedFiles(dir: string): Promise<string[]> {
@@ -399,6 +399,6 @@ describe("internal target link pruning", () => {
     expect(index).not.toContain("Rate limits"); // the label was the leak
     expect(staged.files).not.toContain("reference/api-rate-limits.md");
 
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5 });
   });
 });

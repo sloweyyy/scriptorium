@@ -8,17 +8,29 @@ import { MemoryEffectLedger } from "@scriptorium/runtime";
  */
 
 let requests: string[];
+let downloads: Array<{ url: string; auth: boolean }> = [];
 /** Pages the stub serves, by id → space id. */
 const PAGES: Record<string, { spaceId: string; title: string }> = {
   "101": { spaceId: "1", title: "Maintenance windows" },
+  "104": { spaceId: "1", title: "Specs" },
   "202": { spaceId: "2", title: "Salaries 2026" },
 };
 
 beforeEach(() => {
   requests = [];
-  vi.stubGlobal("fetch", async (input: string) => {
+  downloads = [];
+  vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
     const url = decodeURIComponent(String(input));
     requests.push(url);
+    downloads.push({ url, auth: Boolean((init?.headers as Record<string, string> | undefined)?.Authorization) });
+    if (url.endsWith("/api/v2/pages/101/attachments?limit=50")) {
+      return new Response(JSON.stringify({ results: [
+        { id: "att1", title: "limits.csv", mediaType: "text/csv", fileSize: 40, downloadLink: "/download/attachments/101/limits.csv", pageId: "101" },
+        { id: "att2", title: "deck.pdf", mediaType: "application/pdf", fileSize: 900000, downloadLink: "/download/attachments/101/deck.pdf", pageId: "101" },
+      ] }), { status: 200 });
+    }
+    if (url.includes("/download/attachments/101/limits.csv")) return new Response(null, { status: 302, headers: { location: "https://media.example/blob/limits.csv" } });
+    if (url.startsWith("https://media.example/")) return new Response("plan,max_seats\nfree,5\nteam,50", { status: 200 });
     const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200 });
     if (url.includes("/api/v2/spaces?keys=")) return json({ results: [{ id: 1, key: "BEACON" }] });
     if (url.includes("/rest/api/search")) {
@@ -26,6 +38,7 @@ beforeEach(() => {
     }
     const parent = url.match(/\/api\/v2\/pages\/(\d+)\/children/)?.[1];
     if (parent === "101") return json({ results: [{ id: "103", title: "Maintenance runbook", spaceId: "1" }, { id: "202", title: "Salaries 2026", spaceId: "2" }] });
+    if (parent === "104") return json({ results: [{ id: "105", title: "Child", spaceId: "1" }], _links: { next: "/wiki/api/v2/pages/104/children?cursor=x" } });
     const page = url.match(/\/api\/v2\/pages\/(\d+)/)?.[1];
     if (page && PAGES[page]) {
       return json({ id: page, title: PAGES[page].title, spaceId: PAGES[page].spaceId, body: { storage: { value: "<h1>Hello</h1><p>World</p>" } }, _links: { webui: `/spaces/X/pages/${page}` } });
@@ -99,6 +112,28 @@ describe("confluence page trees", () => {
     expect(refused).toMatch(/^NOT_ALLOWED/);
     expect(refused).not.toContain("Salaries");
   });
+
+  it("says when a page has more children than it lists", async () => {
+    const children = connector().tools().find((tool) => tool.name === "confluence_page_children")!;
+    const out = JSON.parse(await children.run({ id: "104" })) as Array<{ note?: string; cite?: string }>;
+    expect(out.map((hit) => hit.cite ?? hit.note)).toEqual(["confluence:105", "Showing the first 100 child pages; there are more."]);
+  });
+});
+
+describe("confluence attachments", () => {
+  it("reads a text attachment of an allowed page, never sending credentials to media storage", async () => {
+    const tools = connector().tools();
+    const list = tools.find((tool) => tool.name === "confluence_page_attachments")!;
+    const read = tools.find((tool) => tool.name === "confluence_read_attachment")!;
+    expect(JSON.parse(await list.run({ id: "101" })).map((attachment: { title: string }) => attachment.title)).toEqual(["limits.csv", "deck.pdf"]);
+    const out = await read.run({ pageId: "101", attachmentId: "att1" });
+    expect(out).toBe("confluence:101 — attachment limits.csv\n\nplan,max_seats\nfree,5\nteam,50");
+    expect(read.records!({ pageId: "101", attachmentId: "att1" }, out)).toEqual(["confluence:101"]);
+    expect(downloads.find((request) => request.url.startsWith("https://media.example/"))?.auth).toBe(false);
+    expect(await read.run({ pageId: "101", attachmentId: "att2" })).toMatch(/^NOT_ALLOWED: deck.pdf is application\/pdf/);
+    expect(await list.run({ id: "202" })).toMatch(/^NOT_ALLOWED/);
+    expect(await read.run({ pageId: "202", attachmentId: "att1" })).toMatch(/^NOT_ALLOWED/);
+  });
 });
 
 describe("confluence writes", () => {
@@ -149,6 +184,14 @@ describe("confluence writes", () => {
     expect(pages[retry.id]?.body).toContain("h1. Digest");
   });
 
+  it("won't claim a page someone else already made with that title", async () => {
+    pages["777"] = { title: "Release notes", spaceId: "1", version: 3, body: "a human's page" };
+    const create = writer().tools().find((tool) => tool.name === "confluence_create_page")!;
+    const out = await create.run({ space: "BEACON", title: "Release notes", markdown: "# x" }, { approval: { id: "ap-1" } });
+    expect(out).toMatch(/^NOT_ALLOWED: A page titled "Release notes" already exists in BEACON \(confluence:777\)/);
+    expect(pages["777"]?.body).toBe("a human's page");
+  });
+
   it("refuses to write outside the allowed spaces", async () => {
     await expect(writer().createPage({ space: "HR", title: "x", markdown: "x" })).rejects.toThrow(/outside/);
     await expect(writer().updatePage({ id: "202", markdown: "x" })).rejects.toThrow(/outside/);
@@ -166,7 +209,7 @@ describe("confluence writes", () => {
 
   it("offers no write tools without a ledger", () => {
     const readOnly = new ConfluenceConnector({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", allowedSpaceKeys: ["BEACON"] });
-    expect(readOnly.tools().map((tool) => tool.name)).toEqual(["confluence_search", "confluence_read_page", "confluence_page_children"]);
+    expect(readOnly.tools().map((tool) => tool.name)).toEqual(["confluence_search", "confluence_read_page", "confluence_page_children", "confluence_page_attachments", "confluence_read_attachment"]);
     expect(writer().tools().map((tool) => tool.name)).toContain("confluence_update_page");
   });
 });
@@ -178,12 +221,13 @@ describe("a failed space lookup", () => {
       const url = decodeURIComponent(String(input));
       if (url.includes("/api/v2/spaces?keys=")) {
         calls += 1;
-        return calls === 1 ? new Response("down", { status: 503 }) : new Response(JSON.stringify({ results: [{ id: 1, key: "BEACON" }] }));
+        // A 500, not a 503: a 503 is now retried in place (rate-limit backoff), which is not what this checks.
+        return calls === 1 ? new Response("down", { status: 500 }) : new Response(JSON.stringify({ results: [{ id: 1, key: "BEACON" }] }));
       }
       return new Response(JSON.stringify({ results: [] }));
     });
     const c = new ConfluenceConnector({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", allowedSpaceKeys: ["BEACON"] });
-    await expect(c.search("x")).rejects.toThrow(/503/);
+    await expect(c.search("x")).rejects.toThrow(/500/);
     expect(await c.search("x")).toEqual([]);
   });
 });

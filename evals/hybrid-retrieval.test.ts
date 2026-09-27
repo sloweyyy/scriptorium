@@ -41,7 +41,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(tmpRoot, { recursive: true, force: true });
+  await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 describe("hybrid retrieval", () => {
@@ -114,6 +114,6 @@ describe.runIf(live)("hybrid golden set (live embeddings)", () => {
     const metrics = Object.fromEntries(Object.entries(byTag).map(([tag, { recall, rr }]) => [tag, { recallAt5: mean(recall), mrr: mean(rr) }]));
     await fs.writeFile(path.join(os.tmpdir(), "scriptorium-hybrid-metrics.json"), JSON.stringify(metrics));
     for (const [tag, floor] of Object.entries(baseline)) expect(metrics[tag]?.recallAt5, `${tag} recall@5`).toBeGreaterThanOrEqual(floor.recallAt5);
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5 });
   }, 300_000);
 });

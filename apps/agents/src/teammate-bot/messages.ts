@@ -110,6 +110,8 @@ const TOOL_PROGRESS: Record<string, string> = {
   confluence_search: "Searching Confluence",
   confluence_read_page: "Reading a Confluence page",
   confluence_page_children: "Looking through a Confluence page tree",
+  confluence_page_attachments: "Checking a page's attachments",
+  confluence_read_attachment: "Reading an attachment",
   jira_search: "Searching Jira",
   jira_recent: "Checking recent Jira activity",
   jira_children: "Reading the epic's issues",

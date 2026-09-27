@@ -60,7 +60,38 @@ Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
 | A reminder never arrived | audit `teammate.reminder.failed` / `teammate.reminder.stale` | the bot isn't in the channel (`/invite @Teammate`), or the service was down for over a day — overdue reminders are dropped, not posted late |
 | `/teammate` says "I don't work in this conversation" | `TEAMMATE_SLACK_CHANNELS` | the channel isn't listed, or it's a DM and `TEAMMATE_ALLOW_DMS` is off |
 | The Home tab is empty or missing | the app's manifest | the app was installed before the Home tab was added: reinstall it from `slack-manifests/teammate.yaml` |
+| Slow replies at busy times | nothing, usually | Jira, Confluence or GitHub rate-limited us (429). Calls wait what the service asks, up to 30s over 3 tries, then fail closed as before |
 | The same Jira comment twice | shouldn't happen: writes are op-keyed | check whether two instances are running (see below) |
+
+## The audit log
+
+Every line is hash-chained to the one before it, so an edited, removed or reordered line is
+detectable:
+
+- `pnpm auditlog verify [file]` checks the chain and names the first line that breaks it.
+- `pnpm auditlog export --from 2026-09-01 --to 2026-09-30 [file]` writes that range as JSONL,
+  with a digest on stderr (an HMAC with `SCRIPTORIUM_SIGNING_KEY` when set), so an extract
+  handed to a reviewer can be checked against it.
+
+Set `AUDIT_FILE` to a path on the persistent state volume (for example
+`/state/audit/log.jsonl`). The default, `audit/log.jsonl` in the working directory, does not
+survive a Cloud Run revision.
+
+## Stop it now
+
+A tool misbehaving, answers going wrong, a cost spike: an admin (`TEAMMATE_ADMINS`) runs,
+from anywhere in Slack:
+
+- `/teammate admin pause <reason>`: it answers nothing and carries nothing out, including
+  approvals already given. They stay pending until `/teammate admin resume`.
+- `/teammate admin deny <tool>`: that one tool is off, even for approvals already given.
+  `allow <tool>` turns it back on.
+- `/teammate admin readonly on`: it answers, but proposes no changes.
+- `/teammate admin status`: what is switched off, by whom, and when.
+
+The controls are a signed file in the state dir, `control.json`. A control file that can't
+be read or doesn't verify counts as **paused**. Delete it (with the service running) to
+clear every control.
 
 ## Hard rules
 

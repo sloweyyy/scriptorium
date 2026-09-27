@@ -1,4 +1,4 @@
-import type { ToolRunContext, ToolSpec } from "@scriptorium/core";
+import { fetchWithBackoff, type ToolRunContext, type ToolSpec } from "@scriptorium/core";
 import { once, opKey, type EffectLedger } from "@scriptorium/runtime";
 import { z } from "zod";
 
@@ -62,7 +62,7 @@ export function githubTools(settings: GitHubToolSettings): ToolSpec[] {
   };
 
   const call = async <T>(repo: string, endpoint: string, schema: z.ZodType<T>, init: RequestInit = {}): Promise<T> => {
-    const response = await fetch(`${api}${endpoint}`, {
+    const response = await fetchWithBackoff(`${api}${endpoint}`, {
       ...init,
       headers: {
         Authorization: `Bearer ${await settings.token(repo)}`,
@@ -122,18 +122,26 @@ export function githubTools(settings: GitHubToolSettings): ToolSpec[] {
           const merged: Array<z.infer<typeof MergedPull>> = [];
           // Closed PRs, most recently updated first: once a page is entirely older than
           // `since`, nothing after it can be newer.
+          // Reaching the page cap without running out of PRs newer than `since` means there may be more.
+          let complete = false;
           for (let page = 1; page <= 5; page += 1) {
             const pulls = await call(repo, `/repos/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=${page}`, z.array(MergedPull));
             merged.push(...pulls.filter((pull) => pull.merged_at && Date.parse(pull.merged_at) >= since));
-            if (pulls.length < 100 || pulls.every((pull) => Date.parse(pull.updated_at) < since)) break;
+            if (pulls.length < 100 || pulls.every((pull) => Date.parse(pull.updated_at) < since)) {
+              complete = true;
+              break;
+            }
           }
           if (!merged.length) return `No pull requests were merged into ${repo} since ${parsed.since}.`;
           // One PR per line, its id first, its title flattened: a title can't forge a record.
-          return merged
-            .sort((a, b) => Date.parse(b.merged_at as string) - Date.parse(a.merged_at as string))
+          const sorted = merged.sort((a, b) => Date.parse(b.merged_at as string) - Date.parse(a.merged_at as string));
+          const more = sorted.length > 200 || !complete;
+          const lines = sorted
             .slice(0, 200)
             .map((pull) => `github:${repo}/pull/${pull.number} — ${pull.title.replace(/\s+/g, " ").slice(0, 200)} (merged ${(pull.merged_at as string).slice(0, 10)} by ${pull.user?.login ?? "unknown"}${pull.labels?.length ? `; labels: ${pull.labels.map((label) => label.name).join(", ")}` : ""})`)
-            .join("\n");
+            ;
+          // The list is bounded; one that stops silently would read as everything that shipped.
+          return [...lines, ...(more ? ["(Showing the most recent 200 merged; there are more in this period — say so, or narrow the date.)"] : [])].join("\n");
         }),
       records: (input, output) => {
         const parsed = z.object({ repo: z.string() }).safeParse(input);

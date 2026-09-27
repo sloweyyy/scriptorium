@@ -1,4 +1,4 @@
-import type { ToolRunContext, ToolSpec } from "@scriptorium/core";
+import { fetchWithBackoff, type ToolRunContext, type ToolSpec } from "@scriptorium/core";
 import { confluenceStorageToMarkdown, markdownToJira } from "@scriptorium/jira";
 import { once, opKey, type EffectLedger } from "@scriptorium/runtime";
 import { z } from "zod";
@@ -51,8 +51,23 @@ const Page = z.object({
 });
 const PageSpace = z.object({ id: z.union([z.string(), z.number()]).transform(String), spaceId: z.union([z.string(), z.number()]).transform(String) });
 const ChildList = z.object({
+  _links: z.object({ next: z.string().optional() }).optional(),
   results: z.array(z.object({ id: z.union([z.string(), z.number()]).transform(String), title: z.string(), spaceId: z.union([z.string(), z.number()]).transform(String).optional() })),
 });
+const AttachmentList = z.object({
+  results: z.array(
+    z.object({
+      id: z.union([z.string(), z.number()]).transform(String),
+      title: z.string(),
+      mediaType: z.string().default("application/octet-stream"),
+      fileSize: z.number().optional(),
+      downloadLink: z.string().optional(),
+      pageId: z.union([z.string(), z.number()]).transform(String).optional(),
+    }),
+  ),
+});
+/** Attachments whose bytes are text a model can read as-is. */
+const TEXT_TYPES = /^(text\/|application\/(json|xml|x-yaml|yaml|csv))/;
 const PageMeta = z.object({
   id: z.union([z.string(), z.number()]).transform(String),
   title: z.string(),
@@ -72,7 +87,7 @@ export class ConfluenceConnector {
   }
 
   private async get<T>(endpoint: string, schema: z.ZodType<T>): Promise<T> {
-    const response = await fetch(`${this.settings.baseUrl.replace(/\/$/, "")}/wiki${endpoint}`, {
+    const response = await fetchWithBackoff(`${this.settings.baseUrl.replace(/\/$/, "")}/wiki${endpoint}`, {
       headers: { Authorization: this.auth, Accept: "application/json" },
     });
     if (!response.ok) throw new Error(`Confluence ${endpoint.split("?")[0]} → HTTP ${response.status}`);
@@ -134,19 +149,51 @@ export class ConfluenceConnector {
    * an allowed space, and so must every child listed: a child moved into another space is
    * left out, title and all.
    */
-  async listChildren(pageId: string): Promise<Array<{ id: string; title: string }>> {
+  async listChildren(pageId: string): Promise<{ children: Array<{ id: string; title: string }>; more: boolean }> {
     if (!/^\d+$/.test(pageId)) throw new ConfluenceAccessError("A Confluence page id is digits only.");
     const allowed = await this.allowedSpaces();
     const parent = await this.get(`/api/v2/pages/${pageId}`, PageSpace);
     if (!allowed.has(parent.spaceId)) throw new ConfluenceAccessError(`Page ${pageId} is outside the Confluence spaces this agent may read.`);
     const children = await this.get(`/api/v2/pages/${pageId}/children?limit=100`, ChildList);
-    return children.results
+    const listed = children.results
       .filter((child) => allowed.has(child.spaceId ?? parent.spaceId))
       .map((child) => ({ id: child.id, title: child.title }));
+    return { children: listed, more: Boolean(children._links?.next) };
+  }
+
+  /** A page's attachments, if the page is in an allowed space. */
+  async listAttachments(pageId: string): Promise<Array<{ id: string; title: string; mediaType: string; fileSize?: number; downloadLink?: string }>> {
+    if (!/^\d+$/.test(pageId)) throw new ConfluenceAccessError("A Confluence page id is digits only.");
+    const allowed = await this.allowedSpaces();
+    const page = await this.get(`/api/v2/pages/${pageId}`, PageSpace);
+    if (!allowed.has(page.spaceId)) throw new ConfluenceAccessError(`Page ${pageId} is outside the Confluence spaces this agent may read.`);
+    const list = await this.get(`/api/v2/pages/${pageId}/attachments?limit=50`, AttachmentList);
+    return list.results.filter((attachment) => !attachment.pageId || attachment.pageId === pageId);
+  }
+
+  /**
+   * One attachment's text: text formats only (a spec as .md, a CSV of limits, JSON), at most
+   * 200 KB. The first hop carries the credentials; the redirect to media storage does not.
+   */
+  async readAttachment(pageId: string, attachmentId: string): Promise<{ title: string; text: string; truncated: boolean }> {
+    const attachment = (await this.listAttachments(pageId)).find((candidate) => candidate.id === attachmentId);
+    if (!attachment?.downloadLink) throw new ConfluenceAccessError(`Page ${pageId} has no attachment ${attachmentId}.`);
+    if (!TEXT_TYPES.test(attachment.mediaType)) throw new ConfluenceAccessError(`${attachment.title} is ${attachment.mediaType}; only text attachments can be read.`);
+    const base = `${this.settings.baseUrl.replace(/\/$/, "")}/wiki`;
+    let response = await fetch(`${base}${attachment.downloadLink}`, { headers: { Authorization: this.auth }, redirect: "manual" });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location) throw new Error("Confluence attachment redirect without a location");
+      response = await fetch(new URL(location, base).toString(), { redirect: "follow" });
+    }
+    if (!response.ok) throw new Error(`Confluence attachment → HTTP ${response.status}`);
+    const text = await response.text();
+    const limit = 200_000;
+    return { title: attachment.title, text: text.slice(0, limit), truncated: text.length > limit };
   }
 
   private async send<T>(method: "POST" | "PUT", endpoint: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
-    const response = await fetch(`${this.settings.baseUrl.replace(/\/$/, "")}/wiki${endpoint}`, {
+    const response = await fetchWithBackoff(`${this.settings.baseUrl.replace(/\/$/, "")}/wiki${endpoint}`, {
       method,
       headers: { Authorization: this.auth, Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -175,9 +222,16 @@ export class ConfluenceConnector {
       const found = await this.get(`/api/v2/pages?space-id=${spaceId}&title=${encodeURIComponent(input.title)}&limit=1`, PageList);
       return found.results[0]?.id;
     };
+    const op = opKey("confluence.create", spaceId, input.title, input.approvalId);
+    // First attempt only: a page that already has this title is someone else's, not an
+    // earlier attempt of ours — reporting it as "Already created" would claim their page.
+    if (!(await ledger.get(op))) {
+      const taken = await find();
+      if (taken) throw new ConfluenceAccessError(`A page titled "${input.title}" already exists in ${input.space} (confluence:${taken}). Update it with confluence_update_page, or choose another title.`);
+    }
     const { result, replayed } = await once(
       ledger,
-      opKey("confluence.create", spaceId, input.title),
+      op,
       async () =>
         (
           await this.send("POST", "/api/v2/pages", {
@@ -268,9 +322,41 @@ export class ConfluenceConnector {
         inputSchema: z.object({ id: z.string().describe("The parent page id.") }),
         run: async (input) => {
           const { id } = z.object({ id: z.string() }).parse(input);
-          return refusalOr(async () => JSON.stringify((await this.listChildren(id)).map((child) => ({ cite: `confluence:${child.id}`, ...child }))));
+          return refusalOr(async () => {
+            const { children, more } = await this.listChildren(id);
+            return JSON.stringify([
+              ...children.map((child) => ({ cite: `confluence:${child.id}`, ...child })),
+              ...(more ? [{ note: "Showing the first 100 child pages; there are more." }] : []),
+            ]);
+          });
         },
         records: (_input: unknown, output: string) => ownIds(output, (hit) => (typeof hit.id === "string" ? `confluence:${hit.id}` : undefined)),
+      },
+      {
+        name: "confluence_page_attachments",
+        description: "List a Confluence page's attachments (id, name, type, size). Only text attachments can be read.",
+        inputSchema: z.object({ id: z.string().describe("The page id.") }),
+        run: async (input) => {
+          const { id } = z.object({ id: z.string() }).parse(input);
+          return refusalOr(async () => JSON.stringify((await this.listAttachments(id)).map(({ id: attachmentId, title, mediaType, fileSize }) => ({ id: attachmentId, title, mediaType, fileSize }))));
+        },
+      },
+      {
+        name: "confluence_read_attachment",
+        description: "Read a text attachment of a Confluence page (Markdown, CSV, JSON…). Cite what you use from it as [[confluence:<page id>]].",
+        inputSchema: z.object({ pageId: z.string(), attachmentId: z.string() }),
+        run: async (input) => {
+          const { pageId, attachmentId } = z.object({ pageId: z.string(), attachmentId: z.string() }).parse(input);
+          return refusalOr(async () => {
+            const read = await this.readAttachment(pageId, attachmentId);
+            return `confluence:${pageId} — attachment ${read.title}${read.truncated ? " (first 200 KB only)" : ""}\n\n${read.text}`;
+          });
+        },
+        // Evidence for the page it is attached to, and only when the read succeeded.
+        records: (input: unknown, output: string) => {
+          const pageId = (input as { pageId?: unknown })?.pageId;
+          return typeof pageId === "string" && output.startsWith(`confluence:${pageId} — attachment `) ? [`confluence:${pageId}`] : [];
+        },
       },
       ...(this.settings.ledger
         ? [
@@ -278,10 +364,10 @@ export class ConfluenceConnector {
               name: "confluence_create_page",
               description: "Create a Confluence page in an allowed space. Requires human approval; it is not done until approved.",
               inputSchema: z.object({ space: z.string(), title: z.string().min(1).max(255), markdown: z.string().min(1), parentId: z.string().optional() }),
-              run: async (input: unknown) => {
+              run: async (input: unknown, context?: ToolRunContext) => {
                 const parsed = z.object({ space: z.string(), title: z.string().min(1).max(255), markdown: z.string().min(1), parentId: z.string().optional() }).parse(input);
                 return refusalOr(async () => {
-                  const page = await this.createPage(parsed);
+                  const page = await this.createPage({ ...parsed, approvalId: context?.approval?.id });
                   return `${page.created ? "Created" : "Already created"} confluence:${page.id} — ${parsed.title}`;
                 });
               },

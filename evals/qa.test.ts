@@ -44,7 +44,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await fs.rm(tmpRoot, { recursive: true, force: true });
+  await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
 });
 
 /** A citation is only worth anything if the note behind it exists. */

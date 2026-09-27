@@ -82,7 +82,7 @@ describe("github connector", () => {
     expect(cited.ungrounded).toBeUndefined();
     const invented = await enforceGrounding(vault, parseQaAnswer("It adds the setting [[github:org/app/pull/13]].", "q"), { usedOverview: false, retrieved: [], records: new Set(["github:org/app/pull/12"]) });
     expect(invented.ungrounded).toBe(true);
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5 });
   });
 });
 
@@ -110,5 +110,21 @@ describe("merged pull requests, for release notes", () => {
     expect(list.records!({ repo: "org/app", since }, out)).toEqual(["github:org/app/pull/21", "github:org/app/pull/19"]);
     expect(await list.run({ repo: "org/secret", since })).toMatch(/^NOT_ALLOWED/);
     expect(await list.run({ repo: "org/app", since: "2020-01-01" })).toMatch(/^NOT_ALLOWED: `since` must be a date within the last 90 days/);
+  });
+});
+
+describe("a bounded list says it is bounded", () => {
+  it("notes when there are more merged PRs than it lists", async () => {
+    const recent = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    vi.stubGlobal("fetch", async (input: string) => {
+      const page = Number(new URL(String(input)).searchParams.get("page"));
+      const pulls = Array.from({ length: 100 }, (_, i) => ({ number: page * 1000 + i, title: `PR ${i}`, merged_at: recent, updated_at: recent, user: { login: "dev" } }));
+      return new Response(JSON.stringify(pulls), { status: 200 });
+    });
+    const out = await tools().github_list_merged!.run({ repo: "org/app", since: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString().slice(0, 10) });
+    const lines = out.split("\n");
+    expect(lines).toHaveLength(201);
+    expect(lines.at(-1)).toMatch(/^\(Showing the most recent 200 merged; there are more/);
+    expect(tools().github_list_merged!.records!({ repo: "org/app" }, out)).toHaveLength(200);
   });
 });

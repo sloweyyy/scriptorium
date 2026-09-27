@@ -195,3 +195,17 @@ describe("carrying out an approval", () => {
     expect((await executeApproved(other, [publish], outcome.request.id, deps(store))).kind).toBe("not-runnable");
   });
 });
+
+describe("what the approver reads", () => {
+  it("one readable, capped line per argument — the full arguments still bind the approval", async () => {
+    const { summarizeArgs } = await import("@scriptorium/policy");
+    const body = `# Digest\n\n${"x".repeat(5_000)}`;
+    const summary = summarizeArgs({ space: "BEACON", title: "Digest emails", markdown: body });
+    expect(summary).toContain("• space: BEACON");
+    expect(summary).toContain("• title: Digest emails");
+    expect(summary).toMatch(/• markdown: # Digest x+… \(\+\d+ chars\)/);
+    expect(summary.length).toBeLessThan(2_500);
+    // Truncation is display only: a different body is a different action.
+    expect(argsHash({ markdown: body })).not.toBe(argsHash({ markdown: `${body}y` }));
+  });
+});

@@ -404,6 +404,21 @@ describe("Jira's JSON is checked where it enters", () => {
 });
 
 describe("other agents' conversation is not Scribe's", () => {
+  it("the Teammate's account is looked up until known — a failed lookup never means 'no other agent'", async () => {
+    const { knownAccounts } = await import("@scriptorium/agents");
+    let calls = 0;
+    const lookup = knownAccounts(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("HTTP 503");
+      return ["tm-1"];
+    });
+    await expect(lookup()).rejects.toThrow("503");
+    expect(await lookup()).toEqual(["tm-1"]);
+    expect(await lookup()).toEqual(["tm-1"]);
+    expect(calls).toBe(2);
+    expect(await knownAccounts(["a"])()).toEqual(["a"]);
+  });
+
   it("a question to the Teammate, and the Teammate's answer, are never feedback on a draft", async () => {
     const { parseCommand } = await import("@scriptorium/jira");
     const drafted = { hasDraft: true, otherAgents: ["tm-1"] };

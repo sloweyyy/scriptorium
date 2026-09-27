@@ -3,12 +3,12 @@ import { defaultJql, type AppConfig, type Vault } from "@scriptorium/core";
 import { FileEffectLedger } from "@scriptorium/runtime";
 import { jiraClient, JiraState } from "@scriptorium/jira";
 import { draftFingerprint } from "./slack-approval";
-import { errorMessage, say, withIssueLock, type Ctx } from "./scribe-jira/context";
+import { errorMessage, knownAccounts, say, withIssueLock, type Ctx } from "./scribe-jira/context";
 import { handleIssue, reportFailure } from "./scribe-jira/issue";
 import { runPublish } from "./scribe-jira/publishing";
 import { remoteLinkTicks } from "./scribe-jira/source";
 
-export { approvesCurrentDraft, mayApproveOnJira } from "./scribe-jira/context";
+export { approvesCurrentDraft, knownAccounts, mayApproveOnJira } from "./scribe-jira/context";
 export { MAX_DESIGN_BYTES, MAX_DESIGNS, newestFirst, prdFrontmatter, safeDesignName } from "./scribe-jira/source";
 export { houseRules } from "./scribe-jira/drafting";
 export { MAX_COMMAND_ATTEMPTS } from "./scribe-jira/issue";
@@ -44,7 +44,7 @@ export interface ScribeJiraHandle {
   approve(issueKey: string, approvedBy: string, draft?: string): Promise<void>;
 }
 
-export async function startScribeJira(config: AppConfig, vault: Vault, options: { otherAgentIds?: string[] } = {}): Promise<ScribeJiraHandle> {
+export async function startScribeJira(config: AppConfig, vault: Vault, options: { otherAgentIds?: string[] | (() => Promise<string[]>) } = {}): Promise<ScribeJiraHandle> {
   const client = jiraClient(config.jira);
   const me = await client.myself();
   const state = await JiraState.open(config.jira.stateDir);
@@ -54,7 +54,7 @@ export async function startScribeJira(config: AppConfig, vault: Vault, options: 
     client,
     state,
     botAccountId: me.accountId,
-    otherAgentIds: options.otherAgentIds ?? [],
+    otherAgentIds: knownAccounts(options.otherAgentIds ?? []),
     locks: new Map(),
     effects: new FileEffectLedger(path.join(config.jira.stateDir, "effects.json")),
     triggers: new Map(),

@@ -123,6 +123,35 @@ export class JiraClient {
   }
 
   /**
+   * Every issue matching `jql`, page by page, up to `limit`. The poller needs the whole set:
+   * one page of 50 in `updated ASC` order silently dropped the most recently touched tickets
+   * once a project held more than 50 open ones — the ones a human is working right now.
+   * `/search/jql` pages by `nextPageToken`; the legacy `/search` by `startAt`.
+   */
+  async searchAllIssues(jql: string, limit = 1_000): Promise<JiraIssue[]> {
+    const pageSize = 100;
+    const all: JiraIssue[] = [];
+    let nextPageToken: string | undefined;
+    // Resolves (and caches) which search endpoint this site speaks — once.
+    if (!this.searchPath) await this.searchIssues(jql, 1);
+    for (let page = 0; all.length < limit; page += 1) {
+      const legacy = this.searchPath === "/rest/api/2/search";
+      const query = new URLSearchParams({ jql, maxResults: String(pageSize), fields: ISSUE_FIELDS.join(",") });
+      if (legacy) query.set("startAt", String(page * pageSize));
+      else if (nextPageToken) query.set("nextPageToken", nextPageToken);
+      else if (page > 0) break;
+      const endpoint = `${this.searchPath}?${query.toString()}`;
+      const data = await this.readJson<{ issues?: JiraIssue[]; nextPageToken?: string; isLast?: boolean; total?: number }>(await this.call(endpoint), this.searchPath as string);
+      const issues = data.issues ?? [];
+      all.push(...issues);
+      nextPageToken = data.nextPageToken;
+      const done = legacy ? issues.length < pageSize || (data.total !== undefined && all.length >= data.total) : data.isLast !== false || !nextPageToken;
+      if (done || !issues.length) break;
+    }
+    return all.slice(0, limit);
+  }
+
+  /**
    * JQL search. Cloud has moved to `/search/jql` (token paging, explicit fields);
    * older Cloud and Server/DC still answer on `/search`. Try new, fall back once, remember.
    */

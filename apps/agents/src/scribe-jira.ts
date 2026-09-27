@@ -1392,7 +1392,7 @@ export async function startScribeJira(config: AppConfig, vault: Vault): Promise<
     if (inFlight) return;
     inFlight = true;
     try {
-      for (const issue of await client.searchIssues(jql)) {
+      for (const issue of await client.searchAllIssues(jql)) {
         try {
           await withIssueLock(ctx, issue.key, () => handleIssue(ctx, issue));
         } catch (error) {

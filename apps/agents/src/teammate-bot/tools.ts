@@ -7,7 +7,7 @@ import type { EffectLedger } from "@scriptorium/runtime";
 /** The connectors the Teammate may use on this host, and the identity it writes as. */
 
 /** Tools that write to Jira or Confluence — offered only under the Teammate's own identity. */
-const ATLASSIAN_WRITES = new Set(["jira_comment", "jira_create_issue", "confluence_create_page", "confluence_update_page"]);
+const ATLASSIAN_WRITES = new Set(["jira_comment", "jira_create_issue", "jira_transition", "jira_assign", "jira_labels", "jira_link", "confluence_create_page", "confluence_update_page"]);
 
 /** Everything the Teammate can reach on this host, each limited to its allow-list. */
 export function teammateConnectorTools(config: AppConfig, slack: SlackClient, ledger: EffectLedger): ToolSpec[] {

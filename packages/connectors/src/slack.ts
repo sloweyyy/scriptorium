@@ -171,6 +171,17 @@ export function describeRequest(request: ApprovalRequest): string {
       return `Create a Jira issue: “${text(args.summary)}”`;
     case "jira_comment":
       return `Comment on ${text(args.key, 40)}`;
+    case "jira_transition":
+      return `Move ${text(args.key, 40)} to “${text(args.status, 60)}”`;
+    case "jira_assign":
+      return `Assign ${text(args.key, 40)} to ${text(args.assignee, 80)}`;
+    case "jira_labels": {
+      const add = Array.isArray(args.add) ? args.add.map((label) => `+${String(label)}`) : [];
+      const remove = Array.isArray(args.remove) ? args.remove.map((label) => `-${String(label)}`) : [];
+      return `Change labels on ${text(args.key, 40)}: ${text([...add, ...remove].join(" "), 200)}`;
+    }
+    case "jira_link":
+      return `Link ${text(args.from, 40)} → ${text(args.to, 40)} (${text(args.type ?? "Relates", 20)})`;
     case "confluence_create_page":
       return `Create a Confluence page in ${text(args.space, 40)}: “${text(args.title)}”`;
     case "confluence_update_page":

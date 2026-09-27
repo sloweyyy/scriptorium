@@ -22,6 +22,10 @@ import { assembleAgent, listMemories, memoryTools, renderMemories, runSession, s
 const WRITE_DESCRIPTIONS: Record<string, string> = {
   jira_comment: "comment on the Jira issue",
   jira_create_issue: "create a Jira issue",
+  jira_transition: "move the Jira issue",
+  jira_assign: "assign the Jira issue",
+  jira_labels: "change the Jira issue's labels",
+  jira_link: "link the Jira issues",
   confluence_create_page: "create a Confluence page",
   confluence_update_page: "update the Confluence page",
   memory_save: "remember that",
@@ -43,7 +47,7 @@ export function describeOutcome(tool: string, result: string): string {
   return `✅ ${result.split("\n")[0]}`;
 }
 
-export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "slack_reply", "confluence_create_page", "confluence_update_page", "memory_save", "github_pr_comment"]);
+export const WRITE_TOOLS = new Set(["jira_comment", "jira_create_issue", "jira_transition", "jira_assign", "jira_labels", "jira_link", "slack_reply", "confluence_create_page", "confluence_update_page", "memory_save", "github_pr_comment"]);
 
 export type TeammateReply =
   | { kind: "answer"; text: string; citations: string[] }

@@ -60,7 +60,7 @@ function config(): AppConfig {
     repoRoot: path.resolve("."),
     auditFile: path.join(tmpRoot, "audit.jsonl"),
     slack: {},
-    jira: { stateDir: path.join(tmpRoot, "state") },
+    jira: { stateDir: path.join(tmpRoot, "state"), projectKey: "DOC" },
     teammate: { channels: ["C1"], approvers: ["UPM"], jiraProjects: [], confluenceSpaces: [], githubRepos: [], allowDms: false, digestWeekday: 1, digestHour: 9 },
   } as unknown as AppConfig;
 }
@@ -168,5 +168,39 @@ describe("direct messages", () => {
     expect(posted).toHaveLength(1);
     expect(posted[0]).toMatchObject({ channel: "D1" });
     expect(posted[0]?.text).toContain("docs/digest-emails");
+  });
+});
+
+describe("the Teammate on Jira", () => {
+  function fakeJira() {
+    const comments: Array<{ id: string; body: string; op?: string }> = [];
+    const client = {
+      addComment: async (_key: string, body: string, options: { op?: string } = {}) => {
+        const stored = { id: String(comments.length + 1), body, op: options.op };
+        comments.push(stored);
+        return { id: stored.id, body, created: "now" };
+      },
+      findCommentByOp: async (_key: string, op: string) => comments.find((comment) => comment.op === op),
+    };
+    return { comments, jira: { client: client as never, accountId: "tm-1" } };
+  }
+
+  it("answers a mention of its own account on the ticket, once, as itself — and nothing else", async () => {
+    const { comments, jira } = fakeJira();
+    const core = await createTeammate(config(), vault, slack as never, "UBOT", jira);
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]." };
+    const mention = { issueKey: "DOC-7", commentId: "c1", body: "[~accountid:tm-1] when do digests go out?", authorId: "human-1" };
+    await core.onJiraComment(mention);
+    await core.onJiraComment(mention); // a webhook redelivery
+    await core.onJiraComment({ ...mention, commentId: "c2", body: "no mention here" });
+    await core.onJiraComment({ ...mention, commentId: "c3", body: "[~accountid:scribe-bot] draft" });
+    await core.onJiraComment({ ...mention, commentId: "c4", authorId: "tm-1" }); // its own comment
+    await core.onJiraComment({ ...mention, issueKey: "HR-1", commentId: "c5" }); // outside its projects
+    await settle(core);
+
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.body).toContain("docs/digest-emails");
+    expect(comments[0]?.body).toContain("AI-generated");
+    expect(posted).toHaveLength(0);
   });
 });

@@ -124,7 +124,7 @@ The model is untrusted too. It proposes; the platform decides what runs.
 - Scribe's Atlassian writes still use one person's API token. The Teammate writes only
   under its own service account (`TEAMMATE_ATLASSIAN_EMAIL`/`_TOKEN`). Without one, its Jira
   and Confluence tools are read-only: it never borrows another agent's identity to write.
-- The Teammate acts on Jira only from Slack in v1. Answering inside Jira needs a second
-  Atlassian identity, so it doesn't share Scribe's.
+- The Teammate answers on Jira tickets only under its own Atlassian account, and only when
+  that account is mentioned. It replies once per triggering comment (op-keyed).
 - Prompt-injection resistance is structural and cannot be proved deterministically. It
   needs a live red-team suite behind `RUN_LLM_EVALS`.

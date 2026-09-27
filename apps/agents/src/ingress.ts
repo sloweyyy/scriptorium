@@ -54,6 +54,25 @@ export interface IngressHooks {
   docsChanged?: (input: { paths: string[]; commit?: string; commitUrl?: string }) => Promise<void>;
   /** A pull request opened (or became ready for review) on a source repo. */
   pullRequest?: (input: { repo: string; number: number; author?: string; deliveryId?: string }) => Promise<void>;
+  /** A Jira comment was created — the Teammate answers it if it is mentioned. */
+  jiraComment?: (input: JiraCommentEvent) => Promise<void>;
+}
+
+export interface JiraCommentEvent {
+  issueKey: string;
+  commentId: string;
+  body: string;
+  authorId?: string;
+}
+
+/** A `comment_created` webhook as the fields the Teammate needs; anything else is not one. */
+export function jiraCommentFrom(payload: unknown): JiraCommentEvent | undefined {
+  const body = payload as { webhookEvent?: string; issue?: { key?: string }; comment?: { id?: string | number; body?: unknown; author?: { accountId?: string } } };
+  if (body.webhookEvent !== "comment_created") return undefined;
+  const issueKey = body.issue?.key;
+  const commentId = body.comment?.id;
+  if (typeof issueKey !== "string" || commentId === undefined || typeof body.comment?.body !== "string") return undefined;
+  return { issueKey, commentId: String(commentId), body: body.comment.body, authorId: body.comment.author?.accountId };
 }
 
 /** The pull-request events worth a review: opened, reopened, or taken out of draft. */
@@ -263,6 +282,10 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
         }
         // Answer before working: Jira gives up in seconds, and the ledger makes a retry safe.
         send(response, 202, { accepted: true, issue: key, event });
+        const jiraComment = jiraCommentFrom(payload);
+        if (jiraComment && hooks.jiraComment) {
+          await hooks.jiraComment(jiraComment).catch((error: unknown) => console.warn(`[ingress] teammate jira comment ${jiraComment.issueKey}: ${error instanceof Error ? error.message : error}`));
+        }
         if (hooks.nudge) {
           try {
             await hooks.nudge(key);

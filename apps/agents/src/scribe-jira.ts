@@ -181,6 +181,14 @@ const REFERS_TO_DESIGN =
  * that lives outside the gitignored state directory, and therefore what a restart with a
  * lost ledger reconstructs from.
  */
+/**
+ * Newest first. A PM who fixes a PRD usually re-uploads it next to the old one; reading
+ * the array in Jira's order picked whichever came back first — often the stale copy.
+ */
+export function newestFirst(attachments: readonly JiraAttachment[]): JiraAttachment[] {
+  return [...attachments].sort((a, b) => (b.created ?? "").localeCompare(a.created ?? ""));
+}
+
 function lastDraftAttachment(issue: JiraIssue): { attachment: JiraAttachment; slug: string } | undefined {
   return (issue.fields.attachment ?? [])
     .flatMap((attachment) => {
@@ -352,7 +360,7 @@ async function loadSource(ctx: Ctx, issue: JiraIssue): Promise<PrdSource> {
   const designs = await loadDesignImages(ctx, issue);
   const source: PrdSource = { images: designs.images, imageNames: designs.names, skipped: [] };
 
-  for (const attachment of issue.fields.attachment ?? []) {
+  for (const attachment of newestFirst(issue.fields.attachment ?? [])) {
     // Images were read above; this pass is only looking for the PRD.
     if (VISION_TYPES[attachment.mimeType?.toLowerCase() ?? ""]) continue;
     // Never its own output: the agent attaches every draft as `draft-<slug>.md`, and a

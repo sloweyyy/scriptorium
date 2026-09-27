@@ -56,21 +56,25 @@ export function mentionToEvent(mention: SlackMention): AgentEvent<{ channel: str
 }
 
 /** Everything the Teammate can reach on this host, each limited to its allow-list. */
+/** Tools that write to Jira or Confluence — offered only under the Teammate's own identity. */
+const ATLASSIAN_WRITES = new Set(["jira_comment", "jira_create_issue", "confluence_create_page", "confluence_update_page"]);
+
 export function teammateConnectorTools(config: AppConfig, slack: SlackClient, ledger: EffectLedger): ToolSpec[] {
   const settings = config.teammate;
   const tools: ToolSpec[] = [...slackTools({ client: slack, allowedChannels: settings.channels, ledger })];
   if (jiraReady(config.jira)) {
     const projects = settings.jiraProjects.length ? settings.jiraProjects : [config.jira.projectKey as string];
-    tools.push(...jiraTools({ client: jiraClient(config.jira), allowedProjects: projects, createProject: projects[0], issueType: config.jira.issueType, ledger }));
-    tools.push(
-      ...new ConfluenceConnector({
-        baseUrl: config.jira.baseUrl as string,
-        email: config.jira.email as string,
-        apiToken: config.jira.apiToken as string,
-        allowedSpaceKeys: settings.confluenceSpaces,
-        ledger,
-      }).tools(),
-    );
+    // Its own service account, or read-only. Borrowing Scribe's token to WRITE would make
+    // two agents one identity: a Teammate comment would read as Scribe's on every ticket.
+    const ownIdentity = Boolean(settings.atlassianEmail && settings.atlassianToken);
+    const email = ownIdentity ? (settings.atlassianEmail as string) : (config.jira.email as string);
+    const apiToken = ownIdentity ? (settings.atlassianToken as string) : (config.jira.apiToken as string);
+    const atlassian = [
+      ...jiraTools({ client: jiraClient({ ...config.jira, email, apiToken }), allowedProjects: projects, createProject: projects[0], issueType: config.jira.issueType, ledger }),
+      ...new ConfluenceConnector({ baseUrl: config.jira.baseUrl as string, email, apiToken, allowedSpaceKeys: settings.confluenceSpaces, ledger }).tools(),
+    ];
+    if (!ownIdentity) console.warn("[teammate] no TEAMMATE_ATLASSIAN_EMAIL/TOKEN — Jira and Confluence are read-only for the Teammate");
+    tools.push(...(ownIdentity ? atlassian : atlassian.filter((tool) => !ATLASSIAN_WRITES.has(tool.name))));
   }
   return tools;
 }

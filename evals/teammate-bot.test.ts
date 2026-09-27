@@ -37,8 +37,13 @@ describe("teammate slack surface", () => {
   it("offers only the connectors configured on this host", () => {
     const slackOnly = teammateConnectorTools(config(), slack, new MemoryEffectLedger()).map((tool) => tool.name);
     expect(slackOnly).toEqual(["slack_read_thread", "slack_reply"]);
-    const withJira = teammateConnectorTools(config({}, true), slack, new MemoryEffectLedger()).map((tool) => tool.name);
-    expect(withJira).toEqual(expect.arrayContaining(["jira_search", "jira_create_issue", "confluence_search"]));
+    // The shared token reads; it never writes as the Teammate.
+    const shared = teammateConnectorTools(config({}, true), slack, new MemoryEffectLedger()).map((tool) => tool.name);
+    expect(shared).toEqual(expect.arrayContaining(["jira_search", "jira_get_issue", "confluence_search"]));
+    for (const write of ["jira_comment", "jira_create_issue", "confluence_create_page", "confluence_update_page"]) expect(shared).not.toContain(write);
+    // Its own service account: writes are offered (and still approve-tier in its envelope).
+    const own = teammateConnectorTools(config({ atlassianEmail: "teammate@example.com", atlassianToken: "t2" }, true), slack, new MemoryEffectLedger()).map((tool) => tool.name);
+    expect(own).toEqual(expect.arrayContaining(["jira_create_issue", "confluence_update_page"]));
   });
 
   it("links the ticket a gap opened", () => {

@@ -10,7 +10,7 @@ import { Vault, type AppConfig } from "@scriptorium/core";
  * gate, queue, assembly from config, skills, policy, grounding, memory — is the real thing.
  */
 
-let script: { calls: Array<{ name: string; input: unknown }>; reply: string };
+let script: { calls: Array<{ name: string; input: unknown }>; reply: string; throwOnce?: boolean };
 vi.mock("@scriptorium/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@scriptorium/core")>()),
   llmProvider: () => "anthropic",
@@ -18,6 +18,10 @@ vi.mock("@scriptorium/core", async (importOriginal) => ({
     beta: {
       messages: {
         toolRunner: async (params: { tools: Array<{ name: string; run: (input: unknown) => Promise<unknown> }> }) => {
+          if (script.throwOnce) {
+            script.throwOnce = false;
+            throw new Error("model overloaded");
+          }
           for (const call of script.calls) await params.tools.find((tool) => tool.name === call.name)?.run(call.input);
           return { stop_reason: "end_turn", content: [{ type: "text", text: script.reply }] };
         },
@@ -109,5 +113,15 @@ describe("teammate, end to end", () => {
     // A decided card cannot decide again.
     expect(await core.onApprovalClick(APPROVE_ACTION, payload("UPM"))).toMatch(/^Not recorded/);
     expect(await vault.listNotes("_memory")).toHaveLength(1);
+  });
+
+  it("a turn that fails is answered with a notice, and the next mention in the batch still gets its answer", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]].", throwOnce: true };
+    await core.onMention({ channel: "C1", ts: "5.0", user: "U1", text: "<@UBOT> first?" });
+    await core.onMention({ channel: "C1", ts: "5.0", thread_ts: "5.0", user: "U2", text: "<@UBOT> when are digests sent?", client_msg_id: "m2" });
+    await settle(core);
+    expect(posted[0]?.text).toContain("couldn't finish that");
+    expect(posted.at(-1)?.text).toContain("docs/digest-emails");
   });
 });

@@ -279,6 +279,33 @@ describe("spend caps", () => {
     expect(posted[0]?.text).toContain("today's usage limit");
     expect(posted[0]?.text).not.toContain("SHOULD NOT BE CALLED");
   });
+
+  it("a Jira project and a PR repo are capped too — a ticket comment can't spend without limit", async () => {
+    const auditFile = path.join(tmpRoot, "audit.jsonl");
+    const today = new Date().toISOString();
+    await fs.writeFile(
+      auditFile,
+      [{ scope: "jira:DOC" }, { scope: "github:org/app" }].map((line) => JSON.stringify({ ts: today, type: "llm.usage", input: 5_000, output: 0, ...line })).join("\n") + "\n",
+    );
+    const comments: Array<{ body: string; op?: string }> = [];
+    const jira = {
+      accountId: "tm-1",
+      client: {
+        addComment: async (_key: string, body: string, options: { op?: string } = {}) => (comments.push({ body, op: options.op }), { id: String(comments.length), body, created: "now" }),
+        findCommentByOp: async (_key: string, op: string) => comments.find((comment) => comment.op === op),
+      } as never,
+    };
+    const capped = { ...config(), teammate: { ...config().teammate, dailyTokens: 1_000, githubRepos: ["org/app"], prChannel: "CPR" } } as AppConfig;
+    const core = await createTeammate(capped, vault, slack as never, "UBOT", jira);
+    script = { calls: [], reply: "SHOULD NOT BE CALLED" };
+    await core.onJiraComment({ issueKey: "DOC-7", commentId: "c1", body: "[~accountid:tm-1] when do digests go out?", authorId: "human-1" });
+    await core.onPullRequest({ repo: "org/app", number: 12, author: "dev", deliveryId: "d-9" });
+    await settle(core);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.body).toContain("today's usage limit");
+    expect(posted.find((message) => message.channel === "CPR")?.text).toContain("today's usage limit");
+    expect(JSON.stringify([comments, posted])).not.toContain("SHOULD NOT BE CALLED");
+  });
 });
 
 describe("assigned on Jira", () => {

@@ -60,6 +60,8 @@ export interface TeammateTurn {
   channel?: string;
   /** The thread the Teammate was asked in — the only one it may read. */
   threadTs?: string;
+  /** What the turn's tokens count against for the daily cap. Default: the channel, else the asker. */
+  budgetScope?: string;
 }
 
 /**
@@ -159,7 +161,7 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
       // Cost on the record, under the run's id: `pnpm trace` shows what each answer cost.
       onUsage: (usage) => {
         // `scope` is what spend caps are counted against: the channel, else the asker.
-        void audit(deps.auditFile, { type: "llm.usage", actor: deps.config.name, scope: turn.channel ?? turn.askedBy, ...usage }).catch(() => undefined);
+        void audit(deps.auditFile, { type: "llm.usage", actor: deps.config.name, scope: turn.budgetScope ?? turn.channel ?? turn.askedBy, ...usage }).catch(() => undefined);
         deps.onUsage?.(usage);
       },
     });

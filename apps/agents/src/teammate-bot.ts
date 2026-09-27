@@ -222,6 +222,14 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   // Spend caps per channel per day, seeded from today's audit so a restart is not a reset.
   const budget = new DailyBudget(settings.dailyTokens);
   budget.seed(parseAudit(await fs.readFile(config.auditFile, "utf8").catch(() => "")));
+  const LIMIT_NOTICE = "I've reached today's usage limit here, so I'm not answering until tomorrow (UTC). An admin can raise `TEAMMATE_DAILY_TOKENS`.";
+  /** Every surface a person can trigger spends against a cap: a channel, a Jira project, a repo. */
+  const overBudget = async (key: string, scope: string): Promise<boolean> => {
+    if (!budget.exhausted(scope)) return false;
+    await audit(config.auditFile, { type: "teammate.budget.exhausted", actor: "teammate", key, scope }).catch(() => undefined);
+    return true;
+  };
+  const spendAgainst = (scope: string) => ({ onUsage: (usage: { input: number; output: number }) => budget.add(scope, usage.input + usage.output) });
   const turnDeps = (key: string) => ({ vault, config: hostConfig, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config), signingKey: config.signingKey });
 
   const gate = new Gate({
@@ -264,9 +272,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
             await deliver(helpText(settings));
             return;
           }
-          if (budget.exhausted(channel)) {
-            await audit(config.auditFile, { type: "teammate.budget.exhausted", actor: "teammate", key, scope: channel }).catch(() => undefined);
-            await deliver("I've reached today's usage limit for this channel, so I'm not answering until tomorrow (UTC). An admin can raise `TEAMMATE_DAILY_TOKENS`.");
+          if (await overBudget(key, channel)) {
+            await deliver(LIMIT_NOTICE);
             return;
           }
           // Show what it is doing, at most every 2s (chat.update is rate-limited).
@@ -279,7 +286,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
           };
           const reply = await runTeammateTurn(
             { question: text, askedBy: event.actor.id, channel, threadTs, context },
-            { ...turnDeps(key), onUsage: (usage) => budget.add(channel, usage.input + usage.output), onTool },
+            { ...turnDeps(key), ...spendAgainst(channel), onTool },
           );
           const textOut = formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken });
           // An answer's sources are the point of the product: render them as links, the way
@@ -315,7 +322,11 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   async function answerOnJira(key: string, event: AgentEvent): Promise<void> {
     if (!jira) return;
     const { issueKey, commentId, question } = event.payload as { issueKey: string; commentId: string; question: string };
-    const reply = await runTeammateTurn({ question: `${question}\n\n(Asked on jira:${issueKey}.)`, askedBy: event.actor.id }, turnDeps(key)).catch(
+    const scope = `jira:${issueKey.split("-")[0]}`;
+    const reply = await (await overBudget(key, scope)
+      ? Promise.resolve({ kind: "refused" as const, text: LIMIT_NOTICE })
+      : runTeammateTurn({ question: `${question}\n\n(Asked on jira:${issueKey}.)`, askedBy: event.actor.id, budgetScope: scope }, { ...turnDeps(key), ...spendAgainst(scope) })
+    ).catch(
       // The exception belongs in the audit log, not on a ticket other people read.
       async (error: unknown) => {
         await audit(config.auditFile, { type: "teammate.error", actor: "teammate", key, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
@@ -348,9 +359,13 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     // The summary is posted first, so a card the check raises can thread under it.
     const header = await slack.chat.postMessage({ channel, text: `${heading}\n⏳ Checking…` }).catch(() => undefined);
     if (header?.ts) prThreads.set(key, header.ts);
-    const reply = await runTeammateTurn(
-      { question: `Check pull request github:${repo}/pull/${number} against the Jira ticket it implements, and propose one advisory comment.`, askedBy: event.actor.id },
-      turnDeps(key),
+    const scope = `github:${repo.toLowerCase()}`;
+    const reply = await (await overBudget(key, scope)
+      ? Promise.resolve({ kind: "refused" as const, text: LIMIT_NOTICE })
+      : runTeammateTurn(
+          { question: `Check pull request github:${repo}/pull/${number} against the Jira ticket it implements, and propose one advisory comment.`, askedBy: event.actor.id, budgetScope: scope },
+          { ...turnDeps(key), ...spendAgainst(scope) },
+        )
     ).catch(async (error: unknown) => {
       await audit(config.auditFile, { type: "teammate.error", actor: "teammate", key, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
       return { kind: "refused" as const, text: "I couldn't check this pull request, so nothing was posted to it." };
@@ -430,7 +445,9 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
           digestChannel,
           now,
           async () => {
-            const reply = await runTeammateTurn({ question: "Write this week's digest for the team.", askedBy: "cron:digest", channel: digestChannel }, turnDeps(keys.cron("digest")));
+            // The digest spends its channel's budget; over it, the next hour retries.
+            if (await overBudget(keys.cron("digest"), digestChannel)) throw new Error("digest not produced (daily token limit)");
+            const reply = await runTeammateTurn({ question: "Write this week's digest for the team.", askedBy: "cron:digest", channel: digestChannel }, { ...turnDeps(keys.cron("digest")), ...spendAgainst(digestChannel) });
             // A refusal is not a digest: throw, so the op stays open and the next hour retries.
             // Neither a refusal nor a gap note is a digest: throw, so the next hour retries.
             if (reply.kind === "refused" || reply.kind === "gap") throw new Error(`digest not produced (${reply.kind})`);

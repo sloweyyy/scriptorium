@@ -84,6 +84,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // Drop keep-alive sockets too: the OS can hand the next test this port, and a pooled
+  // connection to the closed server would carry its request into nowhere (the rare 120s hang).
+  server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });
@@ -91,7 +94,8 @@ afterEach(async () => {
 /** The hooks run after the response is sent, so give the event loop a turn. */
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 20));
 
-describe("ingress", () => {
+// A local-socket flake must fail in seconds, not stall the gate for two minutes.
+describe("ingress", { timeout: 15_000, retry: 1 }, () => {
   it("serves health with what is actually configured", async () => {
     const response = await fetch(`${base}/health`);
     expect(response.status).toBe(200);

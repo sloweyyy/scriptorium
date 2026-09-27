@@ -165,6 +165,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-bot.test.ts"],
   },
   {
+    control: "a reminder is set only in the channel that asked",
+    file: "apps/agents/src/teammate.ts",
+    find: "if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return \"NOT_ALLOWED: reminders",
+    replace: "if (false) return \"NOT_ALLOWED: reminders",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
     control: "slack_read_channel reads only the turn's own channel",
     file: "apps/agents/src/teammate.ts",
     find: "if ((input as { channel?: unknown } | undefined)?.channel !== turn.channel) return",

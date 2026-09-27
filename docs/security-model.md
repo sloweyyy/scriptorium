@@ -119,6 +119,11 @@ The model is untrusted too. It proposes; the platform decides what runs.
   approval id plus its position, so a retry never repeats one. (`packages/policy/src/plan.ts`;
   `evals/plan.test.ts`, mutant in `scripts/mutate.ts`)
 
+- A reminder is a post the agent makes later on its own, so it is approve-tier: approved
+  once for its exact text, channel and time. It is posted once, escaped (no pings, no hidden
+  links), and only in the channel that asked; one more than a day overdue is dropped.
+  (`apps/agents/src/teammate-bot/reminders.ts`; `evals/teammate-e2e.test.ts`, mutant)
+
 ### 8. Record: every action is attributable
 - The audit log is append-only JSONL, and every line inside a run carries the run's id.
   Every publish is a git commit naming its approver. Effects are exactly-once through

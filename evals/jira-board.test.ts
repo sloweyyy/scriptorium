@@ -55,6 +55,8 @@ let loseNextCommentResponse = false;
 let failCommentPostIn = 0;
 /** Refuse every "Revised draft" comment, the way a 400 would, until turned off. */
 let failRevisionPosts = false;
+/** Run once, right after a comment containing `text` is stored: a human acting mid-tick. */
+let afterPost: { text: string; run: () => void } | undefined;
 /** Fail the next comment post containing this text, once. */
 let failNextPostContaining: string | undefined;
 
@@ -153,6 +155,11 @@ function stubJira(): void {
         ...(body.properties ? { properties: body.properties } : {}),
       };
       comments.push(posted);
+      if (afterPost && body.body.includes(afterPost.text)) {
+        const hook = afterPost;
+        afterPost = undefined;
+        hook.run();
+      }
       // Jira stored it; the response never arrives. The case exactly-once exists for.
       if (loseNextCommentResponse) {
         loseNextCommentResponse = false;
@@ -201,6 +208,7 @@ beforeEach(async () => {
   comments = [];
   failRevisionPosts = false;
   failNextPostContaining = undefined;
+  afterPost = undefined;
   moves = [];
   changelog = [];
   assignments = [];
@@ -443,6 +451,38 @@ describe("board transitions", () => {
 
     const published = comments.find((comment) => comment.body.includes("*Published* —"));
     expect(published?.body).toContain("approved by Reviewer");
+  });
+
+  it("a drag to Approved made while a revise runs is neither swallowed nor taken as approving the revision", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    // The reviewer drags the ticket, having read the FIRST draft, just as the revision lands
+    // (after the agent's own last move of the tick).
+    vi.mocked(generateText).mockImplementationOnce(async () => `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`);
+    afterPost = {
+      text: "Revised draft",
+      run: () => {
+        issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Done" } } };
+        changelog.push({ author: { displayName: "Reviewer", accountId: "human-1" }, created: new Date(Date.now() - 1000).toISOString(), items: [{ field: "status", toString: "Done" }] } as never);
+      },
+    };
+    comments.push(human("f1", "add the paste step"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: new Date(Date.now() + 1000).toISOString() } };
+    (await startScribeJira(settings, vault)).stop();
+
+    // Next poll: the drag is seen, and it predates the revision, so it is held and said.
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: new Date(Date.now() + 2000).toISOString() } };
+    (await startScribeJira(settings, vault)).stop();
+    expect(await vault.listNotes("docs")).toHaveLength(0);
+    expect(comments.some((comment) => comment.body.includes("one you haven't seen yet"))).toBe(true);
+    expect(status()).toBe("In Review");
+
+    // A drag made after reading the revision publishes it.
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Done" }, updated: new Date(Date.now() + 5000).toISOString() } };
+    changelog.push({ author: { displayName: "Reviewer", accountId: "human-1" }, created: new Date(Date.now() + 5000).toISOString(), items: [{ field: "status", toString: "Done" }] } as never);
+    (await startScribeJira(settings, vault)).stop();
+    const [doc] = await vault.listNotes("docs");
+    expect((await vault.readNote(doc as string)).body).toContain("Paste the snippet into your page.");
   });
 
   it("re-reads the designs when revising, so a mockup attached with the feedback is not ignored", async () => {

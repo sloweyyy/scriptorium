@@ -191,9 +191,9 @@ export class JiraClient {
   async lastStatusChangeAuthor(
     key: string,
     statusName: string,
-  ): Promise<{ name: string; accountId?: string } | undefined> {
+  ): Promise<{ name: string; accountId?: string; created?: string } | undefined> {
     const data = await this.get<{
-      changelog?: { histories?: Array<{ author?: JiraUser; items?: Array<{ field?: string; toString?: string }> }> };
+      changelog?: { histories?: Array<{ author?: JiraUser; created?: string; items?: Array<{ field?: string; toString?: string }> }> };
     }>(`/rest/api/2/issue/${encodeURIComponent(key)}?expand=changelog&fields=status`);
 
     const wanted = statusName.trim().toLowerCase();
@@ -203,7 +203,7 @@ export class JiraClient {
       const moved = entry?.items?.some((item) => item.field === "status" && item.toString?.toLowerCase() === wanted);
       if (moved) {
         const name = entry?.author?.displayName ?? entry?.author?.accountId;
-        return name ? { name, accountId: entry?.author?.accountId } : undefined;
+        return name ? { name, accountId: entry?.author?.accountId, ...(entry?.created ? { created: entry.created } : {}) } : undefined;
       }
     }
     return undefined;

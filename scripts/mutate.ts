@@ -163,6 +163,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "a status change made while a tick ran is left for the next tick to see",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "    lastStatus: unseen ? agentsOwn : now,",
+    replace: "    lastStatus: now,",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a drag to Approved older than the draft on the ticket is not its approval",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "    } else if (revisedThisTick || !approvesCurrentDraft(mover?.created, ctx.state.get(key)?.draftPostedAt)) {",
+    replace: "    } else if (revisedThisTick) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

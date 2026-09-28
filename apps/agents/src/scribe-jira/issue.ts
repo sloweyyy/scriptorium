@@ -375,19 +375,30 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
       // and put the column back so the board doesn't claim an approval that didn't count.
       await say(ctx, key, allowed.reason);
       await moveTo(ctx, key, ctx.config.jira.inReviewStatus, ctx.config.jira.approvedStatus);
-    } else if (revisedThisTick) {
-      // Dragged to Approved while feedback was still being applied: the column was set
-      // for the old draft. Put it back in review with the new one.
+    } else if (revisedThisTick || !approvesCurrentDraft(mover?.created, ctx.state.get(key)?.draftPostedAt)) {
+      // Dragged to Approved while feedback was still being applied, or before the draft now
+      // on the ticket was posted: the column was set for an older draft. Put it back in
+      // review with the new one. The same rule as a comment approval, by the move's time.
       await holdUnseenRevision();
-      await moveTo(ctx, key, ctx.config.jira.inReviewStatus, ctx.state.get(key)?.lastStatus);
+      // Where the ticket is now: the agent's own move if it revised this tick, else where it
+      // was dragged (the ledger's baseline deliberately doesn't hold a drag it didn't see).
+      await moveTo(ctx, key, ctx.config.jira.inReviewStatus, revisedThisTick ? ctx.state.get(key)?.lastStatus : status);
     } else {
       await runPublish(ctx, issue, mover?.name ?? mover?.accountId ?? "a Jira approver", { quietWhenPublished: true });
     }
   }
 
   const refreshed = await ctx.client.getIssue(key).catch(() => issue);
+  // The baseline is what this tick saw or did: the status it started from, or its own
+  // latest move (moveTo records those). A change neither explains was made by someone
+  // while the tick ran, and is left for the next tick to see AS a change. Recording it
+  // as the baseline swallowed a drag to Approved made during a revise: the next tick saw
+  // Approved on both sides, published nothing, and told nobody.
+  const now = issueStatus(refreshed);
+  const agentsOwn = ctx.state.get(key)?.lastStatus ?? status;
+  const unseen = now.toLowerCase() !== status.toLowerCase() && now.toLowerCase() !== agentsOwn.toLowerCase();
   await ctx.state.patch(key, {
-    lastStatus: issueStatus(refreshed),
+    lastStatus: unseen ? agentsOwn : now,
     lastUpdated: refreshed.fields.updated,
     lastError: undefined,
   });

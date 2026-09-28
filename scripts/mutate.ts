@@ -86,6 +86,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/control.test.ts"],
   },
   {
+    control: "every model must refuse everything the vault doesn't say",
+    file: "packages/curator/src/answer-grade.ts",
+    find: "  const floors: AnswerScores = { ...baseline, unanswerable: { pass: 1, n: now.unanswerable?.n ?? 0 } };",
+    replace: "  const floors: AnswerScores = { ...baseline };",
+    evals: ["evals/answer-golden.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

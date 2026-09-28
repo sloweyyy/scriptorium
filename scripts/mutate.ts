@@ -219,6 +219,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "a transient 5xx is retried for reads only, never for a write",
+    file: "packages/core/src/http.ts",
+    find: "(TRANSIENT.has(response.status) && READS.has((init.method ?? \"GET\").toUpperCase()))",
+    replace: "TRANSIENT.has(response.status)",
+    evals: ["evals/backoff.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

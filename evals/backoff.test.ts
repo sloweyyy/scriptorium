@@ -43,6 +43,23 @@ describe("fetchWithBackoff", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("retries a read through a transient 500/502/504, and never a write", async () => {
+    for (const status of [500, 502, 504]) {
+      const reads = script([{ status }, { status: 200 }]);
+      expect((await fetchWithBackoff("https://x/y", {}, { sleep: async () => undefined })).status, `GET ${status}`).toBe(200);
+      expect(reads).toHaveLength(2);
+      for (const method of ["POST", "PUT", "DELETE"]) {
+        const writes = script([{ status }, { status: 200 }]);
+        expect((await fetchWithBackoff("https://x/y", { method }, { sleep: async () => undefined })).status, `${method} ${status}`).toBe(status);
+        expect(writes).toHaveLength(1);
+      }
+    }
+    // Bounded like any other retry.
+    const calls = script([{ status: 502 }, { status: 502 }, { status: 502 }, { status: 200 }]);
+    expect((await fetchWithBackoff("https://x/y", {}, { sleep: async () => undefined })).status).toBe(502);
+    expect(calls).toHaveLength(3);
+  });
+
   it("reads Retry-After as seconds or a date", () => {
     expect(retryAfterMs("3")).toBe(3000);
     expect(retryAfterMs(new Date(Date.now() + 5000).toUTCString(), Date.now())).toBeGreaterThan(3000);

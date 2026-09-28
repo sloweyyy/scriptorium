@@ -268,6 +268,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/policy.test.ts"],
   },
   {
+    control: "a card Slack won't update never stops a given approval from being carried out",
+    file: "packages/connectors/src/slack.ts",
+    find: "    }).catch((error: unknown) => {\n      console.warn(`[approvals] ${request.id}: decided, but the card could not be updated",
+    replace: "    }).then(undefined, (error: unknown) => { throw error;\n      console.warn(`[approvals] ${request.id}: decided, but the card could not be updated",
+    evals: ["evals/slack-connector.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

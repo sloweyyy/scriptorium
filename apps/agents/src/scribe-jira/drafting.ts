@@ -85,13 +85,35 @@ function draftBody(markdown: string, attachment: string | undefined): string {
 }
 
 /**
+ * Attach the draft, once. A retry after a failure further on (the comment, say) used to add
+ * another `draft-<slug>.md` every attempt. Probed on the ticket itself: when its newest
+ * attachment of that name already holds exactly this text, the upload is done.
+ */
+export async function attachDraft(ctx: Ctx, key: string, filename: string, markdown: string): Promise<void> {
+  const newest = await ctx.client
+    .getIssue(key)
+    .then((fresh) =>
+      (fresh.fields.attachment ?? [])
+        .filter((attachment) => attachment.filename === filename)
+        .sort((a, b) => Date.parse(b.created ?? "") - Date.parse(a.created ?? ""))[0],
+    )
+    .catch(() => undefined);
+  if (newest) {
+    // Compared as text, trimmed like every saved draft (see hashDraft).
+    const already = await ctx.client.downloadAttachment(newest).catch(() => undefined);
+    if (already && already.toString("utf8").trim() === markdown.trim()) return;
+  }
+  await ctx.client.uploadAttachment(key, filename, markdown, "text/markdown");
+}
+
+/**
  * The saved draft never made it onto the ticket (its comment failed to post), so nobody has
  * seen what an approval would publish. Post it now, as it is, and say so.
  */
 export async function repostDraft(ctx: Ctx, key: string, markdown: string): Promise<void> {
   const slug = ctx.state.get(key)?.docSlug ?? "doc";
   const attachment = `draft-${slug}.md`;
-  await ctx.client.uploadAttachment(key, attachment, markdown, "text/markdown");
+  await attachDraft(ctx, key, attachment, markdown);
   const posted = await say(
     ctx,
     key,
@@ -260,7 +282,7 @@ export async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: bo
     askedForFields: [],
   });
 
-  await ctx.client.uploadAttachment(key, `draft-${slug}.md`, result.markdown, "text/markdown");
+  await attachDraft(ctx, key, `draft-${slug}.md`, result.markdown);
   const posted = await say(
     ctx,
     key,
@@ -314,6 +336,20 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]):
     return;
   }
 
+  // This feedback was already turned into the saved draft, whose comment never landed (a
+  // failure after the save, retried): post that revision, don't revise it again.
+  const fromThis = createHash("sha256").update(feedback.join("\u0000")).digest("hex");
+  const known0 = ctx.state.get(key);
+  if (known0?.revisedFrom === fromThis && known0.postedDraftHash !== hashDraft(draft)) {
+    const recorded = known0.feedback ?? [];
+    for (const item of feedback) if (!recorded.includes(item)) await ctx.state.appendFeedback(key, item);
+    await repostDraft(ctx, key, draft);
+    await ctx.state.patch(key, { revisedFrom: undefined });
+    await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
+    await handBack(ctx, key, issue);
+    return;
+  }
+
   await moveTo(ctx, key, ctx.config.jira.inProgressStatus, issueStatus(issue));
   await assignTo(ctx, key, ctx.botAccountId);
 
@@ -325,14 +361,14 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]):
   const result = await reviseDoc(ctx.vault, draft, feedback, designs.images);
   await ctx.state.saveDraft(key, result.markdown);
   // The vault copy is now stale relative to this draft: the next approve republishes.
-  await ctx.state.patch(key, { draftPublished: false });
+  await ctx.state.patch(key, { draftPublished: false, revisedFrom: fromThis });
   await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
   await handBack(ctx, key, issue);
   for (const item of feedback) await ctx.state.appendFeedback(key, item);
 
   const known = ctx.state.get(key);
   const slug = known?.docSlug ?? docSlug(issue.fields.summary);
-  await ctx.client.uploadAttachment(key, `draft-${slug}.md`, result.markdown, "text/markdown");
+  await attachDraft(ctx, key, `draft-${slug}.md`, result.markdown);
   const posted = await say(
     ctx,
     key,
@@ -351,6 +387,6 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]):
       attachment: `draft-${slug}.md`,
     }),
   );
-  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(result.markdown) });
+  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(result.markdown), revisedFrom: undefined });
   await audit(ctx.config.auditFile, { type: "jira.draft.revised", actor: "scribe", issue: key, feedback });
 }

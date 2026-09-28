@@ -53,7 +53,7 @@ interface StubComment {
 let loseNextCommentResponse = false;
 /** Fail the Nth comment POST from now WITHOUT storing it (a plain network error). */
 let failCommentPostIn = 0;
-/** Refuse every "Revised draft" comment, the way a 400 would, until turned off. */
+/** Refuse every comment carrying a revision (first try or re-post), the way a 400 would, until turned off. */
 let failRevisionPosts = false;
 /** Run once, right after a comment containing `text` is stored: a human acting mid-tick. */
 let afterPost: { text: string; run: () => void } | undefined;
@@ -71,6 +71,8 @@ let board: string[];
 /** Every assignee the agent set, in order — the board's "who owes the next action". */
 let assignments: Array<string | null>;
 /** Changelog served under expand=changelog — who moved the ticket where. */
+/** Attachments the agent uploaded, by download id: the fake keeps what Jira would. */
+let uploaded: Map<string, Buffer>;
 let changelog: Array<{ author: { displayName: string; accountId: string }; items: Array<{ field: string; toString: string }> }>;
 
 const COMPLETE_PRD = [
@@ -146,7 +148,7 @@ function stubJira(): void {
         failNextPostContaining = undefined;
         throw new TypeError("fetch failed: connect ECONNRESET");
       }
-      if (failRevisionPosts && body.body.includes("Revised draft")) return new Response(JSON.stringify({ errorMessages: ["bad request"] }), { status: 400 });
+      if (failRevisionPosts && (body.body.includes("Revised draft") || body.body.includes("Draft (posted again)"))) return new Response(JSON.stringify({ errorMessages: ["bad request"] }), { status: 400 });
       const posted: StubComment = {
         id: `bot-${comments.length + 1}`,
         body: body.body,
@@ -188,8 +190,19 @@ function stubJira(): void {
     if (url.includes("/remotelink")) return json([]);
     // Attachment bytes: any body works, the pipeline only base64s whatever it downloads.
     // A real PNG signature, then filler; "fake-png" serves a PDF under an image's name.
+    const stored = uploaded.get(url.split("/attachment/content/")[1] ?? "");
+    if (stored) return new Response(stored, { status: 200 });
     if (url.includes("/attachment/content/fake-png")) return new Response("%PDF-1.7 not an image", { status: 200 });
     if (url.includes("/attachment/content/")) return new Response(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("PNGBYTES")]), { status: 200 });
+    if (url.endsWith("/attachments") && method === "POST" && init?.body instanceof FormData) {
+      const file = init.body.get("file") as File;
+      const bytes = Buffer.from(await file.arrayBuffer());
+      const id = `up-${uploaded.size + 1}`;
+      uploaded.set(id, bytes);
+      const attachment = { id, filename: file.name, mimeType: "text/markdown", size: bytes.length, created: new Date().toISOString(), content: `https://example.atlassian.net/rest/api/2/attachment/content/${id}` };
+      issue = { ...issue, fields: { ...(issue.fields as object), attachment: [...(((issue.fields as { attachment?: unknown[] }).attachment) ?? []), attachment] } };
+      return json([attachment]);
+    }
     if (url.includes("/attachments") || url.includes("/attachment")) return json([]);
     if (url.includes("expand=changelog")) return json({ ...issue, changelog: { histories: changelog } });
     if (url.includes("/rest/api/2/issue/")) return json(issue);
@@ -211,6 +224,7 @@ beforeEach(async () => {
   failRevisionPosts = false;
   failNextPostContaining = undefined;
   afterPost = undefined;
+  uploaded = new Map();
   moves = [];
   changelog = [];
   assignments = [];
@@ -773,7 +787,7 @@ describe("a lesson learned on one ticket shapes the next (TODO #6)", () => {
   async function draftDoc2(): Promise<string> {
     vi.mocked(generateText).mockClear();
     comments = [];
-    issue = { ...issue, key: "DOC-2", id: "2", fields: { ...(issue.fields as object), summary: "Document digest emails", status: { name: "To Do" }, updated: "2026-08-21T09:00:00.000+0000" } };
+    issue = { ...issue, key: "DOC-2", id: "2", fields: { ...(issue.fields as object), summary: "Document digest emails", status: { name: "To Do" }, attachment: [], updated: "2026-08-21T09:00:00.000+0000" } };
     (await startScribeJira(config(), vault)).stop();
     const draftCall = vi.mocked(generateText).mock.calls.find(([options]) => !String((options as GenerateOptions).system).includes("review one piece of feedback"));
     return String((draftCall?.[0] as GenerateOptions | undefined)?.prompt ?? "");
@@ -922,6 +936,43 @@ describe("a crash or an error mid-batch loses nothing and repeats nothing (H4)",
     expect(draft).toBeDefined();
     expect(draft?.body.length).toBeLessThan(32_767);
     expect(draft?.body).toMatch(/the whole of it is attached as .{0,4}draft-incident/);
+    vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
+  });
+
+  it("a revise retried after its comment failed posts the revision, instead of revising it again", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    const revised = `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`;
+    vi.mocked(generateText).mockImplementation(async () => revised);
+    failNextPostContaining = "Revised draft";
+    await tickWith(settings, "add the paste step");
+    const modelCalls = vi.mocked(generateText).mock.calls.length;
+    await tickWith(settings);
+    // No second revise of the revision: the model wasn't asked again.
+    expect(vi.mocked(generateText).mock.calls.length).toBe(modelCalls);
+    const reposts = comments.filter((comment) => comment.body.includes("Draft (posted again)"));
+    expect(reposts).toHaveLength(1);
+    expect(reposts[0]?.body.match(/Paste the snippet into your page\./g)).toHaveLength(1);
+    await tickWith(settings, "approve");
+    const [doc] = await vault.listNotes("docs");
+    expect((await vault.readNote(doc as string)).body).toContain("Paste the snippet into your page.");
+    vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
+  });
+
+  it("a retry attaches the draft once, not once per attempt", async () => {
+    const settings = config();
+    const drafts = () => ((issue.fields as { attachment?: Array<{ filename: string }> }).attachment ?? []).filter((attachment) => attachment.filename.startsWith("draft-"));
+    // The first draft's comment fails after its attachment landed; the next poll posts it.
+    failNextPostContaining = "Draft ready";
+    (await startScribeJira(settings, vault)).stop();
+    expect(drafts()).toHaveLength(1);
+    await tickWith(settings);
+    expect(comments.some((comment) => comment.body.includes("Draft (posted again)"))).toBe(true);
+    expect(drafts()).toHaveLength(1);
+    // A real revision is a new attachment: different text.
+    vi.mocked(generateText).mockImplementation(async () => `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`);
+    await tickWith(settings, "add the paste step");
+    expect(drafts()).toHaveLength(2);
     vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
   });
 

@@ -221,13 +221,13 @@ describe("a failed space lookup", () => {
       const url = decodeURIComponent(String(input));
       if (url.includes("/api/v2/spaces?keys=")) {
         calls += 1;
-        // A 500, not a 503: a 503 is now retried in place (rate-limit backoff), which is not what this checks.
-        return calls === 1 ? new Response("down", { status: 500 }) : new Response(JSON.stringify({ results: [{ id: 1, key: "BEACON" }] }));
+        // A 400: 503 and a read's 500/502/504 are retried in place (backoff), which is not what this checks.
+        return calls === 1 ? new Response("bad", { status: 400 }) : new Response(JSON.stringify({ results: [{ id: 1, key: "BEACON" }] }));
       }
       return new Response(JSON.stringify({ results: [] }));
     });
     const c = new ConfluenceConnector({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", allowedSpaceKeys: ["BEACON"] });
-    await expect(c.search("x")).rejects.toThrow(/500/);
+    await expect(c.search("x")).rejects.toThrow(/400/);
     expect(await c.search("x")).toEqual([]);
   });
 });

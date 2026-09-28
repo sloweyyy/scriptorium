@@ -76,6 +76,12 @@ export interface IssueState {
   /** A first draft is saved and its comment hasn't posted yet (cleared once it has): the next tick posts it. */
   draftUnposted?: boolean;
   /**
+   * sha256 of the feedback the saved draft was revised from, until that revision is posted.
+   * A retry of the same feedback then posts it, instead of revising the revision again and
+   * applying the same feedback twice.
+   */
+  revisedFrom?: string;
+  /**
    * Follow-ups a publish still owes: the Slack announcement and the lesson proposal. Set
    * when the publish lands, each cleared once done, so a failure between them (the
    * "Published" comment, say) is finished by the retry instead of skipped as "already done".

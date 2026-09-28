@@ -219,6 +219,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "a transient 5xx is retried for reads only, never for a write",
+    file: "packages/core/src/http.ts",
+    find: "(TRANSIENT.has(response.status) && READS.has((init.method ?? \"GET\").toUpperCase()))",
+    replace: "TRANSIENT.has(response.status)",
+    evals: ["evals/backoff.test.ts"],
+  },
+  {
+    control: "a revise retried after its comment failed posts the revision, not a second revise",
+    file: "apps/agents/src/scribe-jira/drafting.ts",
+    find: "  if (known0?.revisedFrom === fromThis && known0.postedDraftHash !== hashDraft(draft)) {",
+    replace: "  if (false) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a draft is attached once, not once per retry",
+    file: "apps/agents/src/scribe-jira/drafting.ts",
+    find: "    if (already && already.toString(\"utf8\").trim() === markdown.trim()) return;",
+    replace: "    if (false) return;",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

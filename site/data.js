@@ -5,7 +5,7 @@ window.SITE = {
 
   stats: [
     { value: "540+", label: "evals, deterministic, on every commit" },
-    { value: "41", label: "guardrails proven by mutation testing" },
+    { value: "42", label: "guardrails proven by mutation testing" },
     { value: "30+", label: "tools, every write approve-tier" },
     { value: "11", label: "reviewed pull requests merged" },
   ],
@@ -56,6 +56,7 @@ window.SITE = {
   ],
 
   findings: [
+    { sev: "High", issue: "If a revised draft's comment failed to post (a draft too long for Jira, say), approving the draft on the ticket published the unseen revision.", fix: "Publishing requires the saved draft to be exactly the one on the ticket. If it isn't, it's posted again and needs a new approval. Long drafts are shortened in the comment and attached in full." },
     { sev: "High", issue: "A question in an internal Jira comment got a public reply, visible to customers.", fix: "Replies copy the comment's visibility. A restriction it can't read gets no reply at all." },
     { sev: "High", issue: "A multi-step plan's card showed only the first 400 characters, so a later step's comment body could be approved unseen.", fix: "The card lists every step and every argument. A plan too long for one card is refused, never cut." },
     { sev: "High", issue: "A plan could schedule reminders in channels other than the one that asked.", fix: "The per-conversation checks are one function, applied to single calls and to every plan step alike." },

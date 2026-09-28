@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { audit, docSlug } from "@scriptorium/core";
 import { issueStatus, type JiraIssue } from "@scriptorium/jira";
 import {
@@ -65,6 +66,51 @@ export function houseRules(applied: readonly string[], verdicts: ReadonlyArray<{
   return applied.map(mark).join(", ");
 }
 
+/** What `postedDraftHash` records: the draft's text, as saved (trimmed, like `saveDraft`). */
+export function hashDraft(markdown: string): string {
+  return createHash("sha256").update(markdown.trim()).digest("hex");
+}
+
+/**
+ * Jira refuses a comment over 32,767 characters, and it refused the same long draft on
+ * every retry. Past this, the comment shows the start and points at the attachment, which
+ * always carries the whole draft.
+ */
+export const DRAFT_COMMENT_CHARS = 24_000;
+
+function draftBody(markdown: string, attachment: string | undefined): string {
+  const text = markdown.trim();
+  if (text.length <= DRAFT_COMMENT_CHARS) return text;
+  return `${text.slice(0, DRAFT_COMMENT_CHARS)}\n\n_… the draft continues: the whole of it is attached as \`${attachment ?? "the draft attachment"}\`. Read it there before approving._`;
+}
+
+/**
+ * The saved draft never made it onto the ticket (its comment failed to post), so nobody has
+ * seen what an approval would publish. Post it now, as it is, and say so.
+ */
+export async function repostDraft(ctx: Ctx, key: string, markdown: string): Promise<void> {
+  const slug = ctx.state.get(key)?.docSlug ?? "doc";
+  const attachment = `draft-${slug}.md`;
+  await ctx.client.uploadAttachment(key, attachment, markdown, "text/markdown");
+  const posted = await say(
+    ctx,
+    key,
+    [
+      "**Draft (posted again)** The latest version didn't reach this ticket earlier, so nothing was published. This is exactly what an approval would publish.",
+      "",
+      "---",
+      "",
+      draftBody(markdown, attachment),
+      "",
+      "---",
+      "",
+      "Reply with feedback in plain English and I'll revise, or comment `approve` to publish it.",
+    ].join("\n"),
+  );
+  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(markdown) });
+  await audit(ctx.config.auditFile, { type: "jira.draft.reposted", actor: "scribe", issue: key });
+}
+
 function draftComment(input: {
   markdown: string;
   lintReport: string;
@@ -72,6 +118,7 @@ function draftComment(input: {
   lessonVerdicts?: Array<{ id: string; verdict: "honored" | "violated" | "unchecked" }>;
   source: PrdSource;
   revision: boolean;
+  attachment?: string;
 }): string {
   const provenance = [
     `Drafted from ${input.source.origin ?? "the ticket"}`,
@@ -94,7 +141,7 @@ function draftComment(input: {
     "",
     "---",
     "",
-    input.markdown.trim(),
+    draftBody(input.markdown, input.attachment),
     "",
     "---",
     "",
@@ -223,9 +270,10 @@ export async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: bo
       lessonVerdicts: result.lessonVerdicts,
       source,
       revision: false,
+      attachment: `draft-${slug}.md`,
     }),
   );
-  await ctx.state.patch(key, { draftPostedAt: posted.created });
+  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(result.markdown) });
   // A draft exists and the next move is a human's — so it goes back to them, by name.
   await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
   await handBack(ctx, key, issue);
@@ -299,8 +347,9 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]):
         origin: `${feedback.length} comment(s) of feedback`,
       },
       revision: true,
+      attachment: `draft-${slug}.md`,
     }),
   );
-  await ctx.state.patch(key, { draftPostedAt: posted.created });
+  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(result.markdown) });
   await audit(ctx.config.auditFile, { type: "jira.draft.revised", actor: "scribe", issue: key, feedback });
 }

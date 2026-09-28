@@ -142,6 +142,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/gaps.test.ts"],
   },
   {
+    control: "Scribe publishes only the draft that is on the ticket",
+    file: "apps/agents/src/scribe-jira/publishing.ts",
+    find: "    if (known?.postedDraftHash !== hashDraft(draft)) {",
+    replace: "    if (false) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

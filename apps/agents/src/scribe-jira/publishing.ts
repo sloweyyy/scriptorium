@@ -5,6 +5,7 @@ import { publishDoc } from "@scriptorium/scribe";
 import { publishApprovedDoc } from "../docs-repo";
 import { announcePublished } from "../slack-notify";
 import { moveTo, say, type Ctx } from "./context";
+import { hashDraft, repostDraft } from "./drafting";
 import { proposeLesson } from "./lessons";
 
 export async function runPublish(
@@ -54,6 +55,14 @@ export async function runPublish(
         key,
         "I have no draft on this ticket yet, so there is nothing to publish. Attach the PRD as a `.md` file and comment `draft`.",
       );
+      return;
+    }
+    // No approval of text nobody saw. Every path to a publish (comment, board move, Slack
+    // button) comes through here, so this is where it is held.
+    if (known?.postedDraftHash !== hashDraft(draft)) {
+      await audit(ctx.config.auditFile, { type: "jira.approve.held", actor: "scribe", issue: key, reason: "draft-not-on-ticket" });
+      await repostDraft(ctx, key, draft);
+      await moveTo(ctx, key, ctx.config.jira.inReviewStatus, issueStatus(issue));
       return;
     }
     relPath = await publishDoc({

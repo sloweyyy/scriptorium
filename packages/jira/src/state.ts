@@ -67,6 +67,12 @@ export interface IssueState {
    * than this was given to an EARLIER draft and is not an approval of this one.
    */
   draftPostedAt?: string;
+  /**
+   * sha256 of the draft text that comment carried: set only once it is on the ticket. The
+   * saved draft is written before its comment is posted, so a failed post leaves a newer
+   * draft than anyone has seen. Publishing requires the saved draft to hash to this.
+   */
+  postedDraftHash?: string;
   /** A comment whose command keeps failing: retried, but not forever. */
   failing?: { commentId: string; attempts: number };
   appliedLessons?: string[];

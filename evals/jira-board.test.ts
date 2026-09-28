@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -52,6 +53,8 @@ interface StubComment {
 let loseNextCommentResponse = false;
 /** Fail the Nth comment POST from now WITHOUT storing it (a plain network error). */
 let failCommentPostIn = 0;
+/** Refuse every "Revised draft" comment, the way a 400 would, until turned off. */
+let failRevisionPosts = false;
 
 let tmpRoot: string;
 let vault: Vault;
@@ -133,6 +136,9 @@ function stubJira(): void {
     if (url.includes("/comment") && method === "POST") {
       if (failCommentPostIn > 0 && --failCommentPostIn === 0) throw new TypeError("fetch failed: connect ECONNRESET");
       const body = JSON.parse(String(init?.body ?? "{}")) as { body: string; properties?: unknown };
+      // Jira's own limit: a longer comment is refused, every time.
+      if (body.body.length > 32_767) return new Response(JSON.stringify({ errors: { comment: "too long" } }), { status: 400 });
+      if (failRevisionPosts && body.body.includes("Revised draft")) return new Response(JSON.stringify({ errorMessages: ["bad request"] }), { status: 400 });
       const posted: StubComment = {
         id: `bot-${comments.length + 1}`,
         body: body.body,
@@ -187,6 +193,7 @@ beforeEach(async () => {
   vault = new Vault(path.join(tmpRoot, "vault"));
   await vault.ensure();
   comments = [];
+  failRevisionPosts = false;
   moves = [];
   changelog = [];
   assignments = [];
@@ -407,7 +414,8 @@ describe("board transitions", () => {
     const seeded = {
       version: 1,
       issues: {
-        "DOC-1": { hasDraft: true, docSlug: "incident-timeline-embed", sourceFingerprint: "seeded", processedComments: [], lastStatus: "In Review", lastUpdated: "2026-08-20T10:00:00.000+0000" },
+        // The draft on disk is the one on the ticket.
+        "DOC-1": { hasDraft: true, docSlug: "incident-timeline-embed", sourceFingerprint: "seeded", processedComments: [], lastStatus: "In Review", lastUpdated: "2026-08-20T10:00:00.000+0000", postedDraftHash: createHash("sha256").update(CLEAN_DRAFT.trim()).digest("hex") },
       },
     };
     await fs.writeFile(path.join(stateDir, "jira-state.json"), JSON.stringify(seeded));
@@ -765,6 +773,45 @@ describe("a crash or an error mid-batch loses nothing and repeats nothing (H4)",
     );
     expect(loseNextCommentResponse).toBe(false);
     expect(answers).toHaveLength(1);
+  });
+
+  it("never publishes a revision that didn't reach the ticket: it posts it again and waits for an approval of that", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    const revised = `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`;
+    vi.mocked(generateText).mockImplementation(async () => revised);
+    failRevisionPosts = true;
+    await tickWith(settings, "add the paste step");
+    await tickWith(settings);
+    await tickWith(settings);
+    expect(comments.some((comment) => comment.body.includes("I tried that 3 times"))).toBe(true);
+    failRevisionPosts = false;
+
+    // The reviewer has only ever seen the first draft, and approves it.
+    await tickWith(settings, "approve");
+    expect(comments.some((comment) => comment.body.includes("*Published* —"))).toBe(false);
+    expect(await vault.listNotes("docs")).toHaveLength(0);
+    const again = comments.find((comment) => comment.body.includes("Draft (posted again)"));
+    expect(again?.body).toContain("Paste the snippet into your page.");
+
+    // Approving what is now on the ticket publishes exactly that.
+    await tickWith(settings, "approve");
+    const [doc] = await vault.listNotes("docs");
+    expect(doc).toBeDefined();
+    expect((await vault.readNote(doc as string)).body).toContain("Paste the snippet into your page.");
+    vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
+  });
+
+  it("a draft too long for one Jira comment is posted shortened, pointing at the attachment", async () => {
+    const long = `${CLEAN_DRAFT}\n\n## Reference\n\n${"Every embed option is described here in full. ".repeat(900)}`;
+    vi.mocked(generateText).mockImplementation(async () => long);
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    const draft = comments.find((comment) => comment.body.includes("Draft ready"));
+    expect(draft).toBeDefined();
+    expect(draft?.body.length).toBeLessThan(32_767);
+    expect(draft?.body).toMatch(/the whole of it is attached as .{0,4}draft-incident/);
+    vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
   });
 
   it("a command that keeps failing is set aside after three tries, with a note", async () => {

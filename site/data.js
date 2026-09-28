@@ -7,7 +7,7 @@ window.SITE = {
     { value: "550+", label: "evals, deterministic, on every commit" },
     { value: "55", label: "guardrails proven by mutation testing" },
     { value: "30+", label: "tools, every write approve-tier" },
-    { value: "12", label: "reviewed pull requests merged" },
+    { value: "13", label: "reviewed pull requests merged" },
   ],
 
   capabilities: [
@@ -54,6 +54,7 @@ window.SITE = {
     { when: "28 Sep", pr: 15, title: "Public docs, private notes", text: "Published docs go to a public docs repo and internal notes (PRDs, gaps, house rules) to a separate private vault repo, each with its own deploy key and no fallback from one to the other.", tags: ["publishing", "security"] },
     { when: "28 Sep", pr: 16, title: "Operable by someone who didn't build it", text: "A setup doctor, signing-key rotation, a fallback model, approval nudges and delegation to a stand-in, /metrics, and erasing one person on request without breaking the audit chain. Plus an answer golden set per model, and a thumbs-down on an answer flags it as a new test case.", tags: ["doctor", "privacy", "evals", "approvals"] },
     { when: "28 Sep", pr: 17, title: "Safe to leave running", text: "A review of the docs agent for running unattended, and ten fixes from it. It publishes only the draft that is actually on the ticket, reads every comment on a long ticket, notices a drag to Approved made mid-poll and never undoes one, checks an attachment by its bytes rather than its name, and files each gap's ticket exactly once.", tags: ["Jira", "reliability", "review fixes"] },
+    { when: "28 Sep", pr: 18, title: "Retries that don't repeat themselves", text: "A retry after a partial failure no longer applies the same feedback twice or attaches the same draft again, and a read rides out a passing server error. A write is never retried blind.", tags: ["reliability", "exactly once"] },
   ],
 
   findings: [

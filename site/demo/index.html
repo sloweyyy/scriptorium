@@ -7,8 +7,8 @@
 <meta name="description" content="An animated walkthrough of scriptorium: cited answers, gaps that become tickets, approvals bound to the exact change, docs that learn with permission, and a record you can check.">
 <link rel="icon" href="../favicon.svg" type="image/svg+xml">
 <meta property="og:type" content="video.other">
-<meta property="og:title" content="scriptorium in 80 seconds: an AI teammate that asks before it acts">
-<meta property="og:description" content="Cited answers, gaps that become tickets, approvals bound to the exact change, and docs that learn only what a human approves. Open source.">
+<meta property="og:title" content="scriptorium in 80 seconds: the AI teammate that shows its receipts">
+<meta property="og:description" content="A source for every answer, a named sign-off for every change, a record nobody can quietly edit. Open source, for Slack, Jira, Confluence and GitHub.">
 <meta property="og:url" content="https://scriptorium-teammate.vercel.app/demo/">
 <meta property="og:image" content="https://scriptorium-teammate.vercel.app/demo/poster.png">
 <meta property="og:image:width" content="1280">
@@ -287,7 +287,7 @@
   const logo = el("agent", SHIELD, 588, 170);
   const name = el("end-title", "scriptorium", 440, 300, 400);
   name.style.textAlign = "center";
-  const tag = el("end-sub", "An AI teammate for Slack, Jira, Confluence and GitHub<br>that asks before it acts.", 240, 390, 800);
+  const tag = el("end-sub", "The AI teammate for Slack, Jira, Confluence and GitHub<br>that shows its receipts.", 240, 390, 800);
   tag.style.textAlign = "center";
   pop(logo, 0.3, 600);
   inn(name, 0.8, 600);
@@ -323,7 +323,7 @@
   const cast = [ana, anaWho, agent, agentLabel, gate, gateLabel, ...sources];
 
   // ---- 01 · Ask (5–19s) -------------------------------------------------------------------
-  caption(1, "Ask", "Answers with sources, not guesses", "It answers from your docs, Jira, Confluence and GitHub, and shows where each fact came from.", 5, 18.4);
+  caption(1, "Sourced", "Every answer shows where it came from", "It answers from your docs, Jira, Confluence and GitHub, and cites the record behind each fact.", 5, 18.4);
   inn(ana, 5.4);
   inn(anaWho, 5.5);
   const q1 = el("bubble", '<span class="type">When does the daily digest go out?</span>', 164, 240);
@@ -385,7 +385,7 @@
   hideAll([q2, a2, none1, none2, gap, lane, ticket, loop], 30.4);
 
   // ---- 03 · Approve (31–47s) --------------------------------------------------------------
-  caption(3, "Asks before it acts", "Nothing changes until a named person approves", "Every write waits on a card, bound by hash to the exact change the approver saw.", 31, 46.4);
+  caption(3, "Signed, not assumed", "Every change carries a named person's sign-off", "Every write waits on a card, bound by hash to the exact change the approver saw.", 31, 46.4);
   const q3 = el("bubble", '<span class="type">File this thread as a Jira ticket.</span>', 164, 240);
   inn(q3, 31.4, 350);
   typed(q3.firstChild, 31.5, 800);
@@ -507,7 +507,7 @@
   const endLogo = el("agent", SHIELD, 588, 170);
   const endName = el("end-title", "scriptorium", 440, 300, 400);
   endName.style.textAlign = "center";
-  const endSub = el("end-sub", "The AI teammate that asks before it acts.", 340, 390, 600);
+  const endSub = el("end-sub", "Receipts for everything your AI teammate says and does.", 290, 390, 700);
   endSub.style.textAlign = "center";
   const endUrl = el("end-url", "scriptorium-teammate.vercel.app · open source, MIT", 340, 450, 600);
   endUrl.style.textAlign = "center";

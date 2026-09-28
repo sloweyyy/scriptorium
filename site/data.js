@@ -4,10 +4,10 @@ window.SITE = {
   updated: "28 September 2026",
 
   stats: [
-    { value: "550+", label: "evals, deterministic, on every commit" },
+    { value: "570+", label: "evals, deterministic, on every commit" },
     { value: "81", label: "guardrails proven by mutation testing" },
     { value: "30+", label: "tools, every write approve-tier" },
-    { value: "15", label: "reviewed pull requests merged" },
+    { value: "17", label: "reviewed pull requests merged" },
   ],
 
   capabilities: [
@@ -57,6 +57,8 @@ window.SITE = {
     { when: "28 Sep", pr: 18, title: "Retries that don't repeat themselves", text: "A retry after a partial failure no longer applies the same feedback twice or attaches the same draft again, and a read rides out a passing server error. A write is never retried blind.", tags: ["reliability", "exactly once"] },
     { when: "28 Sep", pr: 19, title: "Three reviews, their fixes", text: "Independent reviews of the Slack Teammate, cited answers and test coverage. A private memory can no longer be reached by spelling its path another way, an expired approval never spawns a new card, an approval survives a card Slack won't update, and a pause silences reminders to approvers too.", tags: ["privacy", "approvals", "review fixes"] },
     { when: "28 Sep", pr: 20, title: "Exactly once, across restarts", text: "A Slack retry that reaches a restarted instance is still recognised, a crash mid-post never repeats the weekly digest or a reminder to approvers, and an unanswered question reaches its Jira ticket as inert text.", tags: ["exactly once", "Jira", "mutation testing"] },
+    { when: "28 Sep", pr: 21, title: "Answers say only what was verified", text: "A citation that failed the check no longer reads as a source in the posted answer, a proposed or revoked house rule is retrieved saying so, and a change request is echoed into Slack as inert text. Six more guardrails gained a mutant, and one mutant exposed a missing test.", tags: ["grounding", "mutation testing"] },
+    { when: "28 Sep", pr: 22, title: "An 80-second demo", text: "An animated walkthrough of the whole product, in light and dark, rendered frame by frame to video from the same page.", tags: ["site", "demo"] },
   ],
 
   findings: [

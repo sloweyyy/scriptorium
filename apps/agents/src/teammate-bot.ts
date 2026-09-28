@@ -591,11 +591,16 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
 
     async checkApprovals(now = new Date()) {
       const nudgeMs = (settings.approvalNudgeHours ?? 24) * 3_600_000;
-      for (const request of (await store.all()).filter((candidate) => candidate.agent === envelope.agent && candidate.status === "pending")) {
+      // Paused means it posts nothing new, nudges included. Closing an expired card still
+      // happens: it only makes the card stop claiming to be pending.
+      const paused = (await refreshControl()).paused;
+      // Stored as expired too: a request cancelled outright (privacy erase) still has live buttons.
+      const open = (await store.all()).filter((candidate) => candidate.agent === envelope.agent && (candidate.status === "pending" || candidate.status === "expired"));
+      for (const request of open) {
         const where = (await ledger.get(cardOp(request.id)))?.result as { channel?: string; ts?: string } | undefined;
         if (!where?.channel || !where.ts) continue;
         const card = { channel: where.channel, ts: where.ts };
-        if (Date.parse(request.expiresAt) <= now.getTime()) {
+        if (request.status === "expired" || Date.parse(request.expiresAt) <= now.getTime()) {
           // The buttons would decide nothing now; leaving them live reads as still pending.
           await once(ledger, opKey("teammate.card.expired", request.id), async () => {
             await slack.chat.update({ ...card, text: `⌛ Expired without a decision: ${escapeMrkdwn(describeRequest(request))}. Nothing was done; ask again if it's still needed.`, blocks: [] as never });
@@ -603,7 +608,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
           }).catch(() => undefined);
           continue;
         }
-        if (nudgeMs > 0 && now.getTime() - Date.parse(request.requestedAt) >= nudgeMs) {
+        if (!paused && nudgeMs > 0 && now.getTime() - Date.parse(request.requestedAt) >= nudgeMs) {
           const approvers = (envelope.tools[request.tool]?.approvers ?? []).filter((id) => id.startsWith("slack:")).map((id) => `<@${id.slice("slack:".length)}>`);
           if (!approvers.length) continue;
           await once(ledger, opKey("teammate.card.nudged", request.id), async () => {

@@ -367,6 +367,35 @@ describe("approvals nobody decides", () => {
   });
 });
 
+describe("approvals nobody decides, while paused or erased", () => {
+  const ask = async (core: Awaited<ReturnType<typeof createTeammate>>) => {
+    script = { calls: [{ name: "memory_save", input: { text: "Release notes go out on Thursdays.", scope: "channel:C1" } }], reply: "Asked." };
+    await core.onMention({ channel: "C1", ts: "3.0", user: "U1", text: "<@UBOT> remember release notes go out on Thursdays" });
+    await settle(core);
+    return posted.findIndex((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION));
+  };
+
+  it("sends no nudge while paused", async () => {
+    const core = await createTeammate({ ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig, vault, slack as never, "UBOT");
+    await ask(core);
+    await core.onSlashCommand({ channel: "C1", user: "UADMIN", text: "admin pause maintenance", commandId: "p1" });
+    const count = posted.length;
+    await core.checkApprovals(new Date(Date.now() + 25 * 3_600_000));
+    expect(posted.slice(count).filter((message) => message.text.includes("Still waiting"))).toHaveLength(0);
+  });
+
+  it("closes the card of a request cancelled outright (privacy erase), not only one that timed out", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    const cardIndex = await ask(core);
+    const file = path.join(tmpRoot, "state", "approvals.json");
+    const stored = JSON.parse(await fs.readFile(file, "utf8")) as Array<{ status: string }>;
+    await fs.writeFile(file, JSON.stringify(stored.map((entry) => ({ ...entry, status: "expired" }))));
+    await core.checkApprovals(new Date());
+    expect(posted[cardIndex]?.text).toContain("Expired without a decision");
+    expect(JSON.stringify(posted[cardIndex]?.blocks ?? [])).not.toContain(APPROVE_ACTION);
+  });
+});
+
 describe("your memories", () => {
   it("/teammate memories lists what applies to you; you can forget your own at once, not others'", async () => {
     const core = await createTeammate({ ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig, vault, slack as never, "UBOT");

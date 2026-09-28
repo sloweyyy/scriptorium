@@ -275,6 +275,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/slack-connector.test.ts"],
   },
   {
+    control: "paused, it sends no approval nudges",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "        if (!paused && nudgeMs > 0",
+    replace: "        if (nudgeMs > 0",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "a request cancelled outright has its card closed",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "        if (request.status === \"expired\" || Date.parse(request.expiresAt) <= now.getTime()) {",
+    replace: "        if (Date.parse(request.expiresAt) <= now.getTime()) {",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

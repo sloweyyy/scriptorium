@@ -187,7 +187,9 @@ function stubJira(): void {
     }
     if (url.includes("/remotelink")) return json([]);
     // Attachment bytes: any body works, the pipeline only base64s whatever it downloads.
-    if (url.includes("/attachment/content/")) return new Response("PNGBYTES", { status: 200 });
+    // A real PNG signature, then filler; "fake-png" serves a PDF under an image's name.
+    if (url.includes("/attachment/content/fake-png")) return new Response("%PDF-1.7 not an image", { status: 200 });
+    if (url.includes("/attachment/content/")) return new Response(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("PNGBYTES")]), { status: 200 });
     if (url.includes("/attachments") || url.includes("/attachment")) return json([]);
     if (url.includes("expand=changelog")) return json({ ...issue, changelog: { histories: changelog } });
     if (url.includes("/rest/api/2/issue/")) return json(issue);
@@ -812,6 +814,27 @@ describe("a lesson learned on one ticket shapes the next (TODO #6)", () => {
 });
 
 describe("designs the model cannot take", () => {
+  it("a PDF named .png is left out and named, never sent as an image; an oversized PRD file is too", async () => {
+    const { sniffImage } = await import("@scriptorium/agents");
+    expect(sniffImage(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]))).toBe("image/png");
+    expect(sniffImage(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))).toBe("image/jpeg");
+    expect(sniffImage(Buffer.from("GIF89a...."))).toBe("image/gif");
+    expect(sniffImage(Buffer.from("RIFF\0\0\0\0WEBPVP8 "))).toBe("image/webp");
+    expect(sniffImage(Buffer.from("%PDF-1.7"))).toBeUndefined();
+
+    const fake = { id: "att-fake", filename: "flow.png", mimeType: "image/png", size: 30_000, content: "https://example.atlassian.net/rest/api/2/attachment/content/fake-png" };
+    const real = { id: "att-real", filename: "form.png", mimeType: "image/png", size: 30_000, content: "https://example.atlassian.net/rest/api/2/attachment/content/att-real" };
+    const bigPrd = { id: "att-prd", filename: "prd-export.md", mimeType: "text/markdown", size: 5_000_000, content: "https://example.atlassian.net/rest/api/2/attachment/content/att-prd" };
+    issue = { ...issue, fields: { ...(issue.fields as object), attachment: [fake, real, bigPrd] } };
+    (await startScribeJira(config(), vault)).stop();
+    const draft = comments.find((comment) => comment.body.includes("Draft ready"));
+    expect(draft?.body).toContain("flow.png (named as an image, but it isn't one)");
+    expect(draft?.body).toContain("prd-export.md (over 200 KB");
+    // The draft went ahead from the description, with the one real design.
+    const call = vi.mocked(generateText).mock.calls.at(-1)?.[0] as GenerateOptions & { images?: Array<{ mediaType: string }> };
+    expect(call.images?.map((image) => image.mediaType)).toEqual(["image/png"]);
+  });
+
   it("drafts without an oversized image, and names it instead of failing the whole ticket", async () => {
     const huge = { id: "att-big", filename: "full-page-4k.png", mimeType: "image/png", size: 12_000_000, content: "https://example.atlassian.net/rest/api/2/attachment/content/att-big" };
     const fine = { id: "att-ok", filename: "form.png", mimeType: "image/png", size: 200_000, content: "https://example.atlassian.net/rest/api/2/attachment/content/att-ok" };

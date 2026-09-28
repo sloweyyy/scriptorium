@@ -20,6 +20,25 @@ const VISION_TYPES: Record<string, ImageInput["mediaType"]> = {
 
 const PRD_EXTENSIONS = new Set([".md", ".markdown", ".txt"]);
 
+/**
+ * What an image really is, from its first bytes. Jira's `mimeType` comes from the filename
+ * the uploader chose, so a PDF renamed `.png` was sent to the model as a PNG and failed
+ * every draft on the ticket. Undefined: not an image the model reads.
+ */
+export function sniffImage(bytes: Buffer): ImageInput["mediaType"] | undefined {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 6 && /^GIF8[79]a$/.test(bytes.subarray(0, 6).toString("latin1"))) return "image/gif";
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString("latin1") === "RIFF" && bytes.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
+  return undefined;
+}
+
+/**
+ * A PRD is prose: a few thousand words. One far past that is an export or a log pasted in
+ * by mistake, and was downloaded whole and sent to the model every draft.
+ */
+export const MAX_PRD_BYTES = 200_000;
+
 const DRAFT_ATTACHMENT = /^draft-(.+)\.md$/i;
 
 /**
@@ -141,7 +160,13 @@ export async function loadDesignImages(ctx: Ctx, issue: JiraIssue): Promise<{ im
       skipped.push(`${attachment.filename} (over ${Math.round(MAX_DESIGN_BYTES / 1e6 * 10) / 10} MB — export it smaller)`);
       continue;
     }
-    images.push({ mediaType, base64: bytes.toString("base64") });
+    // Sent as what it IS, never as what its name claims; not an image at all is left out, named.
+    const actual = sniffImage(bytes);
+    if (!actual) {
+      skipped.push(`${attachment.filename} (named as an image, but it isn't one)`);
+      continue;
+    }
+    images.push({ mediaType: actual, base64: bytes.toString("base64") });
     names.push(attachment.filename);
   }
   return { images, names, skipped };
@@ -162,7 +187,16 @@ export async function loadSource(ctx: Ctx, issue: JiraIssue): Promise<PrdSource>
       continue;
     }
     if (!source.markdown && PRD_EXTENSIONS.has(path.extname(attachment.filename).toLowerCase())) {
+      const tooBig = `${attachment.filename} (over ${MAX_PRD_BYTES / 1000} KB, too long to be a PRD — trim it, or link the Confluence page)`;
+      if ((attachment.size ?? 0) > MAX_PRD_BYTES) {
+        source.skipped.push(tooBig);
+        continue;
+      }
       const bytes = await ctx.client.downloadAttachment(attachment);
+      if (bytes.length > MAX_PRD_BYTES) {
+        source.skipped.push(tooBig);
+        continue;
+      }
       source.markdown = bytes.toString("utf8");
       source.origin = `the attachment \`${attachment.filename}\``;
       continue;

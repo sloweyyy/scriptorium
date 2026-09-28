@@ -184,6 +184,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "a design is sent as what its bytes are, never what its name claims",
+    file: "apps/agents/src/scribe-jira/source.ts",
+    find: "    const actual = sniffImage(bytes);",
+    replace: "    const actual = sniffImage(bytes) ?? mediaType;",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "an oversized PRD file is left out, not downloaded and sent whole",
+    file: "apps/agents/src/scribe-jira/source.ts",
+    find: "      if ((attachment.size ?? 0) > MAX_PRD_BYTES) {",
+    replace: "      if (false) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

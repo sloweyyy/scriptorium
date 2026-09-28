@@ -104,16 +104,6 @@
   .card .receipt { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); color: var(--ink); }
   .card .receipt b { color: var(--accent); font-weight: 600; }
 
-  .timeline { position: relative; margin: 0; padding: 0; list-style: none; }
-  .timeline::before { content: ""; position: absolute; left: 11px; top: 6px; bottom: 6px; width: 2px; background: var(--line); }
-  .timeline li { position: relative; padding: 0 0 30px 44px; }
-  .timeline li::before { content: ""; position: absolute; left: 4px; top: 6px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); border: 3px solid var(--accent); }
-  .timeline .when { font-size: 13px; color: var(--faint); font-weight: 500; }
-  .timeline h3 { margin: 2px 0 6px; font-size: 18px; font-weight: 600; }
-  .timeline p { margin: 0 0 8px; color: var(--muted); max-width: 72ch; }
-  .tags { display: flex; flex-wrap: wrap; gap: 6px; }
-  .tag { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-weight: 500; }
-  .pr { font-size: 13px; }
 
   .rules { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
   @media (max-width: 760px) { .rules { grid-template-columns: 1fr; } }
@@ -131,12 +121,7 @@
   .sev.med { background: var(--accent-soft); color: var(--accent); }
   .table-scroll { overflow-x: auto; border-radius: 14px; }
 
-  .loop { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; counter-reset: step; }
   @media (max-width: 860px) { .loop { grid-template-columns: 1fr; } }
-  .step { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; counter-increment: step; }
-  .step::before { content: counter(step); display: block; font-family: Newsreader, Georgia, serif; font-size: 26px; font-weight: 600; color: var(--accent); line-height: 1; margin-bottom: 8px; }
-  .step h3 { margin: 0 0 4px; font-size: 15px; }
-  .step p { margin: 0; font-size: 14px; color: var(--muted); }
 
 
   figure.diagram { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px 20px 16px; box-shadow: var(--shadow); }
@@ -156,6 +141,17 @@
   .dg-head-hot { fill: var(--accent); }
   .dg-tap { stroke: var(--faint); stroke-width: 1; stroke-dasharray: 2 4; }
 
+  .hero-video { margin: 40px 0 0; }
+  .hero-video video { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 16px; border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow); }
+  .hero-video figcaption { margin-top: 10px; font-size: 14px; color: var(--muted); }
+  details.more { margin-top: 16px; }
+  details.more summary { cursor: pointer; color: var(--accent); font-weight: 600; font-size: 15px; list-style: none; }
+  details.more summary::-webkit-details-marker { display: none; }
+  details.more summary::after { content: " ↓"; }
+  details.more[open] summary::after { content: " ↑"; }
+  details.more .grid { margin-top: 16px; }
+  .open { margin: 18px 0 0; color: var(--muted); }
+  pre.run { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; overflow-x: auto; font-size: 13.5px; line-height: 1.7; margin: 0 0 22px; }
   pre.arch { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; overflow-x: auto; font-size: 13px; line-height: 1.55; margin: 0; }
 
   footer { border-top: 1px solid var(--line); padding: 36px 0 56px; color: var(--faint); font-size: 14px; }
@@ -171,8 +167,8 @@
       <a href="#why">Why receipts</a>
       <a href="#does">What it does</a>
       <a href="#safe">How it stays safe</a>
-      <a href="#evolution">Evolution</a>
-      <a href="#caught">What review caught</a>
+      <a href="#proof">Proof</a>
+      <a href="#run">Run it</a>
       <a class="gh" href="https://github.com/sloweyyy/scriptorium">GitHub →</a>
     </div>
   </div>
@@ -189,6 +185,10 @@
       <a class="btn" href="https://github.com/sloweyyy/scriptorium#quick-start">Self-host it</a>
       <a class="btn" href="https://github.com/sloweyyy/scriptorium/blob/main/docs/security-model.md">Read the security model</a>
     </div>
+    <figure class="hero-video">
+      <video id="heroVideo" autoplay muted loop playsinline preload="metadata" poster="demo/poster-light.png" aria-label="20-second clip: a cited answer, then an approval that runs exactly once"></video>
+      <figcaption><a href="demo/">▶ The full 80-second demo</a> · cited answers, gaps that become tickets, approvals, docs that learn with permission</figcaption>
+    </figure>
     <div class="stats" id="stats"></div>
   </div>
 </header>
@@ -210,6 +210,7 @@
     <h2>What it does</h2>
     <p class="sub">One engine and one policy layer run every agent. The Teammate is the general one: it reads widely inside its allow-lists, and each write it proposes waits on a card for a listed approver.</p>
     <div class="grid" id="capabilities"></div>
+    <details class="more"><summary>All capabilities</summary><div class="grid" id="capabilities-more"></div></details>
   </div>
 </section>
 
@@ -221,33 +222,12 @@
   </div>
 </section>
 
-<section id="evolution">
+<section id="proof">
   <div class="wrap">
-    <h2>How it evolved</h2>
-    <p class="sub">It began as a two-agent documentation pipeline. An improvement loop kept rebuilding it until it became a general, governed teammate. Every step below shipped as a reviewed pull request.</p>
-    <ol class="timeline" id="timeline"></ol>
-  </div>
-</section>
-
-<section id="caught">
-  <div class="wrap">
-    <h2>What review caught</h2>
-    <p class="sub">Each batch of features got an adversarial review whose job was to break it. These are some of the real findings. Each fix shipped with a test that fails without it.</p>
+    <h2>Proven, not promised</h2>
+    <p class="sub">A test that still passes with its guardrail deleted proves nothing. So every rule is sabotaged on purpose: <code>pnpm mutate</code> removes it, and its eval must fail. Independent reviews then try to break what's left. Here is some of what they caught before it shipped.</p>
     <div class="table-scroll"><table class="caught" id="findings"></table></div>
-  </div>
-</section>
-
-<section id="loop">
-  <div class="wrap">
-    <h2>The improvement loop</h2>
-    <p class="sub">The project is built by a loop that runs every half hour, not in one big push. Each tick ships up to five changes, and each change passes the full gate before it is committed.</p>
-    <div class="loop">
-      <div class="step"><h3>Research</h3><p>Compare against what a team would expect, and against operability needs in production.</p></div>
-      <div class="step"><h3>Build</h3><p>Small, reviewable commits, each with the eval that proves it.</p></div>
-      <div class="step"><h3>Break it</h3><p>An adversarial review tries to defeat each new feature.</p></div>
-      <div class="step"><h3>Prove the guard</h3><p>Every safety rule has a mutant that must be caught.</p></div>
-      <div class="step"><h3>Ship</h3><p>Typecheck, 500+ evals and CI, then a pull request a person merges.</p></div>
-    </div>
+    <p class="open">Built in the open: <b id="prCount"></b> reviewed pull requests, each with a test that fails without it. <a href="https://github.com/sloweyyy/scriptorium/pulls?q=is%3Apr+is%3Amerged">See them on GitHub →</a></p>
   </div>
 </section>
 
@@ -348,6 +328,23 @@
   </div>
 </section>
 
+<section id="run">
+  <div class="wrap">
+    <h2>Run it yourself</h2>
+    <p class="sub">One container and a folder of files; git is the system of record, so there is no database to run. Bring the Anthropic API, Claude on Vertex, or Gemini.</p>
+    <pre class="run"><code>git clone https://github.com/sloweyyy/scriptorium.git && cd scriptorium
+cp .env.example .env          # a model key, a Slack app, who may approve
+docker build -t scriptorium . && docker run --env-file .env -p 8080:8080 scriptorium
+pnpm doctor                   # names anything missing, and how to fix it</code></pre>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/sloweyyy/scriptorium#quick-start">Quick start</a>
+      <a class="btn" href="https://github.com/sloweyyy/scriptorium/blob/main/docs/security-model.md">Security model</a>
+      <a class="btn" href="https://github.com/sloweyyy/scriptorium/blob/main/docs/runbook.md">Runbook</a>
+      <a class="btn" href="https://github.com/sloweyyy/scriptorium/blob/main/docs/extending.md">Extend it</a>
+    </div>
+  </div>
+</section>
+
 <footer>
   <div class="wrap">
     <span>scriptorium · <a href="https://github.com/sloweyyy/scriptorium">github.com/sloweyyy/scriptorium</a></span>
@@ -363,16 +360,17 @@
   const esc = (text) => String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
   el("stats").innerHTML = D.stats.map((s) => `<div class="stat"><b>${esc(s.value)}</b><span>${esc(s.label)}</span></div>`).join("");
-  el("capabilities").innerHTML = D.capabilities
-    .map((c) => `<div class="card"><h3>${esc(c.title)}</h3><p>${esc(c.text)}</p><div class="where">${esc(c.where)}</div></div>`)
-    .join("");
+  const card = (c) => `<div class="card"><h3>${esc(c.title)}</h3><p>${esc(c.text)}</p><div class="where">${esc(c.where)}</div></div>`;
+  el("capabilities").innerHTML = D.capabilities.filter((c) => c.top).map(card).join("");
+  el("capabilities-more").innerHTML = D.capabilities.filter((c) => !c.top).map(card).join("");
+  el("prCount").textContent = D.mergedPullRequests;
+  // The clip in the page's own theme; reduced motion gets the still poster only.
+  const video = el("heroVideo");
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  video.poster = dark ? "demo/poster.png" : "demo/poster-light.png";
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) video.removeAttribute("autoplay");
+  else video.src = dark ? "demo/highlight.mp4" : "demo/highlight-light.mp4";
   el("rules").innerHTML = D.rules.map((r, i) => `<div class="rule"><div class="n">${i + 1}</div><div><h3>${esc(r.title)}</h3><p>${esc(r.text)}</p></div></div>`).join("");
-  el("timeline").innerHTML = D.timeline
-    .map(
-      (t) => `<li><div class="when">${esc(t.when)}${t.pr ? ` · <a class="pr" href="https://github.com/sloweyyy/scriptorium/pull/${t.pr}">#${t.pr}</a>` : ""}</div>
-        <h3>${esc(t.title)}</h3><p>${esc(t.text)}</p><div class="tags">${t.tags.map((tag) => `<span class="tag">${esc(tag)}</span>`).join("")}</div></li>`,
-    )
-    .join("");
   el("findings").innerHTML =
     `<tr><th>Severity</th><th>What could have gone wrong</th><th>Fix</th></tr>` +
     D.findings.map((f) => `<tr><td><span class="sev ${f.sev === "High" ? "high" : "med"}">${esc(f.sev)}</span></td><td>${esc(f.issue)}</td><td>${esc(f.fix)}</td></tr>`).join("");

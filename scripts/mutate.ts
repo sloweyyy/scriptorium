@@ -359,6 +359,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-connector.test.ts"],
   },
   {
+    control: "a citation that failed the check no longer reads as a source",
+    file: "packages/curator/src/qa-contract.ts",
+    find: "  const text = dropped.length ? withoutLinks(answer.text, dropped) : answer.text;",
+    replace: "  const text = answer.text;",
+    evals: ["evals/grounding.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

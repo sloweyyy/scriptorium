@@ -274,8 +274,27 @@ export async function enforceGrounding(vault: Vault, answer: QaAnswer, evidence:
     // evidence there is — the vault cannot vouch for a Confluence page.
     if (EXTERNAL_CITATION.test(relPath) || (await noteExists(vault, relPath))) citations.push(citation);
   }
-  if (citations.length || evidence.usedOverview) return { ...answer, citations };
-  return { ...answer, citations: [], ungrounded: true };
+  // A dropped citation must not still read as one: posted as written, `[[docs/invented]]`
+  // showed in Slack like a verified source. Its link comes out of the text, and the reader
+  // is told a source was left out.
+  const dropped = answer.citations.filter((citation) => !citations.includes(citation));
+  const text = dropped.length ? withoutLinks(answer.text, dropped) : answer.text;
+  if (citations.length || evidence.usedOverview) {
+    return { ...answer, citations, text: dropped.length ? `${text}\n\n${UNVERIFIED_SOURCE_NOTE}` : text };
+  }
+  return { ...answer, text, citations: [], ungrounded: true };
+}
+
+/** Said when a named source couldn't be verified and was taken out of the answer. */
+export const UNVERIFIED_SOURCE_NOTE = "_A source this answer named couldn't be verified, so it was left out._";
+
+function withoutLinks(text: string, targets: readonly string[]): string {
+  let out = text;
+  for (const target of targets) {
+    const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out.replace(new RegExp(`\\[\\[\\s*${escaped}\\s*(?:[|#][^\\]]*)?\\]\\]`, "g"), "");
+  }
+  return out.replace(/[ \t]+([.,;:!?])/g, "$1").replace(/[ \t]{2,}/g, " ");
 }
 
 /**

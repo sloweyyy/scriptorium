@@ -284,7 +284,7 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
     // Someone else's conversation: on a mention-only ticket the agent has never taken part
     // in, plain prose is people talking to each other and must not trigger a revise.
     // Commands and mentions still act — being answerable is the reason for watching at all.
-    if (command.kind === "ignore" || (command.kind === "feedback" && !autoDraft && !engaged(ctx.state.get(key)))) {
+    if (command.kind === "ignore" || ((command.kind === "feedback" || command.kind === "too-long") && !autoDraft && !engaged(ctx.state.get(key)))) {
       await ctx.state.markProcessed(key, [comment.id]);
       continue;
     }
@@ -316,6 +316,13 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
           break;
         case "help":
           await say(ctx, key, HELP);
+          break;
+        case "too-long":
+          await say(
+            ctx,
+            key,
+            `That comment is ${command.length.toLocaleString("en-US")} characters, far longer than feedback on a draft, so I haven't revised anything. Tell me in a few sentences what to change, or attach the material as a file.`,
+          );
           break;
         case "unclear":
           // Neither published nor rewritten: a near-miss on the one irreversible command

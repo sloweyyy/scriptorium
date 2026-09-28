@@ -198,6 +198,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "a comment with no words triggers nothing",
+    file: "packages/jira/src/commands.ts",
+    find: "  if (!/[\\p{L}\\p{N}]/u.test(words)) return { kind: \"ignore\", reason: \"no-words\" };",
+    replace: "  if (false) return { kind: \"ignore\", reason: \"no-words\" };",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "a wall of text is not revised from",
+    file: "packages/jira/src/commands.ts",
+    find: "  if (text.length > MAX_FEEDBACK_CHARS) return",
+    replace: "  if (false) return",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

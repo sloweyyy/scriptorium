@@ -925,6 +925,20 @@ describe("a crash or an error mid-batch loses nothing and repeats nothing (H4)",
     vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
   });
 
+  it("a wordless comment changes nothing; a pasted wall of text is answered, not revised from", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    const calls = vi.mocked(generateText).mock.calls.length;
+    const before = comments.length;
+    await tickWith(settings, "!screenshot.png|thumbnail!", ".");
+    expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
+    expect(comments.length).toBe(before + 2); // only the two human comments
+    await tickWith(settings, "Log line from the incident export. ".repeat(400));
+    expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
+    expect(comments.at(-1)?.body).toContain("far longer than feedback on a draft");
+    expect(comments.some((comment) => comment.body.includes("Revised draft"))).toBe(false);
+  });
+
   it("a command that keeps failing is set aside after three tries, with a note", async () => {
     const settings = config();
     (await startScribeJira(settings, vault)).stop();

@@ -429,6 +429,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-e2e.test.ts"],
   },
   {
+    control: "the vault overview grounds coverage statements, never a product claim",
+    file: "packages/curator/src/qa-contract.ts",
+    find: "  if (citations.length || (evidence.usedOverview && coverageOnly(text))) {",
+    replace: "  if (citations.length || evidence.usedOverview) {",
+    evals: ["evals/grounding.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

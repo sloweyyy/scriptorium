@@ -136,6 +136,24 @@ describe("enforceGrounding", () => {
     expect(answer.ungrounded).toBeUndefined();
   });
 
+  it("the overview grounds statements about coverage, never a product claim", async () => {
+    for (const coverage of [
+      "Nothing is documented about SSO yet.",
+      "The vault has 12 notes: 8 docs and 4 PRDs.",
+      "Billing is covered by 3 docs:\n- Invoices\n- Refunds\n- Tax settings",
+      "There are no pages on exports yet, so it isn't written down anywhere.",
+    ]) {
+      expect((await judge(coverage, true)).ungrounded, coverage).toBeUndefined();
+    }
+    for (const claim of [
+      "Beacon supports SAML single sign-on through Okta.",
+      "Nothing is documented about SSO yet. Beacon supports SAML through Okta anyway.",
+      "The vault has 12 notes.\n- Beacon's SLA guarantees 99.99% uptime for every paying customer on any plan",
+    ]) {
+      expect((await judge(claim, true)).ungrounded, claim).toBe(true);
+    }
+  });
+
   it("leaves gaps and handoffs to their own branches", async () => {
     expect((await judge("NOT_IN_KB: nothing about SSO")).ungrounded).toBeUndefined();
     expect((await judge("NOT_MY_JOB: rewrite the maintenance doc")).ungrounded).toBeUndefined();

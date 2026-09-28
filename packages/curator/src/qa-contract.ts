@@ -279,10 +279,31 @@ export async function enforceGrounding(vault: Vault, answer: QaAnswer, evidence:
   // is told a source was left out.
   const dropped = answer.citations.filter((citation) => !citations.includes(citation));
   const text = dropped.length ? withoutLinks(answer.text, dropped) : answer.text;
-  if (citations.length || evidence.usedOverview) {
+  // The overview grounds statements about the vault's coverage, never product claims: with
+  // it as an exemption for anything, a model could call the overview and then state an
+  // invented fact with no citation, and it passed as grounded.
+  if (citations.length || (evidence.usedOverview && coverageOnly(text))) {
     return { ...answer, citations, text: dropped.length ? `${text}\n\n${UNVERIFIED_SOURCE_NOTE}` : text };
   }
   return { ...answer, text, citations: [], ungrounded: true };
+}
+
+/** Words a statement about the vault's own contents uses. */
+const COVERAGE = /\b(document(ed|ation|s)?|docs?|notes?|pages?|folders?|vault|index|cover(s|ed|age)?|written|articles?|entries|nothing|topics?|subjects?)\b/i;
+
+/**
+ * Is every statement in this answer about what the vault covers, and nothing else? Prose is
+ * judged sentence by sentence; a short bullet ("- Billing") is an inventory item, a long one
+ * is a sentence like any other.
+ */
+export function coverageOnly(text: string): boolean {
+  const statements: string[] = [];
+  for (const line of text.split("\n").map((entry) => entry.trim()).filter(Boolean)) {
+    const bullet = line.match(/^(?:[-*•]|\d+[.)])\s+(.*)$/);
+    if (bullet && (bullet[1] ?? "").split(/\s+/).length <= 8) continue;
+    statements.push(...(bullet?.[1] ?? line).split(/(?<=[.!?])\s+/).filter((sentence) => /[A-Za-z]/.test(sentence)));
+  }
+  return statements.length > 0 && statements.every((sentence) => COVERAGE.test(sentence));
 }
 
 /** Said when a named source couldn't be verified and was taken out of the answer. */

@@ -289,6 +289,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-e2e.test.ts"],
   },
   {
+    control: "a Slack retry after a restart is still a duplicate",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "  }, 5_000, new FileSeenIds(path.join(stateDir, \"seen-deliveries.json\")));",
+    replace: "  }, 5_000);",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

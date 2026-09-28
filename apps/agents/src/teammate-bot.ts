@@ -13,7 +13,7 @@ import {
 } from "@scriptorium/connectors";
 import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type CommentRestriction, type JiraClient } from "@scriptorium/jira";
 import { FileApprovalStore, PLAN_TOOL, effectiveStatus, executeApproved, mayApprove, planTool, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
-import { DailyBudget, FileEffectLedger, Gate, KeyedQueue, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, scopesFor, type AgentEvent } from "@scriptorium/runtime";
+import { DailyBudget, FileEffectLedger, FileSeenIds, Gate, KeyedQueue, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, scopesFor, type AgentEvent } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
 import { gapTicketOpener } from "./gap-ticket";
@@ -182,7 +182,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     // No channels configured → an empty scope list → it answers nowhere (fail closed).
     // DMs (channel ids starting "D") only when explicitly allowed.
     scopes: { slack: [...settings.channels.map((channel) => `slack:thread:${channel}/`), ...(settings.allowDms ? ["slack:thread:D"] : [])] },
-  });
+    // Remembered on the state volume: a Slack retry reaching a restarted instance is still a retry.
+  }, 5_000, new FileSeenIds(path.join(stateDir, "seen-deliveries.json")));
 
   const queue = new KeyedQueue(
     async (key, events) => {

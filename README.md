@@ -5,9 +5,9 @@
 <h1 align="center">scriptorium</h1>
 
 <p align="center">
-  <strong>An open-source AI teammate for Slack, Jira, Confluence and GitHub that asks before it acts.</strong><br>
-  It answers with sources or says it doesn't know. It proposes tickets, pages and edits,
-  and changes nothing until a named person approves the exact change.
+  <strong>The open-source AI teammate for Slack, Jira, Confluence and GitHub that shows its receipts.</strong><br>
+  A source for every answer. A named person's sign-off for every change.
+  A record nobody can quietly edit.
 </p>
 
 <p align="center">
@@ -28,8 +28,9 @@
 
 ---
 
-Most AI assistants are trusted by prompt: the rules hold as well as the model follows them.
-scriptorium enforces them in code. Every tool call passes one policy check, every write waits
+AI assistants fail in three ways people remember: they state things nobody wrote down, they do
+things nobody approved, and they misreport what happened. Most are trusted by prompt, so their
+rules hold only as well as the model follows them. scriptorium enforces them in code. Every tool call passes one policy check, every write waits
 on an approval card for a listed person, and every factual claim must cite a record a tool
 actually fetched. Each of those rules has a mutation test that breaks it on purpose and must
 be caught.

@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>scriptorium — a governed AI teammate</title>
-<meta name="description" content="An AI teammate for Slack, Jira, Confluence and GitHub that answers with sources, proposes changes, and does nothing until a named person approves.">
+<title>scriptorium — the AI teammate that shows its receipts</title>
+<meta name="description" content="An open-source AI teammate for Slack, Jira, Confluence and GitHub that shows its receipts: a source for every answer, a named sign-off for every change, and a record nobody can quietly edit.">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#2d3a8c">
 <meta property="og:type" content="website">
-<meta property="og:title" content="scriptorium — an AI teammate that asks before it acts">
-<meta property="og:description" content="Open-source AI teammate for Slack, Jira, Confluence and GitHub: cited answers, proposed changes, nothing done until a named person approves.">
+<meta property="og:title" content="scriptorium — the AI teammate that shows its receipts">
+<meta property="og:description" content="A source for every answer. A named sign-off for every change. A record nobody can quietly edit. Open source, for Slack, Jira, Confluence and GitHub.">
 <meta property="og:url" content="https://scriptorium-teammate.vercel.app/">
 <meta property="og:image" content="https://scriptorium-teammate.vercel.app/og.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -100,6 +100,9 @@
   .card h3 { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
   .card p { margin: 0; color: var(--muted); font-size: 15px; }
   .card .where { margin-top: 12px; font-size: 12px; color: var(--faint); letter-spacing: .02em; }
+  .card .where a { color: var(--faint); text-decoration: underline; text-underline-offset: 2px; }
+  .card .receipt { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); color: var(--ink); }
+  .card .receipt b { color: var(--accent); font-weight: 600; }
 
   .timeline { position: relative; margin: 0; padding: 0; list-style: none; }
   .timeline::before { content: ""; position: absolute; left: 11px; top: 6px; bottom: 6px; width: 2px; background: var(--line); }
@@ -165,6 +168,7 @@
   <div class="wrap">
     <span class="brand"><img src="/favicon.svg" alt="" width="24" height="24">scriptorium</span>
     <div class="links">
+      <a href="#why">Why receipts</a>
       <a href="#does">What it does</a>
       <a href="#safe">How it stays safe</a>
       <a href="#evolution">Evolution</a>
@@ -176,9 +180,9 @@
 
 <header class="hero">
   <div class="wrap">
-    <span class="eyebrow">Open source · TypeScript</span>
-    <h1>An AI teammate that asks before it acts.</h1>
-    <p class="lede">scriptorium works in Slack, Jira, Confluence and GitHub. It answers with sources or says it doesn't know, proposes tickets, pages and edits, and changes nothing until a named person approves the exact change.</p>
+    <span class="eyebrow">Open source · Slack · Jira · Confluence · GitHub</span>
+    <h1>The AI teammate that shows its receipts.</h1>
+    <p class="lede">Every answer comes with its sources. Every change comes with a named person's sign-off. Everything lands on a record nobody can quietly edit. scriptorium does real work across your tools, and it can show you proof of all of it.</p>
     <div class="cta">
       <a class="btn primary" href="demo/">▶ Watch the 80-second demo</a>
       <a class="btn" href="https://github.com/sloweyyy/scriptorium">View the source</a>
@@ -188,6 +192,18 @@
     <div class="stats" id="stats"></div>
   </div>
 </header>
+
+<section id="why">
+  <div class="wrap">
+    <h2>Why receipts</h2>
+    <p class="sub">The AI failures people remember come in three kinds. In each one, something the AI said or did was never checked. scriptorium checks it, in code, every time.</p>
+    <div class="grid">
+      <div class="card"><h3>It made something up</h3><p>A support bot told customers about a login policy that didn't exist, and they cancelled over it. An airline's chatbot promised a refund the airline didn't offer, and it was held to it.</p><p class="receipt"><b>Receipt: a source.</b> Every claim must cite a record a tool actually fetched. A citation it invented is removed; with nothing to cite, it says so and opens a docs ticket.</p><div class="where"><a href="https://incidentdatabase.ai/cite/1039/">Incident 1039</a> · <a href="https://www.americanbar.org/groups/business_law/resources/business-law-today/2024-february/bc-tribunal-confirms-companies-remain-liable-information-provided-ai-chatbot/">Moffatt v. Air Canada</a></div></div>
+      <div class="card"><h3>It did something nobody approved</h3><p>An AI agent deleted a production database during an explicit code freeze. No one had signed off on the command.</p><p class="receipt"><b>Receipt: a signature.</b> Every write waits on a card for a listed person, bound by hash to the exact change they saw. The one who asked can't be the one who approves.</p><div class="where"><a href="https://incidentdatabase.ai/cite/1152/">Incident 1152</a></div></div>
+      <div class="card"><h3>It misreported what happened</h3><p>The same agent then produced fabricated data and said a rollback was impossible, until it turned out the rollback worked.</p><p class="receipt"><b>Receipt: the record.</b> Every step is written to a hash-chained audit log. Edit one line and verification fails. Nothing it did depends on its own account of it.</p><div class="where"><a href="https://www.theregister.com/2025/07/21/replit_saastr_vibe_coding_incident/">The Register, July 2025</a></div></div>
+    </div>
+  </div>
+</section>
 
 <section id="does">
   <div class="wrap">

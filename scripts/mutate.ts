@@ -128,6 +128,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/privacy-erase.test.ts"],
   },
   {
+    control: "a gap's ticket is found by its label before one is filed (a lost response never files a second)",
+    file: "apps/agents/src/gap-ticket.ts",
+    find: "    if (found) return { key: found.key, url: client.issueUrl(found.key) };",
+    replace: "    if (false) return { key: found!.key, url: \"\" };",
+    evals: ["evals/gaps.test.ts"],
+  },
+  {
+    control: "one gap filing at a time per question",
+    file: "packages/curator/src/gaps.ts",
+    find: "  if (!key) return fileGapNoteNow(vault, input, key);",
+    replace: "  return fileGapNoteNow(vault, input, key);",
+    evals: ["evals/gaps.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

@@ -144,3 +144,57 @@ describe("the same gap, asked twice", () => {
     await fs.rm(root, { recursive: true, force: true, maxRetries: 5 });
   });
 });
+
+describe("gap tickets, exactly once", () => {
+  /** A Jira that keeps the issues it created, and can lose the response to a create once. */
+  function fakeJira() {
+    const issues: Array<{ key: string; labels: string[] }> = [];
+    let loseNextResponse = false;
+    const client = {
+      issueUrl: (key: string) => `https://jira.example/browse/${key}`,
+      searchIssues: async (jql: string) => {
+        const label = jql.match(/labels = "([^"]+)"/)?.[1];
+        return issues.filter((issue) => label && issue.labels.includes(label)).map((issue) => ({ id: issue.key, key: issue.key, fields: { summary: "" } }));
+      },
+      createIssue: async (input: { labels?: string[] }) => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        const key = `DOC-${issues.length + 1}`;
+        issues.push({ key, labels: input.labels ?? [] });
+        if (loseNextResponse) {
+          loseNextResponse = false;
+          throw new Error("socket hang up");
+        }
+        return { key, url: `https://jira.example/browse/${key}` };
+      },
+    };
+    return { issues, client, loseOnce: () => (loseNextResponse = true) };
+  }
+  const jiraConfig = { jira: { projectKey: "DOC", label: "doc-request", issueType: "Task" } } as never;
+
+  it("a create whose response was lost is found and linked on the next asking, not filed twice", async () => {
+    const { gapTicketOpener } = await import("@scriptorium/agents");
+    const jira = fakeJira();
+    const openTicket = gapTicketOpener(jiraConfig, jira.client as never);
+    jira.loseOnce();
+    const first = await fileGapNote(vault, { question: "Can I export incidents as CSV?", missing: "export", askedBy: "U1", auditFile, openTicket });
+    expect(first.ticket).toBeUndefined();
+    expect((await vault.readNote(first.relPath)).frontmatter.status).toBe("open");
+
+    const again = await fileGapNote(vault, { question: "can I export incidents as CSV", missing: "export", askedBy: "U2", auditFile, openTicket });
+    expect(again).toMatchObject({ duplicate: true, ticket: { key: "DOC-1" } });
+    expect(jira.issues).toHaveLength(1);
+    expect((await vault.readNote(first.relPath)).frontmatter).toMatchObject({ status: "queued", jira_key: "DOC-1" });
+  });
+
+  it("two askings at once file one note and one ticket", async () => {
+    const { gapTicketOpener } = await import("@scriptorium/agents");
+    const jira = fakeJira();
+    const openTicket = gapTicketOpener(jiraConfig, jira.client as never);
+    const results = await Promise.all(
+      ["U1", "U2", "U3"].map((askedBy) => fileGapNote(vault, { question: "Is there an audit log API?", missing: "api", askedBy, auditFile, openTicket })),
+    );
+    expect(jira.issues).toHaveLength(1);
+    expect(await vault.listNotes("_gaps")).toHaveLength(1);
+    expect(results.map((result) => result.ticket?.key)).toEqual(["DOC-1", "DOC-1", "DOC-1"]);
+  });
+});

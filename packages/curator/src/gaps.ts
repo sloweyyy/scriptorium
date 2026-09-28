@@ -16,7 +16,12 @@ export interface GapInput {
    * Injected rather than imported so Curator keeps no ticketing dependency — and no
    * ability to author product claims, only to report that a claim is missing.
    */
-  openTicket?: (gap: { question: string; missing: string; askedBy: string; relPath: string }) => Promise<GapTicket | undefined>;
+  /**
+   * `key` is the question's normalized form (`questionKey`), the same for every asking of it:
+   * the opener marks the ticket with it and looks for it first, so a retry after a lost
+   * response finds the ticket it already opened instead of filing a second.
+   */
+  openTicket?: (gap: { question: string; missing: string; askedBy: string; relPath: string; key: string }) => Promise<GapTicket | undefined>;
   /**
    * Make the note outlive this container. Injected for the same reason as `openTicket`:
    * Curator does not know what a docs repo is.
@@ -81,8 +86,41 @@ async function openGapFor(vault: Vault, key: string): Promise<{ relPath: string;
   return undefined;
 }
 
+/** One filing at a time per question, in this process: two askings at once would both miss the other's note. */
+const filing = new Map<string, Promise<unknown>>();
+
 export async function fileGapNote(vault: Vault, input: GapInput): Promise<GapResult> {
   const key = questionKey(input.question);
+  if (!key) return fileGapNoteNow(vault, input, key);
+  const previous = filing.get(key) ?? Promise.resolve();
+  const next = previous.then(() => fileGapNoteNow(vault, input, key));
+  const settled = next.catch(() => undefined);
+  filing.set(key, settled);
+  try {
+    return await next;
+  } finally {
+    // The last in line clears the entry, so the map holds only questions being filed now.
+    if (filing.get(key) === settled) filing.delete(key);
+  }
+}
+
+async function openTicketFor(vault: Vault, input: GapInput, relPath: string, key: string): Promise<GapTicket | undefined> {
+  if (!input.openTicket) return undefined;
+  let ticket: GapTicket | undefined;
+  try {
+    ticket = await input.openTicket({ question: input.question, missing: input.missing, askedBy: input.askedBy, relPath, key });
+  } catch (error) {
+    console.warn(`[curator] gap filed but ticket creation failed: ${error instanceof Error ? error.message : error}`);
+  }
+  if (ticket) {
+    const note = await vault.readNote(relPath);
+    await vault.writeNote(relPath, note.body, { ...note.frontmatter, status: "queued", jira_key: ticket.key, jira_url: ticket.url });
+    await audit(input.auditFile, { type: "gap.ticketed", actor: "curator", relPath, issue: ticket.key });
+  }
+  return ticket;
+}
+
+async function fileGapNoteNow(vault: Vault, input: GapInput, key: string): Promise<GapResult> {
   const existing = key ? await openGapFor(vault, key) : undefined;
   if (existing) {
     // Record that it was asked again — demand is signal for whoever writes the page — and
@@ -92,10 +130,12 @@ export async function fileGapNote(vault: Vault, input: GapInput): Promise<GapRes
       await vault.writeNote(existing.relPath, existing.body, { ...existing.frontmatter, also_asked_by: [...askers, input.askedBy] });
     }
     await audit(input.auditFile, { type: "gap.repeated", actor: "curator", relPath: existing.relPath, question: input.question });
+    // A gap whose ticket never got linked (ticketing was down, or its response was lost) is
+    // ticketed now. The opener finds a ticket it already opened, so this never files a second.
     const ticket =
       typeof existing.frontmatter.jira_key === "string" && typeof existing.frontmatter.jira_url === "string"
         ? { key: existing.frontmatter.jira_key, url: existing.frontmatter.jira_url }
-        : undefined;
+        : await openTicketFor(vault, input, existing.relPath, key);
     return { relPath: existing.relPath, ticket, duplicate: true };
   }
 
@@ -123,20 +163,7 @@ export async function fileGapNote(vault: Vault, input: GapInput): Promise<GapRes
 
   await audit(input.auditFile, { type: "gap.filed", actor: "curator", relPath, question: input.question });
 
-  let ticket: GapTicket | undefined;
-  if (input.openTicket) {
-    try {
-      ticket = await input.openTicket({ question: input.question, missing: input.missing, askedBy: input.askedBy, relPath });
-    } catch (error) {
-      console.warn(`[curator] gap filed but ticket creation failed: ${error instanceof Error ? error.message : error}`);
-    }
-  }
-
-  if (ticket) {
-    const note = await vault.readNote(relPath);
-    await vault.writeNote(relPath, note.body, { ...note.frontmatter, status: "queued", jira_key: ticket.key, jira_url: ticket.url });
-    await audit(input.auditFile, { type: "gap.ticketed", actor: "curator", relPath, issue: ticket.key });
-  }
+  const ticket = await openTicketFor(vault, input, relPath, key);
 
   await updateMoc(vault);
 

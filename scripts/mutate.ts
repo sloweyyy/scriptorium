@@ -310,6 +310,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/digest.test.ts"],
   },
   {
+    control: "a gap ticket carries the asker's words inert (no live links, no forged fields)",
+    file: "apps/agents/src/gap-ticket.ts",
+    find: "  return [\"```\", inert.trim(), \"```\"].join(\"\\n\");",
+    replace: "  return inert.trim();",
+    evals: ["evals/gaps.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

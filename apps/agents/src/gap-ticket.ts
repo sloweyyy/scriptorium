@@ -3,6 +3,37 @@ import { jiraReady, type AppConfig } from "@scriptorium/core";
 import type { GapInput } from "@scriptorium/curator";
 import { jiraClient, markdownToJira, type JiraClient } from "@scriptorium/jira";
 
+/**
+ * Slack's markup as the words it stands for: `<!here>` → `@here`, `<#C1|release>` →
+ * `#release`, `<@U1>` → `@U1`, `<https://x|docs>` → `docs (https://x)`. Left in, a question
+ * asked in Slack carried live channel pings and disguised links into the Jira ticket.
+ */
+export function slackMarkupToPlain(text: string): string {
+  return text
+    .replace(/<!(here|channel|everyone)(?:\|[^>]*)?>/g, "@$1")
+    .replace(/<!subteam\^[A-Z0-9]+(?:\|([^>]*))?>/g, (_match, name?: string) => `@${name ?? "group"}`)
+    .replace(/<#[A-Z0-9]+\|([^>]*)>/g, "#$1")
+    .replace(/<#([A-Z0-9]+)>/g, "#$1")
+    .replace(/<@([A-Z0-9]+)(?:\|[^>]*)?>/g, "@$1")
+    .replace(/<((?:https?|mailto):[^|>\s]+)\|([^>]*)>/g, "$2 ($1)")
+    .replace(/<((?:https?|mailto):[^>\s]+)>/g, "$1");
+}
+
+/**
+ * Asker-written (or model-written) text as a Jira code block: nothing inside renders, so no
+ * link goes live, no heading or `**Asked by:**` line can be forged from a multi-line
+ * question, and a fence inside can't close the block early.
+ */
+function quoted(text: string): string {
+  const inert = slackMarkupToPlain(text).replace(/```/g, "ˋˋˋ").replace(/\{(code|noformat)/gi, "{\u200b$1");
+  return ["```", inert.trim(), "```"].join("\n");
+}
+
+/** A Jira summary is one plain line. */
+function summaryLine(question: string): string {
+  return slackMarkupToPlain(question).replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
 /** The label that marks a question's ticket: the same for every asking of it, and Jira-safe. */
 export function gapLabel(questionKey: string): string {
   return `gap-${createHash("sha256").update(questionKey).digest("hex").slice(0, 12)}`;
@@ -30,9 +61,10 @@ export function gapTicketOpener(
         "Filed automatically by **Curator** (Agent B): someone asked this in Slack and the knowledge vault could not answer it.",
         "",
         "**Question**",
-        `> ${gap.question}`,
+        quoted(gap.question),
         "",
-        `**Missing documentation:** ${gap.missing}`,
+        "**Missing documentation**",
+        quoted(gap.missing),
         `**Asked by:** ${gap.askedBy}`,
         `**Gap note:** \`${gap.relPath}\``,
         "",
@@ -41,7 +73,7 @@ export function gapTicketOpener(
     );
 
     return client.createIssue({
-      summary: `Doc request: ${gap.question.slice(0, 180)}`,
+      summary: `Doc request: ${summaryLine(gap.question)}`,
       description,
       issueType: config.jira.issueType,
       labels: [config.jira.label, "from-curator", label],

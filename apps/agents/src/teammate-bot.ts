@@ -216,13 +216,14 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         if (open) await ledger.put(open).catch(() => undefined);
         // Progress updates are fire-and-forget, so one can land AFTER the answer (a slow call,
         // or a 429 retried after its wait) and leave "Searching…" as the final word. Delivery
-        // closes the gate and waits for any update already in flight.
+        // closes the gate and waits for EVERY update still in flight: waiting only for the
+        // latest let an earlier one, held back by a rate-limit retry, land after the answer.
         let finished = false;
-        let inFlight: Promise<unknown> = Promise.resolve();
+        const inFlight = new Set<Promise<unknown>>();
         /** Returns the reply's own ts, so feedback on it can be traced back to this run. */
         const deliver = async (message: string, blocks?: unknown[]): Promise<string | undefined> => {
           finished = true;
-          await inFlight;
+          await Promise.all(inFlight);
           const close = async () => {
             if (open) await ledger.put({ ...open, status: "done", completedAt: new Date().toISOString() }).catch(() => undefined);
           };
@@ -253,7 +254,9 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
             const now = Date.now();
             if (finished || !placeholder?.ts || now - lastProgress < 2_000) return;
             lastProgress = now;
-            inFlight = slack.chat.update({ channel, ts: placeholder.ts, text: progressText(tool) }).catch(() => undefined);
+            const update = slack.chat.update({ channel, ts: placeholder.ts, text: progressText(tool) }).catch(() => undefined);
+            inFlight.add(update);
+            void update.finally(() => inFlight.delete(update));
           };
           const reply = await runTeammateTurn(
             { question: text, askedBy: event.actor.id, channel, threadTs, context },

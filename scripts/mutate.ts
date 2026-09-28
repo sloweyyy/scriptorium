@@ -422,6 +422,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/run-trace.test.ts"],
   },
   {
+    control: "the answer waits for every progress update in flight, not just the latest",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "          await Promise.all(inFlight);",
+    replace: "          await [...inFlight].at(-1);",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

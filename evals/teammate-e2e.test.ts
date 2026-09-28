@@ -13,7 +13,7 @@ import { Vault, type AppConfig } from "@scriptorium/core";
 /** What the model was sent last — to check the thread it was given. */
 let lastPrompt = "";
 let threadReplies: Array<{ ts: string; user?: string; text: string }> = [];
-let script: { calls: Array<{ name: string; input: unknown }>; reply: string; throwOnce?: boolean; hang?: boolean };
+let script: { calls: Array<{ name: string; input: unknown; waitMs?: number }>; reply: string; throwOnce?: boolean; hang?: boolean };
 vi.mock("@scriptorium/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@scriptorium/core")>()),
   llmProvider: () => "anthropic",
@@ -28,7 +28,10 @@ vi.mock("@scriptorium/core", async (importOriginal) => ({
             script.throwOnce = false;
             throw new Error("model overloaded");
           }
-          for (const call of script.calls) await params.tools.find((tool) => tool.name === call.name)?.run(call.input);
+          for (const call of script.calls) {
+            if (call.waitMs) await new Promise((resolve) => setTimeout(resolve, call.waitMs));
+            await params.tools.find((tool) => tool.name === call.name)?.run(call.input);
+          }
           return { stop_reason: "end_turn", content: [{ type: "text", text: script.reply }] };
         },
       },
@@ -45,6 +48,8 @@ let posted: Posted[];
 let progressUpdates: string[] = [];
 /** How long a progress update takes to land (a slow call, or a 429 retried later). */
 let progressDelayMs = 0;
+/** Per-update delays, in order; the first slow update is the one a 429 retry held back. */
+let progressDelays: number[] = [];
 /** Lose the next reminder post's response after Slack stored it. */
 let loseNextReminderPost = false;
 
@@ -63,7 +68,8 @@ const slack = {
     update: async (args: { ts: string; text: string; blocks?: unknown[] }) => {
       if (args.text.startsWith("🔎")) {
         progressUpdates.push(args.text);
-        if (progressDelayMs) await new Promise((resolve) => setTimeout(resolve, progressDelayMs));
+        const delay = progressDelays.shift() ?? progressDelayMs;
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
       }
       const index = Number(args.ts.split(".")[1]) - 1;
       if (posted[index]) posted[index] = { ...posted[index]!, text: args.text, blocks: args.blocks };
@@ -104,6 +110,7 @@ beforeEach(async () => {
   posted = [];
   progressUpdates = [];
   progressDelayMs = 0;
+  progressDelays = [];
   threadReplies = [];
   lastPrompt = "";
   loseNextReminderPost = false;
@@ -205,6 +212,24 @@ describe("teammate, end to end", () => {
     expect(progressUpdates).toHaveLength(1);
     expect(posted[0]?.text).toContain("docs/digest-emails");
   });
+
+  it("an earlier progress update held back by a retry never lands after the answer", async () => {
+    // Two updates in one turn (2s apart, the throttle); the FIRST is slow, the second fast.
+    progressDelays = [2_600, 10];
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = {
+      calls: [
+        { name: "search_vault", input: { query: "digest" } },
+        { name: "read_note", input: { path: "docs/digest-emails" }, waitMs: 2_100 },
+      ],
+      reply: "At 09:00 local time [[docs/digest-emails]].",
+    };
+    await core.onMention({ channel: "C1", ts: "1.0", user: "U1", text: "<@UBOT> when are digests sent?" });
+    await core.drain(8_000);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(progressUpdates).toHaveLength(2);
+    expect(posted[0]?.text).toContain("docs/digest-emails");
+  }, 15_000);
 
   it("a memory it asks to keep waits on a card; a listed approver's click carries it out, once", async () => {
     const core = await createTeammate(config(), vault, slack as never, "UBOT");

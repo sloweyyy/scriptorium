@@ -14,6 +14,8 @@ let provider: "anthropic" | "gemini" = "anthropic";
 let finalMessage: { stop_reason?: string; content: Array<{ type: string; text?: string }> };
 let geminiResult: () => Promise<string>;
 let runnerParams: Record<string, unknown> | undefined;
+/** Models that answer with this HTTP status instead of a message. */
+let failFor: Record<string, number> = {};
 
 vi.mock("@scriptorium/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@scriptorium/core")>()),
@@ -23,6 +25,8 @@ vi.mock("@scriptorium/core", async (importOriginal) => ({
       messages: {
         toolRunner: async (params: Record<string, unknown>) => {
           runnerParams = params;
+          const failure = failFor[String(params.model)];
+          if (failure) throw Object.assign(new Error(`HTTP ${failure}`), { status: failure });
           return finalMessage;
         },
       },
@@ -40,6 +44,7 @@ const text = (value: string) => [{ type: "text", text: value }];
 beforeEach(() => {
   provider = "anthropic";
   runnerParams = undefined;
+  failFor = {};
 });
 
 describe("runSession on Claude", () => {
@@ -138,5 +143,37 @@ describe("what a session cost", () => {
     expect(reported).toMatchObject({ rounds: 2, input: 1_822, cacheRead: 900, cacheWrite: 900, output: 45 });
     expect(params?.cache_control).toEqual({ type: "ephemeral" });
     spy.mockRestore();
+  });
+});
+
+describe("a fallback model", () => {
+  it("answers when the primary is overloaded, is reported, and is never used for other failures", async () => {
+    const saved = { model: process.env.MODEL, fallback: process.env.MODEL_FALLBACK };
+    process.env.MODEL = "claude-opus-5";
+    process.env.MODEL_FALLBACK = "claude-sonnet-5";
+    try {
+      finalMessage = { stop_reason: "end_turn", content: text("From the fallback.") };
+      failFor = { "claude-opus-5": 529 };
+      const fallbacks: unknown[] = [];
+      expect(await runSession({ ...options, onFallback: (info) => fallbacks.push(info) })).toBe("From the fallback.");
+      expect(fallbacks).toEqual([{ from: "claude-opus-5", to: "claude-sonnet-5", status: 529 }]);
+      expect(runnerParams?.model).toBe("claude-sonnet-5");
+
+      // A bad request is not the provider's fault: a second model would not fix it.
+      failFor = { "claude-opus-5": 400 };
+      await expect(runSession(options)).rejects.toThrow("HTTP 400");
+      // Both down: the fallback's failure is the answer, not a third try.
+      failFor = { "claude-opus-5": 503, "claude-sonnet-5": 503 };
+      await expect(runSession(options)).rejects.toThrow("HTTP 503");
+      // No fallback configured: fails as before.
+      delete process.env.MODEL_FALLBACK;
+      failFor = { "claude-opus-5": 529 };
+      await expect(runSession(options)).rejects.toThrow("HTTP 529");
+    } finally {
+      for (const [name, value] of [["MODEL", saved.model], ["MODEL_FALLBACK", saved.fallback]] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
   });
 });

@@ -50,7 +50,7 @@ be caught.
   system of record, so there's no database to run. It works with the Anthropic API, Claude on
   Vertex, or Gemini.
 - **Built to be operated.** Admins get a kill switch, spend caps and rate-limit backoff. The
-  audit log is hash-chained, a run viewer shows what each answer did and cost, and turns cut
+  audit log is hash-chained, a run viewer shows what each answer did and cost, `/metrics` feeds your dashboards, and turns cut
   off by a restart are closed honestly.
 
 ## What it can do
@@ -60,7 +60,7 @@ be caught.
 | **Answer** | Cited answers across your docs, Confluence, Jira and GitHub · channel catch-up ("what did I miss?") · sprint reports · epic status updates · weekly digest |
 | **Act, with approval** | Thread → Jira ticket (also a message shortcut) · move, assign, label and link issues · Confluence pages · PR comments · reminders · several changes on one card as a plan |
 | **Watch** | Triage new tickets (readiness and likely duplicates) · readiness check when a ticket is assigned to it · automatic PR checks against their ticket · stale-doc notices |
-| **Remember** | Team memory it keeps only when a person approves it, scoped to a person, a channel or everyone, and set to expire |
+| **Remember** | Team memory it keeps only when a person approves it, scoped to a person, a channel or everyone, and set to expire. `/teammate memories` shows what applies to you, and `/teammate forget` removes your own at once · 👎 on an answer flags it for review as a test case |
 | **Surfaces** | Slack mentions, DMs, `/teammate`, App Home approvals inbox · Jira mentions, assignments, new issues · GitHub PR webhooks · a read-only MCP server for your editor |
 
 Skills are plain markdown in [`skills/`](skills/), and an agent is configuration, not a new bot.
@@ -116,6 +116,9 @@ cp .env.example .env
    `/invite @Teammate` in an allowed channel, then ask `@Teammate what does our digest do?`
    or `/teammate help`.
 
+Run `pnpm doctor` to check the setup: it names anything missing (a scope, a channel the bot
+isn't in, no approvers, an unsigned or ephemeral audit trail) and how to fix it.
+
 Every setting fails closed: unset means *less* is allowed. The [runbook](docs/runbook.md)
 lists the settings that decide safety, how to check a deploy works, and what to do when
 something goes wrong.
@@ -161,8 +164,8 @@ the trigger, policy decisions, tool calls, approvals, the reply, and what it cos
 ```bash
 pnpm typecheck            # strict TypeScript, no build step (tsx runs source)
 pnpm eval                 # 500+ deterministic checks, no API key needed
-RUN_LLM_EVALS=1 pnpm eval # plus live checks: grounded Q&A, red team, retrieval golden set
-pnpm mutate               # sabotage each of 31 guardrails; its eval must catch it
+RUN_LLM_EVALS=1 pnpm eval # plus live checks: grounded Q&A, red team, answer golden set per model
+pnpm mutate               # sabotage each of 39 guardrails; its eval must catch it
 pnpm auditlog verify      # the audit log's hash chain holds
 ```
 

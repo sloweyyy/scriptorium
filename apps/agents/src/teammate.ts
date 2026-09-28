@@ -197,6 +197,8 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
         void audit(deps.auditFile, { type: "llm.usage", actor: deps.config.name, scope: turn.budgetScope ?? turn.channel ?? turn.askedBy, ...usage }).catch(() => undefined);
         deps.onUsage?.(usage);
       },
+      // On the record: an answer from the fallback model is traceable as such.
+      onFallback: (info) => void audit(deps.auditFile, { type: "llm.fallback", actor: deps.config.name, ...info }).catch(() => undefined),
     });
   } catch (error) {
     if (error instanceof SessionError && error.failure === "round-cap") text = `NOT_IN_KB: ${turn.question}`;

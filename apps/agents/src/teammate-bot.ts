@@ -6,13 +6,14 @@ import {
   REJECT_ACTION,
   RETRY_ACTION,
   SlackApprovalChannel,
+  describeRequest,
   escapeMrkdwn,
   type SlackClient,
   handleApprovalClick,
 } from "@scriptorium/connectors";
 import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type CommentRestriction, type JiraClient } from "@scriptorium/jira";
 import { FileApprovalStore, PLAN_TOOL, executeApproved, mayApprove, planTool, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
-import { DailyBudget, FileEffectLedger, Gate, KeyedQueue, envelopeOf, keys, loadSkills, memoryTools, once, opKey, type AgentEvent } from "@scriptorium/runtime";
+import { DailyBudget, FileEffectLedger, Gate, KeyedQueue, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, scopesFor, type AgentEvent } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
 import { gapTicketOpener } from "./gap-ticket";
@@ -24,7 +25,7 @@ import { ASKING_SUBTYPES, capQuestion, formatReply, helpText, isHelpRequest, men
 import { sharesScribeAccount, teammateConnectorTools } from "./teammate-bot/tools";
 import { outcomeMessages } from "./teammate-bot/outcome";
 import { homeBlocks } from "./teammate-bot/home";
-import { OPEN, applyAdminCommand, narrowTools, readControl, writeControl, type Control } from "./teammate-bot/control";
+import { OPEN, applyAdminCommand, narrowTools, readControl, withDelegations, writeControl, type Control } from "./teammate-bot/control";
 import { REMINDER_EVENT_TYPE, dueReminders, markReminder, reminderText, reminderTools } from "./teammate-bot/reminders";
 
 export * from "./teammate-bot/messages";
@@ -53,6 +54,8 @@ export interface TeammateCore {
   checkDigest(now?: Date): Promise<void>;
   /** Post any approved reminder that is due (once each); drop any a day overdue. */
   checkReminders(now?: Date): Promise<void>;
+  /** Nudge approvers once about a request waiting too long; close the card of one that expired. */
+  checkApprovals(now?: Date): Promise<void>;
   /** A Jira comment; answered on the ticket, as the Teammate, if it mentions the Teammate. */
   /** `restriction`: who may see the comment; the reply carries the same. Omitted: public. */
   onJiraComment(input: { issueKey: string; commentId: string; body: string; authorId?: string; restriction?: CommentRestriction }): Promise<void>;
@@ -64,6 +67,8 @@ export interface TeammateCore {
   onSlashCommand(input: { channel: string; user: string; text: string; commandId: string }): Promise<string | undefined>;
   /** The "File as a ticket" message shortcut. Returns a message for the invoker only, if any. */
   onFileAsTicket(input: { channel: string; user: string; messageTs: string; threadTs?: string; shortcutId: string }): Promise<string | undefined>;
+  /** A reaction added to a message. A 👎 on one of its replies is recorded for review (`pnpm feedback`). */
+  onReaction(input: { reaction: string; user: string; channel: string; ts: string; itemUser?: string }): Promise<void>;
   /** The App Home for this Slack user: their approvals inbox, as Block Kit blocks. */
   homeView(userId: string): Promise<unknown[]>;
   /** A pull request to check against its ticket (from the GitHub webhook). */
@@ -83,6 +88,9 @@ export interface TeammateJira {
   client: JiraClient;
   accountId: string;
 }
+
+/** Slack's names for 👎. */
+const THUMBS_DOWN = new Set(["-1", "thumbsdown"]);
 
 /** Not a Slack ts: a shortcut's "trigger" excludes nothing from the thread it reads. */
 const SHORTCUT_TRIGGER = "shortcut";
@@ -206,7 +214,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         // closes the gate and waits for any update already in flight.
         let finished = false;
         let inFlight: Promise<unknown> = Promise.resolve();
-        const deliver = async (message: string, blocks?: unknown[]): Promise<void> => {
+        /** Returns the reply's own ts, so feedback on it can be traced back to this run. */
+        const deliver = async (message: string, blocks?: unknown[]): Promise<string | undefined> => {
           finished = true;
           await inFlight;
           const close = async () => {
@@ -214,10 +223,14 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
           };
           if (placeholder?.ts) {
             const updated = await slack.chat.update({ channel, ts: placeholder.ts, text: message, ...(blocks ? { blocks: blocks as never } : {}) }).catch(() => undefined);
-            if (updated?.ok) return close();
+            if (updated?.ok) {
+              await close();
+              return placeholder.ts;
+            }
           }
-          await slack.chat.postMessage({ channel, thread_ts: threadTs, text: message, ...(blocks ? { blocks: blocks as never } : {}) });
+          const posted = await slack.chat.postMessage({ channel, thread_ts: threadTs, text: message, ...(blocks ? { blocks: blocks as never } : {}) });
           await close();
+          return posted?.ts;
         };
         try {
           if (isHelpRequest(text)) {
@@ -251,8 +264,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
                   ...contextBlocks(textOut.slice(textOut.lastIndexOf("\n_AI-generated") + 1)),
                 ]
               : undefined;
-          await deliver(textOut, blocks);
-          await audit(config.auditFile, { type: `teammate.${reply.kind}`, actor: "teammate", key, askedBy: event.actor.id, event: event.id });
+          const message = await deliver(textOut, blocks);
+          await audit(config.auditFile, { type: `teammate.${reply.kind}`, actor: "teammate", key, askedBy: event.actor.id, event: event.id, channel, ...(message ? { message } : {}) });
         } catch (error) {
           await audit(config.auditFile, { type: "teammate.error", actor: "teammate", key, event: event.id, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
           await deliver(`⚠️ I couldn't finish that, so I haven't answered or changed anything. _run \`${(currentRunId() ?? "").slice(0, 8)}\`_`).catch(() => undefined);
@@ -423,8 +436,17 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       queue.push(agentEvent);
     },
 
+    async onReaction({ reaction, user, channel, ts, itemUser }) {
+      // Only a 👎 on one of its own replies, where it answers. Pointers only: the review reads
+      // the run with `pnpm trace`, so no Slack text is kept for this.
+      if (!THUMBS_DOWN.has(reaction.replace(/::skin-tone-\d$/, "")) || itemUser !== selfUserId || user === selfUserId) return;
+      if (!(await answersIn(channel, user))) return;
+      await audit(config.auditFile, { type: "teammate.feedback", actor: "teammate", channel, message: ts, by: user, reaction: "-1" });
+    },
+
     async homeView(userId) {
       const me = `slack:${userId}`;
+      await refreshControl(); // delegations decide who sees what's waiting
       const now = Date.now();
       const requests = (await store.all()).filter((request) => request.agent === envelope.agent);
       // Only what THIS person may approve: the same rule the click is checked against.
@@ -432,7 +454,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         (request) =>
           request.status === "pending" &&
           Date.parse(request.expiresAt) > now &&
-          mayApprove(envelope, envelope.tools[request.tool] ?? { tier: "deny" }, { accountId: me }, request.requestedBy).ok,
+          mayApprove(withDelegations(envelope, current), withDelegations(envelope, current).tools[request.tool] ?? { tier: "deny" }, { accountId: me }, request.requestedBy).ok,
       );
       const withLinks = await Promise.all(
         waiting.slice(0, 20).map(async (request) => {
@@ -448,6 +470,26 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     },
 
     async onSlashCommand({ channel, user, text, commandId }) {
+      // `/teammate memories` and `/teammate forget M-…`: what it remembers about you, answered
+      // privately. Your own memories you can forget at once; the rest need an admin.
+      const trimmed = text.trim();
+      if (/^memories$/i.test(trimmed)) {
+        const scopes = scopesFor({ channel, askedBy: `slack:${user}` });
+        const memories = await listMemories(vault, scopes);
+        if (!memories.length) return "I don't remember anything that applies to you here.";
+        return [
+          "What I remember that applies to you here:",
+          ...memories.map((memory) => `• \`${memory.id}\` (${memory.scope === `person:slack:${user}` ? "about you" : memory.scope}): ${escapeMrkdwn(memory.text)}`),
+          "Forget one with `/teammate forget <id>`.",
+        ].join("\n");
+      }
+      const forget = trimmed.match(/^forget\s+(\S+)$/i);
+      if (forget) {
+        const result = await forgetMemory(vault, forget[1] as string, { accountId: `slack:${user}`, mayCurate: (settings.admins ?? []).includes(user) });
+        if (!result.ok) return `Nothing forgotten: ${result.reason}.`;
+        await audit(config.auditFile, { type: "memory.forgotten", actor: `slack:${user}`, memory: result.memory.id, scope: result.memory.scope }).catch(() => undefined);
+        return `Forgotten: \`${result.memory.id}\`. It no longer applies anywhere. (It remains in the vault's git history.)`;
+      }
       // `/teammate admin …`: private, from anywhere, and only for listed admins.
       const admin = text.trim().match(/^admin\b(.*)$/is);
       if (admin) {
@@ -501,6 +543,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
 
     async onApprovalClick(action, payload) {
       const requestId = payload.actions?.[0]?.value ?? "";
+      if (action === REJECT_ACTION) await refreshControl(); // a stand-in may decline, too
       // Carrying out is a write: paused, or with its tool switched off, nothing is decided or
       // done and the request stays as it was. A rejection is always allowed.
       if (action !== REJECT_ACTION) {
@@ -519,12 +562,13 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         // listed approver's say-so to run it again.
         const request = (await store.all()).find((candidate) => candidate.id === requestId);
         if (!request || request.status !== "approved") return "Nothing to retry: it was already carried out, rejected or expired.";
-        const allowed = mayApprove(envelope, envelope.tools[request.tool] ?? { tier: "deny" }, payload.user?.id ? { accountId: `slack:${payload.user.id}` } : undefined, request.requestedBy);
+        const delegated = withDelegations(envelope, current);
+        const allowed = mayApprove(delegated, delegated.tools[request.tool] ?? { tier: "deny" }, payload.user?.id ? { accountId: `slack:${payload.user.id}` } : undefined, request.requestedBy);
         if (!allowed.ok) return `Not retried: ${allowed.reason}.`;
         await carryOut(request, payload.user?.id, payload.user?.username, where);
         return undefined;
       }
-      const decided = await handleApprovalClick(slack, store, (agent) => (agent === envelope.agent ? envelope : undefined), {
+      const decided = await handleApprovalClick(slack, store, (agent) => (agent === envelope.agent ? withDelegations(envelope, current) : undefined), {
         action,
         requestId,
         userId: payload.user?.id,
@@ -541,6 +585,31 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       }
       if (request) await carryOut(request, payload.user?.id, payload.user?.username, where);
       return undefined;
+    },
+
+    async checkApprovals(now = new Date()) {
+      const nudgeMs = (settings.approvalNudgeHours ?? 24) * 3_600_000;
+      for (const request of (await store.all()).filter((candidate) => candidate.agent === envelope.agent && candidate.status === "pending")) {
+        const where = (await ledger.get(cardOp(request.id)))?.result as { channel?: string; ts?: string } | undefined;
+        if (!where?.channel || !where.ts) continue;
+        const card = { channel: where.channel, ts: where.ts };
+        if (Date.parse(request.expiresAt) <= now.getTime()) {
+          // The buttons would decide nothing now; leaving them live reads as still pending.
+          await once(ledger, opKey("teammate.card.expired", request.id), async () => {
+            await slack.chat.update({ ...card, text: `⌛ Expired without a decision: ${escapeMrkdwn(describeRequest(request))}. Nothing was done; ask again if it's still needed.`, blocks: [] as never });
+            return true;
+          }).catch(() => undefined);
+          continue;
+        }
+        if (nudgeMs > 0 && now.getTime() - Date.parse(request.requestedAt) >= nudgeMs) {
+          const approvers = (envelope.tools[request.tool]?.approvers ?? []).filter((id) => id.startsWith("slack:")).map((id) => `<@${id.slice("slack:".length)}>`);
+          if (!approvers.length) continue;
+          await once(ledger, opKey("teammate.card.nudged", request.id), async () => {
+            await slack.chat.postMessage({ channel: card.channel, thread_ts: card.ts, text: `⏰ Still waiting for an approver: ${approvers.join(", ")}. It expires <!date^${Math.floor(Date.parse(request.expiresAt) / 1000)}^{date_short_pretty}|${request.expiresAt.slice(0, 10)}>.` });
+            return true;
+          }).catch(() => undefined);
+        }
+      }
     },
 
     async checkReminders(now = new Date()) {
@@ -722,6 +791,10 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
 
   app.event("app_mention", async ({ event }) => core.onMention(event as SlackMention));
   app.message(async ({ message }) => core.onDirectMessage(message as SlackMention & { channel_type?: string; subtype?: string }));
+  app.event("reaction_added", async ({ event }) => {
+    if (event.item.type !== "message") return;
+    await core.onReaction({ reaction: event.reaction, user: event.user, channel: event.item.channel, ts: event.item.ts, itemUser: event.item_user });
+  });
   app.event("app_home_opened", async ({ event, client }) => {
     if (event.tab !== "home") return;
     const blocks = await core.homeView(event.user);
@@ -754,7 +827,10 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
 
   // The weekly digest: checked hourly, posted once per ISO week (the effects ledger makes a
   // restart or a second instance a no-op).
-  const digestCheck = (): void => void core.checkDigest().catch((error) => console.warn(`[teammate] digest: ${error instanceof Error ? error.message : error}`));
+  const digestCheck = (): void => {
+    void core.checkDigest().catch((error) => console.warn(`[teammate] digest: ${error instanceof Error ? error.message : error}`));
+    void core.checkApprovals().catch((error) => console.warn(`[teammate] approvals: ${error instanceof Error ? error.message : error}`));
+  };
   const digestTimer = setInterval(digestCheck, 60 * 60 * 1000);
   const reminderTimer = setInterval(() => void core.checkReminders().catch((error) => console.warn(`[teammate] reminders: ${error instanceof Error ? error.message : error}`)), 60 * 1000);
   digestCheck();

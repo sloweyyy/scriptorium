@@ -77,3 +77,51 @@ describe("verified where approvals are used, not only on restore", () => {
     }
   });
 });
+
+describe("rotating the signing key", () => {
+  it("old approvals keep verifying under a previous key, move onto the new one, and a forgery is never signed", async () => {
+    const { approvalSignature, approvalVerified, resignApproval, signedWith } = await import("@scriptorium/core");
+    const body = "Always state the timezone.";
+    const frontmatter = { id: "L-001", status: "approved", approved_by: "Priya" };
+    const signed = { ...frontmatter, approval_sig: approvalSignature("old-key", { id: "L-001", status: "approved", body, approvedBy: "Priya", terms: {} }) };
+    const saved = { current: process.env.SCRIPTORIUM_SIGNING_KEY, previous: process.env.SCRIPTORIUM_PREVIOUS_SIGNING_KEYS };
+    try {
+      process.env.SCRIPTORIUM_SIGNING_KEY = "new-key";
+      delete process.env.SCRIPTORIUM_PREVIOUS_SIGNING_KEYS;
+      expect(approvalVerified(signed, body)).toBe(false); // rotating without a previous key drops every rule
+      process.env.SCRIPTORIUM_PREVIOUS_SIGNING_KEYS = "old-key";
+      expect(approvalVerified(signed, body)).toBe(true);
+      expect(signedWith(signed, body, ["new-key", "old-key"])).toBe("old-key");
+      const moved = { ...signed, approval_sig: resignApproval(signed, body, "new-key") };
+      delete process.env.SCRIPTORIUM_PREVIOUS_SIGNING_KEYS;
+      expect(approvalVerified(moved, body)).toBe(true);
+      // The text is still what is signed: a body edited after approval verifies under no key.
+      expect(signedWith(moved, "Never state the timezone.", ["new-key", "old-key"])).toBeUndefined();
+    } finally {
+      for (const [name, value] of [["SCRIPTORIUM_SIGNING_KEY", saved.current], ["SCRIPTORIUM_PREVIOUS_SIGNING_KEYS", saved.previous]] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+
+  it("the control file written under the old key still reads after rotation", async () => {
+    const { OPEN, readControl, writeControl } = await import("@scriptorium/agents");
+    const fsMod = await import("node:fs/promises");
+    const os = await import("node:os");
+    const pathMod = await import("node:path");
+    const dir = await fsMod.mkdtemp(pathMod.join(os.tmpdir(), "scriptorium-rotate-"));
+    const file = pathMod.join(dir, "control.json");
+    const saved = process.env.SCRIPTORIUM_PREVIOUS_SIGNING_KEYS;
+    try {
+      await writeControl(file, { ...OPEN, denyTools: ["jira_comment"] }, "old-key");
+      expect((await readControl(file, "new-key")).paused).toBe(true);
+      process.env.SCRIPTORIUM_PREVIOUS_SIGNING_KEYS = "old-key";
+      expect(await readControl(file, "new-key")).toMatchObject({ paused: false, denyTools: ["jira_comment"] });
+    } finally {
+      if (saved === undefined) delete process.env.SCRIPTORIUM_PREVIOUS_SIGNING_KEYS;
+      else process.env.SCRIPTORIUM_PREVIOUS_SIGNING_KEYS = saved;
+      await fsMod.rm(dir, { recursive: true, force: true, maxRetries: 5 });
+    }
+  });
+});

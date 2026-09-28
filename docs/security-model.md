@@ -130,6 +130,15 @@ The model is untrusted too. It proposes; the platform decides what runs.
   approval given earlier is not carried out. (`apps/agents/src/teammate-bot/control.ts`;
   `evals/control.test.ts`, `evals/teammate-e2e.test.ts`, mutants)
 
+- An admin can let a stand-in approve for an away approver, until a date. It is the one
+  control that widens who may approve, so it is admin-only, signed with the other controls,
+  at most 60 days, ends by itself, and never lets the stand-in approve their own request.
+  (`apps/agents/src/teammate-bot/control.ts` `withDelegations`; `evals/control.test.ts`, mutant)
+- Anyone can see the memories that apply to them (`/teammate memories`, answered privately)
+  and forget their own at once. Channel and global memories can be forgotten only by an
+  admin. Forgetting deletes the file; the vault's git history still holds it.
+  (`packages/runtime/src/memory.ts` `forgetMemory`; `evals/teammate-e2e.test.ts`, mutant)
+
 ### 8. Record: every action is attributable
 - The audit log is append-only JSONL, and every line inside a run carries the run's id.
   Each line is hash-chained to the one before it (`pnpm auditlog verify` finds an edited,

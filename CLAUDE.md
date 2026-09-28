@@ -11,6 +11,7 @@ vault, one audit log) with separate identities and separate permission envelopes
 ```bash
 pnpm dev                # vault watcher + Jira poller + any Slack bot with tokens in .env
 pnpm jira:doctor        # verify Jira auth/JQL/comments/attachments/transitions (--write for write access)
+pnpm doctor             # read-only setup check: model, signing, audit location, approvers, Slack scopes/channels, Confluence, GitHub, repos
 pnpm typecheck          # tsc --noEmit (strict) — must stay clean
 pnpm eval               # contract / lint / organizer evals, no API key needed
 RUN_LLM_EVALS=1 pnpm eval   # + live grounded-Q&A evals, on whichever provider is configured
@@ -22,6 +23,9 @@ pnpm mcp                # the vault as a read-only MCP server over stdio
 pnpm trace [run-id]     # what one agent run did (from the audit log); no arg = recent runs
 pnpm mutate             # sabotage each guardrail once; its eval must go red (weekly in CI)
 pnpm auditlog verify    # the audit log's hash chain holds (export --from --to for a signed extract)
+pnpm resign             # after rotating SCRIPTORIUM_SIGNING_KEY: move approvals onto the new key (--dry-run)
+pnpm feedback           # answers flagged 👎 in Slack, each with its run: the queue for new answer golden cases
+pnpm privacy:erase <person> --by <you> [--dry-run]   # erase one person (audit tombstones keep the chain; approvers kept)
 ```
 
 ## Architecture

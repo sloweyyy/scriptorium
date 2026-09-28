@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { OPEN, applyAdminCommand, narrowTools, readControl, writeControl } from "@scriptorium/agents";
+import { OPEN, applyAdminCommand, narrowTools, readControl, withDelegations, writeControl } from "@scriptorium/agents";
+import { mayApprove, type Envelope } from "@scriptorium/policy";
 
 /** Runtime controls: narrow only, and a control file that fails means paused. */
 
@@ -38,5 +39,31 @@ describe("runtime controls", () => {
     expect("control" in paused && paused.control).toMatchObject({ paused: true, reason: "bad answers in #eng", by: "slack:UADMIN" });
     expect(applyAdminCommand(OPEN, "deny delete_everything", "slack:UADMIN", now, ["jira_comment"])).not.toHaveProperty("control");
     expect(applyAdminCommand({ ...OPEN, denyTools: ["jira_comment"] }, "status", "slack:UADMIN", now, []).message).toContain("off: jira_comment");
+  });
+
+  it("a delegation adds the stand-in only where the away approver is listed, ends by itself, and keeps separation of duties", () => {
+    const envelope: Envelope = {
+      agent: "Teammate",
+      selfAccountIds: ["slack:UBOT"],
+      tools: { jira_create_issue: { tier: "approve", approvers: ["slack:UPM"], separateDuties: true }, other: { tier: "approve", approvers: ["slack:UOPS"] } },
+    };
+    const control = { ...OPEN, delegations: [{ from: "UPM", to: "UALT", until: new Date(Date.now() + 86_400_000).toISOString() }] };
+    const delegated = withDelegations(envelope, control);
+    expect(delegated.tools.jira_create_issue?.approvers).toEqual(["slack:UPM", "slack:UALT"]);
+    expect(delegated.tools.other?.approvers).toEqual(["slack:UOPS"]);
+    const rule = delegated.tools.jira_create_issue!;
+    expect(mayApprove(delegated, rule, { accountId: "slack:UALT" }, "slack:U1").ok).toBe(true);
+    // The stand-in can't approve what they asked for themselves.
+    expect(mayApprove(delegated, rule, { accountId: "slack:UALT" }, "slack:UALT").ok).toBe(false);
+    // Past its end date it's gone.
+    expect(withDelegations(envelope, control, Date.now() + 2 * 86_400_000).tools.jira_create_issue?.approvers).toEqual(["slack:UPM"]);
+  });
+
+  it("delegations are signed: adding one by editing the file pauses it", async () => {
+    const file = path.join(dir, "control.json");
+    await writeControl(file, OPEN, "k");
+    const edited = JSON.parse(await fs.readFile(file, "utf8"));
+    await fs.writeFile(file, JSON.stringify({ ...edited, delegations: [{ from: "UPM", to: "UEVIL", until: "2099-01-01T00:00:00Z" }] }));
+    expect((await readControl(file, "k")).paused).toBe(true);
   });
 });

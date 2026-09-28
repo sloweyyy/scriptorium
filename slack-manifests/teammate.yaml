@@ -36,12 +36,15 @@ oauth_config:
       # from a DM between two people, for /teammate and the shortcut).
       - im:history
       - im:read
+      # A 👎 on one of its answers is recorded (a pointer, not the text) for review as a test case.
+      - reactions:read
 settings:
   event_subscriptions:
     bot_events:
       - app_mention
       - message.im
       - app_home_opened
+      - reaction_added
   # Approval cards: Approve / Reject buttons.
   interactivity:
     is_enabled: true

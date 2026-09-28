@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { docsRepoReady, jiraReady, linesForRun, parseAudit, repoSlugFromUrl, runPage, type AppConfig } from "@scriptorium/core";
+import { auditMetrics, docsRepoReady, jiraReady, linesForRun, parseAudit, repoSlugFromUrl, runPage, type AppConfig } from "@scriptorium/core";
 import type { CommentRestriction } from "@scriptorium/jira";
 import { z } from "zod";
 
@@ -281,6 +281,20 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
             github: Boolean(githubSecret),
           },
         });
+        return;
+      }
+
+      if (request.method === "GET" && route === "/metrics") {
+        const token = config.webhook.metricsToken;
+        const provided = (headerValue(request.headers.authorization) ?? "").replace(/^Bearer\s+/i, "");
+        // 404 whether metrics are off or the token is wrong, like the run viewer.
+        if (!token || !secretMatches(provided, token)) {
+          send(response, 404, { error: "not found" });
+          return;
+        }
+        const text = auditMetrics(parseAudit(await fs.readFile(config.auditFile, "utf8").catch(() => "")));
+        response.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8", "Content-Length": Buffer.byteLength(text), "Cache-Control": "no-store" });
+        response.end(text);
         return;
       }
 

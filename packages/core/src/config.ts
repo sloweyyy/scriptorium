@@ -142,6 +142,8 @@ export interface TeammateSettings extends SlackAppTokens {
    * `TEAMMATE_PEOPLE="slack:U1=jira:abc=github:dev; slack:U2=jira:def"`.
    */
   people?: string[][];
+  /** Hours a request may wait before its approvers are nudged once in the card's thread. 0: never. */
+  approvalNudgeHours?: number;
   /** Slack user ids who may pause the Teammate or switch tools off (`/teammate admin …`). Empty: nobody. */
   admins?: string[];
   /** Projects whose new issues the Teammate triages (readiness + likely duplicates). Empty: none. */
@@ -193,6 +195,8 @@ export interface WebhookSettings {
    * audit trail — questions, tool calls, approvals — so it is a credential, not a nicety.
    */
   traceToken?: string;
+  /** Opens `/metrics` (`Authorization: Bearer …`). Unset: no metrics endpoint. */
+  metricsToken?: string;
   /** Where the ingress is reachable (`https://…run.app`), for "view run" links on replies. */
   publicBaseUrl?: string;
   /** GitHub signs with HMAC-SHA256, so this is a real shared secret. */
@@ -314,6 +318,7 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       allowDms: env("TEAMMATE_ALLOW_DMS") === "true",
       people: parsePeople(env("TEAMMATE_PEOPLE")),
       admins: list(env("TEAMMATE_ADMINS")),
+      approvalNudgeHours: envNumber("TEAMMATE_APPROVAL_NUDGE_HOURS", 24),
       triageProjects: list(env("TEAMMATE_TRIAGE_PROJECTS")),
       triagePerHour: envNumber("TEAMMATE_TRIAGE_PER_HOUR", 20),
       dailyTokens: env("TEAMMATE_DAILY_TOKENS") ? Number(env("TEAMMATE_DAILY_TOKENS")) : undefined,
@@ -347,6 +352,7 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       jiraHmacSecret: env("JIRA_WEBHOOK_HMAC_SECRET"),
       githubSecret: env("GITHUB_WEBHOOK_SECRET"),
       traceToken: env("TRACE_TOKEN"),
+      metricsToken: env("METRICS_TOKEN"),
       publicBaseUrl: env("PUBLIC_BASE_URL"),
     },
     docsRepo: {

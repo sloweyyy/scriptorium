@@ -42,6 +42,77 @@ export function recentRuns(lines: readonly AuditLine[], limit = 10): Array<{ run
   return [...runs.values()].sort((a, b) => b.started.localeCompare(a.started)).slice(0, limit);
 }
 
+/**
+ * Answers people flagged with 👎, joined to the run that produced each one: the review queue
+ * for new answer golden cases. Only pointers are kept (channel, message ts, run, who), never
+ * the Slack text: `pnpm trace <run>` shows what the run did. Newest first; one entry per
+ * answer, however many people flagged it or how often.
+ */
+export interface FeedbackCandidate {
+  run?: string;
+  channel: string;
+  message: string;
+  answeredAt?: string;
+  /** What the flagged reply was: answer, gap, refused… */
+  kind?: string;
+  flaggedBy: string[];
+  lastFlagged: string;
+}
+
+export function feedbackCandidates(lines: readonly AuditLine[]): FeedbackCandidate[] {
+  const answers = new Map<string, AuditLine>();
+  const flagged = new Map<string, FeedbackCandidate>();
+  const at = (line: AuditLine) => `${String(line.channel)}/${String(line.message)}`;
+  for (const line of lines) {
+    if (typeof line.channel !== "string" || typeof line.message !== "string") continue;
+    if (line.type !== "teammate.feedback") {
+      if (line.type.startsWith("teammate.")) answers.set(at(line), line);
+      continue;
+    }
+    const entry = flagged.get(at(line)) ?? { channel: line.channel, message: line.message, flaggedBy: [], lastFlagged: line.ts };
+    const by = String(line.by);
+    if (!entry.flaggedBy.includes(by)) entry.flaggedBy.push(by);
+    entry.lastFlagged = line.ts;
+    flagged.set(at(line), entry);
+  }
+  return [...flagged.entries()]
+    .map(([key, entry]) => {
+      const answer = answers.get(key);
+      return answer ? { ...entry, ...(answer.run ? { run: answer.run } : {}), answeredAt: answer.ts, kind: answer.type.slice("teammate.".length) } : entry;
+    })
+    .sort((a, b) => b.lastFlagged.localeCompare(a.lastFlagged));
+}
+
+/**
+ * `/metrics`: Prometheus text, derived from the audit log so it survives a restart and can't
+ * disagree with the record. Event counts by type, and tokens by kind. Only type names and
+ * numbers: never a question, a channel or a person, so a scraper learns how busy it is and
+ * how it fails, not who asked what.
+ */
+export function auditMetrics(lines: readonly AuditLine[]): string {
+  const events = new Map<string, number>();
+  const tokens = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+  for (const line of lines) {
+    // Type names are code, but the log is a file: keep a label to what Prometheus allows.
+    const type = line.type.replace(/[^\w.:-]/g, "_").slice(0, 80);
+    events.set(type, (events.get(type) ?? 0) + 1);
+    if (line.type !== "llm.usage") continue;
+    for (const kind of Object.keys(tokens) as Array<keyof typeof tokens>) {
+      const value = line[kind];
+      if (typeof value === "number" && Number.isFinite(value) && value > 0) tokens[kind] += value;
+    }
+  }
+  const out = [
+    "# HELP scriptorium_audit_events_total Audit log events, by type.",
+    "# TYPE scriptorium_audit_events_total counter",
+    ...[...events.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([type, count]) => `scriptorium_audit_events_total{type="${type}"} ${count}`),
+    "# HELP scriptorium_llm_tokens_total Model tokens, by kind.",
+    "# TYPE scriptorium_llm_tokens_total counter",
+    ...Object.entries(tokens).map(([kind, count]) => `scriptorium_llm_tokens_total{kind="${kind}"} ${count}`),
+  ];
+  return `${out.join("\n")}\n`;
+}
+
 export function formatLine(line: AuditLine): string {
   const { ts, run: _run, type, ...rest } = line;
   const detail = Object.entries(rest)

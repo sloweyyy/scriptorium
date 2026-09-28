@@ -14,3 +14,4 @@ export * from "./mcp-server";
 export * from "./digest";
 export * from "./staleness-watch";
 export * from "./doctor";
+export * from "./erase";

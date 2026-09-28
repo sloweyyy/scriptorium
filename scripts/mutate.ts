@@ -107,6 +107,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/ingress.test.ts"],
   },
   {
+    control: "an erased audit line must be accounted for by a privacy.erased record",
+    file: "packages/core/src/audit.ts",
+    find: "  if (redacted > accounted) return",
+    replace: "  if (false) return",
+    evals: ["evals/privacy-erase.test.ts"],
+  },
+  {
+    control: "an erased audit line still has to follow the line before it",
+    file: "packages/core/src/audit.ts",
+    find: "    if (prev !== expected && !(chained",
+    replace: "    if (!line.includes('\"redacted\":true') && prev !== expected && !(chained",
+    evals: ["evals/privacy-erase.test.ts"],
+  },
+  {
+    control: "erasing a person never erases who approved a write",
+    file: "packages/core/src/audit.ts",
+    find: "!ACCOUNTABILITY.has(key) && key !== \"prev\"",
+    replace: "key !== \"prev\"",
+    evals: ["evals/privacy-erase.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

@@ -25,6 +25,7 @@ pnpm mutate             # sabotage each guardrail once; its eval must go red (we
 pnpm auditlog verify    # the audit log's hash chain holds (export --from --to for a signed extract)
 pnpm resign             # after rotating SCRIPTORIUM_SIGNING_KEY: move approvals onto the new key (--dry-run)
 pnpm feedback           # answers flagged 👎 in Slack, each with its run: the queue for new answer golden cases
+pnpm privacy:erase <person> --by <you> [--dry-run]   # erase one person (audit tombstones keep the chain; approvers kept)
 ```
 
 ## Architecture

@@ -23,7 +23,7 @@ if (text === undefined) {
 if (command === "verify") {
   const verdict = verifyAudit(text);
   if (verdict.ok) {
-    console.log(`✓ ${file}: ${verdict.lines} lines, ${verdict.chained} chained, chain intact.`);
+    console.log(`✓ ${file}: ${verdict.lines} lines, ${verdict.chained} chained${verdict.redacted ? `, ${verdict.redacted} erased (privacy:erase)` : ""}, chain intact.`);
   } else {
     console.error(`✗ ${file}: line ${verdict.line} ${verdict.reason}.`);
     process.exitCode = 1;

@@ -129,6 +129,35 @@ clear every control.
 - **Never share an Atlassian token between agents.** Two agents on one token are one
   identity, and the permission boundary between them is gone.
 
+## Erasing a person
+
+When someone asks to be removed, stop the service (the audit log is rewritten in place), then:
+
+```bash
+pnpm privacy:erase U0123ABC --by <you> --dry-run   # the plan; changes nothing
+pnpm privacy:erase U0123ABC --by <you>
+```
+
+- **Linked accounts.** Everything linked to the person in `TEAMMATE_PEOPLE` goes too: their
+  Jira and GitHub ids.
+- **Audit lines.** Each line about them becomes a tombstone. It keeps the type, the time, the
+  run, the structural fields that don't name them, and the hash of the original line, so
+  `pnpm auditlog verify` still holds. Everyone else's lines stay byte-for-byte the same. A
+  `privacy.erased` record says who ran it and how much it erased; it doesn't name the person.
+- **What else goes.** Memories about them are deleted. Their pending requests are cancelled,
+  their requester id on past requests becomes a pseudonym, and delegations to or from them
+  end.
+- **What stays, on purpose: who approved a write.** Erasing an approver would erase the
+  record that separation of duties depends on. Vault notes that mention them (docs, house
+  rules) are listed for review, not edited.
+- **What it can't reach.** Slack, Jira and Confluence keep their own copies. Git history,
+  including the vault repo's, still holds old text. Audit extracts exported earlier still hold
+  the erased lines.
+
+A tombstone keeps the original line's hash. Someone who guesses the line's exact contents
+could confirm the guess against it. Lines carry a random run id and a timestamp, so guessing a
+line exactly is impractical.
+
 ## Metrics
 
 `GET /metrics` serves Prometheus text to a scraper holding `METRICS_TOKEN`. It is derived from

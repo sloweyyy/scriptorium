@@ -16,7 +16,7 @@ describe("the audit chain", () => {
   it("holds across writes, including concurrent ones", async () => {
     await Promise.all(Array.from({ length: 20 }, (_, i) => audit(file, { type: "t", i })));
     const verdict = verifyAudit(await fs.readFile(file, "utf8"));
-    expect(verdict).toEqual({ ok: true, lines: 20, chained: 20 });
+    expect(verdict).toEqual({ ok: true, lines: 20, chained: 20, redacted: 0 });
   });
 
   it("finds an edited line, a removed one, and a forged prev", async () => {
@@ -33,7 +33,7 @@ describe("the audit chain", () => {
   it("accepts lines from before the chain only as a prefix", async () => {
     await fs.writeFile(file, `${JSON.stringify({ ts: "2026-01-01", type: "legacy" })}\n`);
     await audit(file, { type: "t" });
-    expect(verifyAudit(await fs.readFile(file, "utf8"))).toEqual({ ok: true, lines: 2, chained: 1 });
+    expect(verifyAudit(await fs.readFile(file, "utf8"))).toEqual({ ok: true, lines: 2, chained: 1, redacted: 0 });
     await fs.appendFile(file, `${JSON.stringify({ ts: "2026-01-02", type: "sneaked in" })}\n`);
     expect(verifyAudit(await fs.readFile(file, "utf8"))).toMatchObject({ ok: false, line: 3 });
   });

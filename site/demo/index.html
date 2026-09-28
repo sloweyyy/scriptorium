@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scriptorium demo</title>
+<meta name="description" content="An animated walkthrough of scriptorium: cited answers, gaps that become tickets, approvals bound to the exact change, docs that learn with permission, and a record you can check.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<meta property="og:type" content="video.other">
+<meta property="og:title" content="scriptorium in 80 seconds: an AI teammate that asks before it acts">
+<meta property="og:description" content="Cited answers, gaps that become tickets, approvals bound to the exact change, and docs that learn only what a human approves. Open source.">
+<meta property="og:url" content="https://scriptorium-teammate.vercel.app/demo/">
+<meta property="og:image" content="https://scriptorium-teammate.vercel.app/demo/poster.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="720">
+<meta property="og:video" content="https://scriptorium-teammate.vercel.app/demo/demo.mp4">
+<meta property="og:video:type" content="video/mp4">
+<meta property="og:video:width" content="1280">
+<meta property="og:video:height" content="720">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://scriptorium-teammate.vercel.app/demo/poster.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,500;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* The page follows the viewer; the stage (the film) follows the page, unless ?theme= pins it. */
+  :root { --page: #fbfaf7; --page-ink: #1b1d22; --page-muted: #5d6270; --page-line: #e6e3dc; }
+  #stage {
+    --bg: #0f1116; --glow: #161a28; --surface: #171a22; --surface-2: #1d212b; --line: #2a2e38;
+    --ink: #eceef2; --muted: #a6abb8; --faint: #6f7482;
+    --accent: #9aa8ff; --accent-strong: #2d3a8c; --accent-soft: #1e2440; --accent-line: #36407a; --chip: #232a4a;
+    --good: #6fd3a0; --good-soft: #15291f; --good-line: #24543a; --bad: #ff8f8f; --bad-soft: #3a1b1d; --bad-line: #6a2d31;
+    --warn: #f0b667; --warn-soft: #2d2215;
+    --skeleton: #2c3140; --skeleton-accent: #3a4a9a; --btn: #253166; --btn-line: #3a4a9a;
+    --wire: #3a4270; --wire-good: #2f7a55; --wire-bad: #9a3a40;
+    --veil: rgba(15, 17, 22, .72); --glow-accent: rgba(154, 168, 255, .35); --glow-good: rgba(111, 211, 160, .35); --agent-shadow: rgba(45, 58, 140, .45);
+    --switch-off: #2c3140; --switch-on: #3a2d18;
+  }
+  #stage[data-theme="light"] {
+    --bg: #fbfaf7; --glow: #eef0fa; --surface: #ffffff; --surface-2: #f4f2ec; --line: #e2ded5;
+    --ink: #1b1d22; --muted: #5d6270; --faint: #8c909b;
+    --accent: #2d3a8c; --accent-strong: #2d3a8c; --accent-soft: #eceffb; --accent-line: #c9d0f0; --chip: #eceffb;
+    --good: #1f7a4d; --good-soft: #e6f4ec; --good-line: #b9dfc9; --bad: #b3261e; --bad-soft: #fbe9e7; --bad-line: #efc2bd;
+    --warn: #9a5b12; --warn-soft: #fbf0e0;
+    --skeleton: #e6e3dc; --skeleton-accent: #b8c1ec; --btn: #2d3a8c; --btn-line: #2d3a8c;
+    --wire: #b8c1ec; --wire-good: #8fcca9; --wire-bad: #e2a19b;
+    --veil: rgba(251, 250, 247, .78); --glow-accent: rgba(45, 58, 140, .18); --glow-good: rgba(31, 122, 77, .18); --agent-shadow: rgba(45, 58, 140, .25);
+    --switch-off: #e6e3dc; --switch-on: #f5d9ad;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --page: #111318; --page-ink: #eceef2; --page-muted: #a6abb8; --page-line: #2a2e38; }
+  }
+  :root[data-theme="dark"] { --page: #111318; --page-ink: #eceef2; --page-muted: #a6abb8; --page-line: #2a2e38; }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--page); color: var(--page-ink); font: 16px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  .page { max-width: 1120px; margin: 0 auto; padding: 28px 16px 48px; }
+  .top { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+  .top a { color: var(--page-muted); text-decoration: none; font-size: 14px; }
+  .top a:hover { color: var(--page-ink); }
+  .top .brand { display: inline-flex; align-items: center; gap: 10px; font-family: Newsreader, Georgia, serif; font-weight: 600; font-size: 20px; color: var(--page-ink); }
+  .top .spacer { flex: 1; }
+
+  .frame { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: var(--page); border: 1px solid var(--page-line); }
+  #stage { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; transform-origin: 0 0; overflow: hidden; background: radial-gradient(1200px 700px at 70% 10%, var(--glow) 0%, var(--bg) 60%); color: var(--ink); }
+
+  .controls { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 14px; color: var(--page-muted); }
+  .controls button { font: inherit; border: 1px solid var(--page-line); background: transparent; color: var(--page-ink); border-radius: 999px; padding: 6px 14px; cursor: pointer; }
+  .controls button:hover { border-color: var(--page-muted); }
+  .bar { position: relative; flex: 1; height: 6px; border-radius: 999px; background: var(--page-line); cursor: pointer; }
+  .bar .fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 999px; background: #2d3a8c; }
+  .chapters { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .chapters button { font: 13px/1.2 Inter, sans-serif; border: 1px solid var(--page-line); background: transparent; color: var(--page-muted); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+  .chapters button.on { color: var(--page-ink); border-color: var(--page-muted); }
+  .note { margin-top: 18px; color: var(--page-muted); font-size: 14px; }
+  @media (max-width: 600px) { .controls .time { display: none; } }
+
+  /* Everything on the stage starts hidden; the timeline brings it in. */
+  .el { position: absolute; opacity: 0; will-change: transform, opacity; }
+  .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+  .serif { font-family: Newsreader, Georgia, serif; }
+
+  .eyebrow { left: 64px; top: 44px; font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+  .title { left: 64px; top: 68px; width: 900px; font-family: Newsreader, Georgia, serif; font-weight: 600; font-size: 38px; line-height: 1.12; letter-spacing: -.01em; }
+  .sub { left: 64px; top: 120px; width: 820px; font-size: 18px; color: var(--muted); }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+  .avatar { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 20px; color: #0f1116; }
+  .who { font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .bubble { padding: 12px 16px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); font-size: 17px; }
+  .bubble.answer { background: var(--accent-soft); border-color: var(--accent-line); }
+  .type { display: inline-block; white-space: nowrap; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font: 500 13px "JetBrains Mono", monospace; padding: 4px 9px; border-radius: 999px; background: var(--chip); color: var(--accent); border: 1px solid var(--accent-line); white-space: nowrap; }
+  .chip.good { background: var(--good-soft); color: var(--good); border-color: var(--good-line); }
+  .chip.bad { background: var(--bad-soft); color: var(--bad); border-color: var(--bad-line); }
+  .badge { font-size: 14px; font-weight: 600; padding: 7px 12px; border-radius: 8px; white-space: nowrap; }
+  .badge.good { background: var(--good-soft); color: var(--good); }
+  .badge.bad { background: var(--bad-soft); color: var(--bad); }
+  .badge.info { background: var(--accent-soft); color: var(--accent); }
+
+  .agent { width: 104px; height: 104px; border-radius: 26px; background: var(--accent-strong); display: grid; place-items: center; box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 8%, transparent), 0 20px 50px var(--agent-shadow); }
+  .agent-label { font-size: 14px; font-weight: 600; text-align: center; width: 160px; }
+  .gate { width: 6px; border-radius: 6px; background: linear-gradient(var(--accent-line), var(--line)); }
+  .gate-label { font: 600 11px Inter, sans-serif; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+  .flash { font: 500 12px "JetBrains Mono", monospace; padding: 4px 8px; border-radius: 6px; white-space: nowrap; }
+  .flash.centred { translate: -50% 0; }
+  .flash.allow { background: var(--accent-soft); color: var(--accent); }
+  .flash.approve { background: var(--good-soft); color: var(--good); }
+  .flash.hold { background: var(--warn-soft); color: var(--warn); }
+
+  .source { width: 300px; height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 14px; font-size: 15px; font-weight: 500; }
+  .source .dot { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font: 700 12px Inter, sans-serif; color: #0f1116; }
+  .source .meta { margin-left: auto; font: 12px "JetBrains Mono", monospace; color: var(--faint); }
+  .hl { border-radius: 12px; box-shadow: 0 0 0 2px var(--accent), 0 0 30px var(--glow-accent); pointer-events: none; }
+  .hl.good { box-shadow: 0 0 0 2px var(--good), 0 0 30px var(--glow-good); }
+  .hl.dim { box-shadow: 0 0 0 2px var(--faint); }
+  .packet { width: 12px; height: 12px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 14px var(--accent); }
+  .packet.good { background: var(--good); box-shadow: 0 0 14px var(--good); }
+
+  .approval { width: 440px; padding: 16px 18px; }
+  .approval .head { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--warn); }
+  .approval .kv { margin-top: 10px; font: 14px/1.7 "JetBrains Mono", monospace; color: var(--ink); }
+  .approval .kv span { color: var(--faint); }
+  .approval .foot { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  .btn { font: 600 14px Inter, sans-serif; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); }
+  .btn.primary { background: var(--btn); border-color: var(--btn-line); color: #fff; }
+  .hash { margin-left: auto; font: 12px "JetBrains Mono", monospace; color: var(--faint); display: inline-flex; gap: 6px; align-items: center; }
+  .stamp { font: 700 22px Inter, sans-serif; letter-spacing: .06em; text-transform: uppercase; color: var(--good); border: 3px solid var(--good); border-radius: 10px; padding: 6px 14px; transform: rotate(-6deg); }
+  .cursor { width: 22px; height: 22px; }
+  .toast { font-size: 14px; padding: 10px 14px; border-radius: 10px; white-space: nowrap; }
+  .toast.bad { background: var(--bad-soft); color: var(--bad); border: 1px solid var(--bad-line); }
+  .toast.good { background: var(--good-soft); color: var(--good); border: 1px solid var(--good-line); }
+
+  .doc { width: 190px; padding: 14px; }
+  .doc .kind { font: 600 11px Inter, sans-serif; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+  .doc .name { font-size: 15px; font-weight: 600; margin-top: 4px; }
+  .doc .lines { margin-top: 10px; display: grid; gap: 6px; }
+  .doc .lines i { display: block; height: 6px; border-radius: 3px; background: var(--skeleton); }
+  .doc .lines i.accent { background: var(--skeleton-accent); }
+  .lesson { width: 420px; padding: 14px 16px; }
+  .lesson .id { font: 600 13px "JetBrains Mono", monospace; color: var(--accent); }
+  .lesson .rule { font-size: 16px; margin-top: 4px; }
+  .status { font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 999px; }
+  .status.proposed { background: var(--warn-soft); color: var(--warn); }
+  .status.approved { background: var(--good-soft); color: var(--good); }
+
+  .block { width: 150px; height: 84px; padding: 12px; }
+  .block .t { font: 600 13px Inter, sans-serif; }
+  .block .h { font: 11px "JetBrains Mono", monospace; color: var(--faint); margin-top: 8px; }
+  .block.bad { border-color: var(--bad-line); background: var(--bad-soft); }
+  .pause-pill { display: inline-flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 999px; font-size: 15px; }
+  .switch { width: 44px; height: 24px; border-radius: 999px; background: var(--switch-off); position: relative; }
+  .switch i { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--muted); }
+  .veil { background: var(--veil); backdrop-filter: grayscale(1); border-radius: 16px; display: grid; place-items: center; font-size: 18px; font-weight: 600; color: var(--warn); }
+
+  .stat { width: 330px; padding: 22px 24px; }
+  .stat .n { font-family: Newsreader, Georgia, serif; font-size: 52px; font-weight: 600; line-height: 1; }
+  .stat .l { color: var(--muted); margin-top: 8px; font-size: 15px; }
+  .bug { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; font-size: 16px; }
+  .bug.red { background: var(--bad-soft); color: var(--bad); }
+  .bug.green { background: var(--good-soft); color: var(--good); }
+  .end-title { font-family: Newsreader, Georgia, serif; font-weight: 600; font-size: 64px; letter-spacing: -.02em; }
+  .end-sub { font-size: 22px; color: var(--muted); }
+  .end-url { font: 500 16px "JetBrains Mono", monospace; color: var(--accent); }
+  svg.wires { position: absolute; inset: 0; width: 1280px; height: 720px; overflow: visible; }
+  svg.wires path { fill: none; stroke: var(--wire); stroke-width: 2; stroke-linecap: round; }
+  svg.wires path.good { stroke: var(--wire-good); }
+  svg.wires path.bad { stroke: var(--wire-bad); }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top">
+    <a class="brand" href="../"><img src="../favicon.svg" width="26" height="26" alt="">scriptorium</a>
+    <span class="spacer"></span>
+    <a href="../">Project page</a>
+    <a href="demo.mp4" id="download">Download video</a>
+  </div>
+  <div class="frame" id="frame"><div id="stage" aria-label="Animated walkthrough of scriptorium"></div></div>
+  <div class="controls" id="controls">
+    <button id="play" type="button">Pause</button>
+    <button id="restart" type="button">Restart</button>
+    <div class="bar" id="bar"><div class="fill" id="fill"></div></div>
+    <span class="time mono" id="time">0:00</span>
+  </div>
+  <div class="chapters" id="chapters"></div>
+  <p class="note">A sketch of how it works, not screenshots: Slack, Jira, Confluence and GitHub are drawn as simple shapes. The product and people are fictional (the "Beacon" status-page product).</p>
+</div>
+
+<script>
+(() => {
+  const stage = document.getElementById("stage");
+  const params = new URLSearchParams(location.search);
+  // ?theme=light|dark pins it (rendering uses both); otherwise the film matches the page.
+  const theme = params.get("theme") === "light" || params.get("theme") === "dark"
+    ? params.get("theme")
+    : document.documentElement.dataset.theme ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  stage.dataset.theme = theme;
+  document.getElementById("download").href = theme === "light" ? "demo-light.mp4" : "demo.mp4";
+  const token = (name) => getComputedStyle(stage).getPropertyValue(name).trim();
+  const anims = [];
+  const EASE = "cubic-bezier(.2,.7,.2,1)";
+
+  // ---- building blocks -------------------------------------------------------------------
+  function el(cls, html, x, y, w, h) {
+    const node = document.createElement("div");
+    node.className = `el ${cls}`;
+    node.innerHTML = html;
+    node.style.left = `${x}px`;
+    node.style.top = `${y}px`;
+    if (w) node.style.width = `${w}px`;
+    if (h) node.style.height = `${h}px`;
+    stage.appendChild(node);
+    return node;
+  }
+  /** One paused animation starting at `t` ms; the timeline sets every animation's time at once. */
+  function anim(node, keyframes, t, duration, easing = EASE) {
+    const a = node.animate(keyframes, { duration, delay: t, fill: "forwards", easing });
+    a.pause();
+    anims.push(a);
+    return a;
+  }
+  const s = (seconds) => seconds * 1000;
+  const inn = (node, t, d = 500, from = "translateY(14px) scale(.98)") => anim(node, [{ opacity: 0, transform: from }, { opacity: 1, transform: "none" }], s(t), d);
+  const pop = (node, t, d = 450) => anim(node, [{ opacity: 0, transform: "scale(.6)" }, { opacity: 1, transform: "scale(1.06)", offset: 0.7 }, { opacity: 1, transform: "scale(1)" }], s(t), d);
+  const out = (node, t, d = 400) => anim(node, [{ opacity: 1 }, { opacity: 0 }], s(t), d);
+  const fade = (node, t, to, d = 400) => anim(node, [{ opacity: 1 }, { opacity: to }], s(t), d);
+  const move = (node, t, d, dx, dy, easing = EASE) => anim(node, [{ opacity: 1, transform: "translate(0,0)" }, { opacity: 1, transform: `translate(${dx}px,${dy}px)` }], s(t), d, easing);
+  const shake = (node, t) => anim(node, [{ transform: "translateX(0)" }, { transform: "translateX(-8px)" }, { transform: "translateX(8px)" }, { transform: "translateX(-5px)" }, { transform: "translateX(0)" }], s(t), 420, "linear");
+  /** Text that types itself in: revealed left to right. */
+  function typed(node, t, d) {
+    anim(node, [{ opacity: 1, clipPath: "inset(0 100% 0 0)" }, { opacity: 1, clipPath: "inset(0 0 0 0)" }], s(t), d, "steps(28, end)");
+  }
+  /** A packet that flies from (x1,y1) to (x2,y2), then vanishes. */
+  function packet(x1, y1, x2, y2, t, d = 700, cls = "") {
+    const dot = el(`packet ${cls}`, "", x1 - 6, y1 - 6);
+    anim(dot, [{ opacity: 0, transform: "translate(0,0) scale(.5)" }, { opacity: 1, transform: "translate(0,0) scale(1)", offset: 0.12 }, { opacity: 1, transform: `translate(${x2 - x1}px,${y2 - y1}px) scale(1)`, offset: 0.9 }, { opacity: 0, transform: `translate(${x2 - x1}px,${y2 - y1}px) scale(.4)` }], s(t), d, "cubic-bezier(.45,0,.2,1)");
+    return dot;
+  }
+  function highlight(x, y, w, h, t, d = 1400, cls = "") {
+    const ring = el(`hl ${cls}`, "", x, y, w, h);
+    anim(ring, [{ opacity: 0 }, { opacity: 1, offset: 0.15 }, { opacity: 1, offset: 0.8 }, { opacity: 0 }], s(t), d);
+    return ring;
+  }
+  function flash(cls, text, x, y, t, d = 1300) {
+    const node = el(`flash ${cls}`, text, x, y);
+    anim(node, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none", offset: 0.15 }, { opacity: 1, transform: "none", offset: 0.8 }, { opacity: 0, transform: "translateY(-6px)" }], s(t), d);
+    return node;
+  }
+  const wires = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  wires.setAttribute("class", "wires");
+  wires.setAttribute("viewBox", "0 0 1280 720");
+  stage.appendChild(wires);
+  function wire(d, t, dur = 600, cls = "") {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    if (cls) path.setAttribute("class", cls);
+    path.style.opacity = "0";
+    wires.appendChild(path);
+    const length = path.getTotalLength();
+    path.style.strokeDasharray = `${length}`;
+    anim(path, [{ opacity: 1, strokeDashoffset: length }, { opacity: 1, strokeDashoffset: 0 }], s(t), dur);
+    return path;
+  }
+  const hideAll = (nodes, t) => nodes.forEach((node) => out(node, t));
+
+  const SHIELD = '<svg width="54" height="54" viewBox="0 0 64 64"><path d="M32 11 L49 17.5 V31 C49 41.5 41.6 48.8 32 53 C22.4 48.8 15 41.5 15 31 V17.5 Z" fill="none" stroke="#fff" stroke-width="4" stroke-linejoin="round"/><polyline points="23.5,32 29.5,38 41,26" fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const LOCK = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+  const CURSOR = '<svg class="cursor" viewBox="0 0 24 24"><path d="M4 2 L20 12 L12.5 13.5 L16 21 L13 22.5 L9.5 15 L4 20 Z" fill="#fff" stroke="#0f1116" stroke-width="1.2"/></svg>';
+
+  /** A chapter's caption: eyebrow, title, subtitle, in at `t`, out at `end`. */
+  const chapters = [];
+  function caption(n, name, title, sub, t, end) {
+    chapters.push({ name, t: s(t) });
+    const e = el("eyebrow", `${String(n).padStart(2, "0")} · ${name}`, 64, 44);
+    const h = el("title", title, 64, 68);
+    const p = el("sub", sub, 64, 120);
+    inn(e, t, 400);
+    inn(h, t + 0.1, 500);
+    inn(p, t + 0.3, 500);
+    hideAll([e, h, p], end);
+    return p;
+  }
+
+  // ---- 00 · Title (0–5s) -----------------------------------------------------------------
+  const logo = el("agent", SHIELD, 588, 170);
+  const name = el("end-title", "scriptorium", 440, 300, 400);
+  name.style.textAlign = "center";
+  const tag = el("end-sub", "An AI teammate for Slack, Jira, Confluence and GitHub<br>that asks before it acts.", 240, 390, 800);
+  tag.style.textAlign = "center";
+  pop(logo, 0.3, 600);
+  inn(name, 0.8, 600);
+  inn(tag, 1.4, 600);
+  hideAll([logo, name, tag], 4.3);
+  chapters.push({ name: "Intro", t: 0 });
+
+  // ---- shared cast for 01–03 --------------------------------------------------------------
+  const ana = el("avatar", "A", 84, 240);
+  ana.style.background = "#f0b667";
+  const anaWho = el("who", "Ana · support lead", 70, 302);
+  const agent = el("agent", SHIELD, 588, 238);
+  const agentLabel = el("agent-label", "Teammate", 560, 350);
+  const gate = el("gate", "", 800, 200, 6, 330);
+  const gateLabel = el("gate-label", "policy", 786, 176);
+  const SOURCES = [
+    ["Docs vault", "#9aa8ff", "D", "notes"],
+    ["Jira", "#7fc3ff", "J", "issues"],
+    ["Confluence", "#8fd9c5", "C", "pages"],
+    ["GitHub", "#d0d4de", "G", "PRs"],
+    ["This Slack thread", "#f0b667", "S", "messages"],
+  ];
+  const srcY = (i) => 206 + i * 64;
+  const sources = SOURCES.map(([label, color, letter, meta], i) => el("card source", `<span class="dot" style="background:${color}">${letter}</span>${label}<span class="meta">${meta}</span>`, 900, srcY(i)));
+  const AGENT_OUT = [692, 290];
+  const toSource = (i) => [900, srcY(i) + 26];
+  /** A tool call: agent → through the gate → a source, with the gate saying what it allowed. */
+  function call(i, t, verdict = "allow · read", cls = "allow") {
+    packet(AGENT_OUT[0], AGENT_OUT[1], ...toSource(i), t, 650);
+    flash(`${cls} centred`, verdict, 803, srcY(i) - 30, t + 0.2, 1100);
+    highlight(900, srcY(i), 300, 52, t + 0.55, 1300);
+  }
+  const cast = [ana, anaWho, agent, agentLabel, gate, gateLabel, ...sources];
+
+  // ---- 01 · Ask (5–19s) -------------------------------------------------------------------
+  caption(1, "Ask", "Answers with sources, not guesses", "It answers from your docs, Jira, Confluence and GitHub, and shows where each fact came from.", 5, 18.4);
+  inn(ana, 5.4);
+  inn(anaWho, 5.5);
+  const q1 = el("bubble", '<span class="type">When does the daily digest go out?</span>', 164, 240);
+  inn(q1, 5.9, 350);
+  typed(q1.firstChild, 6.0, 900);
+  pop(agent, 7.0);
+  inn(agentLabel, 7.2);
+  inn(gate, 7.4, 500, "scaleY(.2)");
+  inn(gateLabel, 7.5);
+  sources.forEach((node, i) => inn(node, 7.5 + i * 0.12, 450, "translateX(20px)"));
+  call(0, 8.6);
+  const rec1 = el("chip", "docs/digest-emails", 1040, srcY(0) + 13);
+  pop(rec1, 9.3);
+  call(1, 9.8);
+  const rec2 = el("chip", "jira:DOC-42", 1070, srcY(1) + 13);
+  pop(rec2, 10.5);
+  packet(900, srcY(0) + 26, ...AGENT_OUT, 11.2, 650, "good");
+  packet(900, srcY(1) + 26, ...AGENT_OUT, 11.35, 650, "good");
+  hideAll([rec1, rec2], 11.6);
+  const a1 = el("bubble answer", '<span class="type">At 09:00, in each subscriber\'s own timezone.</span>', 164, 318);
+  inn(a1, 12.2, 350);
+  typed(a1.firstChild, 12.3, 900);
+  const cite1 = el("chip", "↳ docs/digest-emails", 180, 380);
+  pop(cite1, 13.3);
+  const ok1 = el("badge good", "✓ Every claim cites a record a tool actually fetched", 164, 430);
+  inn(ok1, 13.9);
+  const fake = el("chip", "↳ docs/sla-page", 380, 380);
+  pop(fake, 15.0);
+  const fakeNo = el("chip bad", "✗ never fetched: removed", 380, 380);
+  inn(fakeNo, 15.9, 300, "none");
+  out(fake, 15.9, 200);
+  anim(fakeNo, [{ opacity: 1 }, { opacity: 1, offset: 0.7 }, { opacity: 0 }], s(16.3), 1400);
+  hideAll([q1, a1, cite1, ok1], 18.4);
+
+  // ---- 02 · Gap (19–31s) ------------------------------------------------------------------
+  caption(2, "No citation, no claim", "If it isn't written down, it says so", "A question the docs can't answer becomes a gap note, and a documentation ticket.", 19, 30.4);
+  const q2 = el("bubble", '<span class="type">Can I export incidents as a PDF?</span>', 164, 240);
+  inn(q2, 19.4, 350);
+  typed(q2.firstChild, 19.5, 800);
+  call(0, 20.6);
+  const none1 = el("flash hold", "0 results", 1110, srcY(0) + 14);
+  inn(none1, 21.2, 300);
+  call(2, 21.6);
+  const none2 = el("flash hold", "0 results", 1110, srcY(2) + 14);
+  inn(none2, 22.2, 300);
+  const a2 = el("bubble answer", '<span class="type">That isn\'t documented yet, so I won\'t guess.</span>', 164, 318);
+  inn(a2, 23.0, 350);
+  typed(a2.firstChild, 23.1, 900);
+  const gap = el("card doc", '<div class="kind">Gap note</div><div class="name">G-014 · incident PDF export</div><div class="lines"><i></i><i style="width:70%"></i></div>', 540, 420);
+  inn(gap, 24.4);
+  const lane = el("card", '<div class="doc" style="width:auto;padding:12px 16px"><div class="kind">Docs agent\'s queue</div></div>', 900, 560, 300);
+  inn(lane, 24.8);
+  move(gap, 25.8, 1100, 380, 120);
+  out(gap, 26.8, 300);
+  const ticket = el("chip good", "DOC-57 · doc request", 920, 606);
+  pop(ticket, 26.9);
+  const loop = el("badge info", "The answer it couldn't give becomes the next page to write", 164, 430);
+  inn(loop, 27.4);
+  hideAll([q2, a2, none1, none2, gap, lane, ticket, loop], 30.4);
+
+  // ---- 03 · Approve (31–47s) --------------------------------------------------------------
+  caption(3, "Asks before it acts", "Nothing changes until a named person approves", "Every write waits on a card, bound by hash to the exact change the approver saw.", 31, 46.4);
+  const q3 = el("bubble", '<span class="type">File this thread as a Jira ticket.</span>', 164, 240);
+  inn(q3, 31.4, 350);
+  typed(q3.firstChild, 31.5, 800);
+  const card = el("card approval", `<div class="head">⏳ Approval needed · jira_create_issue</div><div class="kv"><span>project:</span> DOC<br><span>summary:</span> Incident PDF export<br><span>labels:</span> customer-ask</div><div class="foot"><span class="btn primary">Approve</span><span class="btn">Reject</span><span class="hash">${LOCK} args #9f3c…a1</span></div>`, 330, 380);
+  packet(640, 342, 560, 400, 32.6, 600);
+  inn(card, 33.1);
+  const lockNote = el("badge info", "Approval covers these exact arguments, nothing else", 790, 612);
+  inn(lockNote, 34.0);
+  const cur1 = el("", CURSOR, 150, 300);
+  inn(cur1, 35.0, 250, "none");
+  move(cur1, 35.1, 900, 222, 202);
+  const deny = el("toast bad", "Not recorded: the person who asked can't approve it", 330, 330);
+  inn(deny, 36.2, 300);
+  shake(card, 36.2);
+  out(deny, 37.8);
+  out(cur1, 37.6, 200);
+  const ben = el("avatar", "B", 84, 470);
+  ben.style.background = "#8fd9c5";
+  const benWho = el("who", "Ben · approver", 72, 532);
+  inn(ben, 38.0);
+  inn(benWho, 38.1);
+  const cur2 = el("", CURSOR, 150, 520);
+  inn(cur2, 38.6, 250, "none");
+  move(cur2, 38.7, 800, 222, -18);
+  const approved = el("toast good", "✓ Approved by Ben", 330, 330);
+  inn(approved, 39.6, 300);
+  out(cur2, 40.2, 200);
+  packet(AGENT_OUT[0], AGENT_OUT[1], ...toSource(1), 40.4, 650, "good");
+  flash("approve centred", "approve · spent once", 803, srcY(1) - 30, 40.6, 1300);
+  highlight(900, srcY(1), 300, 52, 40.95, 1500, "good");
+  const created = el("chip good", "DOC-58 created", 1062, srcY(1) + 13);
+  pop(created, 41.4);
+  const stamp = el("stamp", "Exactly once", 560, 596);
+  pop(stamp, 42.4, 500);
+  packet(AGENT_OUT[0], AGENT_OUT[1], ...toSource(1), 43.4, 650);
+  flash("hold centred", "retry · already done", 803, srcY(1) - 30, 43.6, 1400);
+  const once = el("badge good", "Retries, restarts and double clicks never do it twice", 790, 612);
+  inn(once, 44.2);
+  out(lockNote, 44.0, 200);
+  hideAll([q3, card, ben, benWho, approved, created, stamp, once, ...cast], 46.4);
+
+  // ---- 04 · Learn (47–61s) ----------------------------------------------------------------
+  caption(4, "Docs that learn, with permission", "It drafts the docs. People approve every word", "The docs agent writes from a PRD on the ticket, revises on feedback, and learns only the rules a human approves.", 47, 60.4);
+  const docX = [70, 320, 570, 820, 1070];
+  const docY = 250;
+  const prd = el("card doc", '<div class="kind">Ticket · DOC-57</div><div class="name">PRD + wireframe</div><div class="lines"><i></i><i style="width:80%"></i><i style="width:60%"></i></div>', docX[0], docY);
+  const v1 = el("card doc", '<div class="kind">Draft v1</div><div class="name">Incident PDF export</div><div class="lines"><i class="accent"></i><i></i><i style="width:75%"></i></div>', docX[1], docY);
+  const review = el("card doc", '<div class="kind">Review</div><div class="name">"State the timezone."</div><div class="lines"><i style="width:55%"></i></div><div class="who" style="margin-top:8px">— Ana</div>', docX[2], docY);
+  const v2 = el("card doc", '<div class="kind">Draft v2</div><div class="name">Incident PDF export</div><div class="lines"><i class="accent"></i><i></i><i style="width:85%"></i></div>', docX[3], docY);
+  const pub = el("card doc", '<div class="kind">Published</div><div class="name">✓ approved by Ana</div><div class="lines"><i class="accent"></i><i></i></div><div class="who" style="margin-top:8px">docs site · pull request</div>', docX[4], docY);
+  pub.style.borderColor = "var(--good-line)";
+  inn(prd, 47.5);
+  const w4 = [];
+  w4.push(wire(`M${docX[0] + 190} ${docY + 60} L${docX[1]} ${docY + 60}`, 48.3, 400));
+  inn(v1, 48.6);
+  w4.push(wire(`M${docX[1] + 190} ${docY + 60} L${docX[2]} ${docY + 60}`, 49.4, 400));
+  inn(review, 49.7);
+  w4.push(wire(`M${docX[2] + 190} ${docY + 60} L${docX[3]} ${docY + 60}`, 50.8, 400));
+  inn(v2, 51.1);
+  w4.push(wire(`M${docX[3] + 190} ${docY + 60} L${docX[4]} ${docY + 60}`, 52.1, 400, "good"));
+  inn(pub, 52.4);
+  const lesson = el("card lesson", '<div style="display:flex;align-items:center;gap:10px"><span class="id">L-007</span><span class="status proposed" id="st">proposed</span></div><div class="rule">Always state the timezone for scheduled times.</div>', 460, 450);
+  w4.push(wire(`M${docX[2] + 95} ${docY + 140} L${docX[2] + 95} 450`, 53.6, 500));
+  inn(lesson, 54.0);
+  const approvedStatus = el("status approved", "approved ✓ by Ana", 526, 465);
+  fade(lesson.querySelector("#st"), 55.4, 0, 200);
+  inn(approvedStatus, 55.6, 300, "none");
+  const next = el("card doc", '<div class="kind">Next ticket · DOC-61</div><div class="name">Draft v1</div><div class="lines"><i class="accent"></i><i></i></div>', 960, 470);
+  w4.push(wire(`M880 520 L960 520`, 56.8, 400, "good"));
+  inn(next, 57.1);
+  const applied = el("chip good", "L-007 applied ✓", 985, 604);
+  pop(applied, 57.9);
+  hideAll([prd, v1, review, v2, pub, lesson, approvedStatus, next, applied], 60.4);
+  w4.forEach((path) => anim(path, [{ opacity: 1 }, { opacity: 0 }], s(60.4), 400));
+
+  // ---- 05 · Record (61–71s) ---------------------------------------------------------------
+  caption(5, "A record you can check", "Every step is on a hash-chained record", "Change one line and the chain breaks. Admins can pause everything at once.", 61, 70.4);
+  const BLOCKS = [["answer", "#1c07…"], ["tool: read", "#8a41…"], ["approval", "#3fd2…"], ["ran once", "#77b0…"], ["published", "#c95e…"]];
+  const bx = (i) => 110 + i * 220;
+  const blocks = BLOCKS.map(([label, hash], i) => el("card block", `<div class="t">${label}</div><div class="h">prev ${hash}</div>`, bx(i), 250));
+  blocks.forEach((node, i) => inn(node, 61.5 + i * 0.25));
+  const links = BLOCKS.slice(1).map((_, i) => wire(`M${bx(i) + 150} 292 L${bx(i + 1)} 292`, 62.0 + i * 0.25, 300));
+  const tamper = el("card block bad", '<div class="t">ran once</div><div class="h">edited ✎</div>', bx(3), 250);
+  inn(tamper, 63.8, 250, "none");
+  shake(tamper, 63.9);
+  const broken = wire(`M${bx(3) + 150} 292 L${bx(4)} 292`, 64.1, 300, "bad");
+  const verdictBad = el("badge bad", "✗ verify: chain broken at line 4", 110, 380);
+  inn(verdictBad, 64.3);
+  out(tamper, 65.6, 300);
+  anim(broken, [{ opacity: 1 }, { opacity: 0 }], s(65.6), 300);
+  out(verdictBad, 65.6, 300);
+  const verdictOk = el("badge good", "✓ chain intact", 110, 380);
+  inn(verdictOk, 65.9);
+  const pill = el("card pause-pill", 'Admin · <span class="mono" style="font-size:13px">/teammate admin pause</span><span class="switch"><i></i></span>', 110, 470);
+  inn(pill, 66.6);
+  const knob = pill.querySelector(".switch i");
+  const track = pill.querySelector(".switch");
+  anim(knob, [{ transform: "none", background: token("--muted") }, { transform: "translateX(20px)", background: token("--warn") }], s(67.5), 250);
+  anim(track, [{ background: token("--switch-off") }, { background: token("--switch-on") }], s(67.5), 250);
+  const veil = el("veil", "⏸ Paused: nothing is answered or carried out", 90, 232, 1100, 124);
+  anim(veil, [{ opacity: 0 }, { opacity: 1 }], s(67.9), 400);
+  hideAll([...blocks, verdictOk, pill, veil], 70.4);
+  links.forEach((link) => anim(link, [{ opacity: 1 }, { opacity: 0 }], s(70.4), 300));
+
+  // ---- 06 · Proof and end (71–80s) --------------------------------------------------------
+  caption(6, "Proven, not promised", "Each guardrail is attacked on purpose", "Every rule has a test, and a deliberate sabotage of the rule that the test must catch.", 71, 75.6);
+  const st1 = el("card stat", '<div class="n">560+</div><div class="l">checks on every commit, no model needed</div>', 110, 230);
+  const st2 = el("card stat", '<div class="n">70+</div><div class="l">guardrails sabotaged on purpose, each one caught</div>', 475, 230);
+  const st3 = el("card stat", '<div class="n">0</div><div class="l">writes without a named approver</div>', 840, 230);
+  [st1, st2, st3].forEach((node, i) => inn(node, 71.5 + i * 0.3));
+  const bugs = Array.from({ length: 12 }, (_, i) => el("bug red", "✗", 110 + i * 48, 420));
+  const fixed = Array.from({ length: 12 }, (_, i) => el("bug green", "✓", 110 + i * 48, 420));
+  bugs.forEach((node, i) => { pop(node, 72.6 + i * 0.07, 300); out(node, 73.6 + i * 0.1, 150); });
+  fixed.forEach((node, i) => pop(node, 73.6 + i * 0.1, 250));
+  const caught = el("badge good", "sabotage → test fails → caught", 700, 424);
+  inn(caught, 74.6);
+  hideAll([st1, st2, st3, ...bugs, ...fixed, caught], 75.6);
+
+  const endLogo = el("agent", SHIELD, 588, 170);
+  const endName = el("end-title", "scriptorium", 440, 300, 400);
+  endName.style.textAlign = "center";
+  const endSub = el("end-sub", "The AI teammate that asks before it acts.", 340, 390, 600);
+  endSub.style.textAlign = "center";
+  const endUrl = el("end-url", "scriptorium-teammate.vercel.app · open source, MIT", 340, 450, 600);
+  endUrl.style.textAlign = "center";
+  pop(endLogo, 76.2, 600);
+  inn(endName, 76.6, 600);
+  inn(endSub, 77.1, 600);
+  inn(endUrl, 77.6, 600);
+  chapters.push({ name: "End", t: s(76) });
+
+  // ---- timeline ---------------------------------------------------------------------------
+  const DURATION = s(80);
+  let t = 0;
+  function seek(ms) {
+    t = Math.max(0, Math.min(DURATION, ms));
+    for (const a of anims) a.currentTime = t;
+    fill.style.width = `${(t / DURATION) * 100}%`;
+    timeLabel.textContent = `${Math.floor(t / 60000)}:${String(Math.floor((t % 60000) / 1000)).padStart(2, "0")}`;
+    const current = [...chapters].sort((a, b) => a.t - b.t).filter((chapter) => chapter.t <= t).at(-1);
+    for (const button of chapterButtons) button.classList.toggle("on", button.dataset.name === current?.name);
+  }
+  // Rendering to video drives this directly, one frame at a time.
+  window.__demo = { seek, duration: DURATION, ready: document.fonts ? document.fonts.ready : Promise.resolve() };
+
+  const fill = document.getElementById("fill");
+  const timeLabel = document.getElementById("time");
+  const playButton = document.getElementById("play");
+  const chaptersBox = document.getElementById("chapters");
+  const ordered = [...chapters].sort((a, b) => a.t - b.t);
+  const chapterButtons = ordered.map((chapter) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = chapter.name;
+    button.dataset.name = chapter.name;
+    button.addEventListener("click", () => { seek(chapter.t); if (!playing) toggle(); });
+    chaptersBox.appendChild(button);
+    return button;
+  });
+
+  const frame = document.getElementById("frame");
+  const fit = () => { stage.style.transform = `scale(${frame.clientWidth / 1280})`; };
+  new ResizeObserver(fit).observe(frame);
+  fit();
+
+  const render = params.has("render");
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let playing = !render && !reduced;
+  let last = 0;
+  function tick(now) {
+    if (playing) {
+      seek(t + (last ? now - last : 0));
+      if (t >= DURATION) seek(0);
+    }
+    last = now;
+    requestAnimationFrame(tick);
+  }
+  function toggle() {
+    playing = !playing;
+    last = 0;
+    playButton.textContent = playing ? "Pause" : "Play";
+  }
+  playButton.textContent = playing ? "Pause" : "Play";
+  playButton.addEventListener("click", toggle);
+  document.getElementById("restart").addEventListener("click", () => { seek(0); if (!playing) toggle(); });
+  const bar = document.getElementById("bar");
+  bar.addEventListener("click", (event) => { const box = bar.getBoundingClientRect(); seek(((event.clientX - box.left) / box.width) * DURATION); });
+  document.addEventListener("keydown", (event) => { if (event.code === "Space" && event.target === document.body) { event.preventDefault(); toggle(); } });
+
+  if (render) {
+    document.body.style.background = token("--bg");
+    document.querySelector(".page").style.cssText = "max-width:none;padding:0";
+    for (const id of ["controls", "chapters"]) document.getElementById(id).style.display = "none";
+    document.querySelector(".top").style.display = "none";
+    document.querySelector(".note").style.display = "none";
+    frame.style.cssText = "width:1280px;height:720px;border:0;border-radius:0";
+    stage.style.transform = "none";
+  }
+  // Reduced motion: start paused on the first chapter's full frame instead of moving.
+  seek(reduced && !render ? s(14) : 0);
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

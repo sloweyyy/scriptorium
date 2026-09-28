@@ -35,6 +35,16 @@ actually fetched. Each of those rules has a mutation test that breaks it on purp
 be caught.
 
 <p align="center">
+  <a href="https://scriptorium-teammate.vercel.app/demo/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="site/demo/poster.png">
+      <img src="site/demo/poster-light.png" width="720" alt="The 80-second demo: a cited answer in Slack, with its sources">
+    </picture>
+  </a><br>
+  <sub><a href="https://scriptorium-teammate.vercel.app/demo/">▶ Watch the 80-second demo</a>: cited answers, gaps that become tickets, approvals, and docs that learn with permission.</sub>
+</p>
+
+<p align="center">
   <img src="docs/architecture.svg" alt="Triggers pass a gate into an agent turn. Every tool call goes through the policy: reads fetch records the answer must cite; writes wait on an approval card for a named approver, then run exactly once. Everything is recorded in a hash-chained audit log.">
 </p>
 

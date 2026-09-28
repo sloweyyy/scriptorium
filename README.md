@@ -165,7 +165,7 @@ the trigger, policy decisions, tool calls, approvals, the reply, and what it cos
 pnpm typecheck            # strict TypeScript, no build step (tsx runs source)
 pnpm eval                 # 500+ deterministic checks, no API key needed
 RUN_LLM_EVALS=1 pnpm eval # plus live checks: grounded Q&A, red team, answer golden set per model
-pnpm mutate               # sabotage each of 43 guardrails; its eval must catch it
+pnpm mutate               # sabotage each of 44 guardrails; its eval must catch it
 pnpm auditlog verify      # the audit log's hash chain holds
 ```
 

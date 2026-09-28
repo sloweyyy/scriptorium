@@ -73,6 +73,13 @@ export interface IssueState {
    * draft than anyone has seen. Publishing requires the saved draft to hash to this.
    */
   postedDraftHash?: string;
+  /**
+   * Follow-ups a publish still owes: the Slack announcement and the lesson proposal. Set
+   * when the publish lands, each cleared once done, so a failure between them (the
+   * "Published" comment, say) is finished by the retry instead of skipped as "already done".
+   */
+  announcePending?: boolean;
+  lessonPending?: boolean;
   /** A comment whose command keeps failing: retried, but not forever. */
   failing?: { commentId: string; attempts: number };
   appliedLessons?: string[];

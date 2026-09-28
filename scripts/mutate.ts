@@ -156,6 +156,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira.test.ts"],
   },
   {
+    control: "a publish's lesson proposal is owed until it happens, even if a step before it failed",
+    file: "apps/agents/src/scribe-jira/publishing.ts",
+    find: "  if (ctx.state.get(key)?.lessonPending) {",
+    replace: "  if (!alreadyPublished) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

@@ -81,7 +81,7 @@ export async function runPublish(
   await organizePublishedDoc(ctx.vault, relPath);
   // docsPushed resets here: a republished revision has NOT reached the repo yet, and a
   // stale true would let the next approve report success for a push that never happened.
-  await ctx.state.patch(key, { publishedPath: relPath, draftPublished: true, docsPushed: false });
+  await ctx.state.patch(key, { publishedPath: relPath, draftPublished: true, docsPushed: false, announcePending: true, lessonPending: true });
   // Approved and written, so the column says so before the egress — which may fail.
   await moveTo(ctx, key, ctx.config.jira.approvedStatus, issueStatus(issue));
 
@@ -137,18 +137,23 @@ export async function runPublish(
     );
   }
 
-  // The announcement and the lesson proposal are a different matter from the column:
-  // those already happened on the first approval, and repeating them is noise.
-  if (alreadyPublished) return;
+  // The announcement and the lesson proposal happen once per publish: repeating them is
+  // noise, and skipping them because the publish itself is done lost them whenever
+  // something failed in between. Each is owed until it has happened.
+  if (ctx.state.get(key)?.announcePending) {
+    await announcePublished(ctx.config, {
+      relPath,
+      feature: known?.docSlug ?? relPath,
+      issueKey: key,
+      issueUrl: ctx.client.issueUrl(key),
+      approvedBy,
+      appliedLessons: known?.appliedLessons,
+    });
+    await ctx.state.patch(key, { announcePending: false });
+  }
 
-  await announcePublished(ctx.config, {
-    relPath,
-    feature: known?.docSlug ?? relPath,
-    issueKey: key,
-    issueUrl: ctx.client.issueUrl(key),
-    approvedBy,
-    appliedLessons: known?.appliedLessons,
-  });
-
-  await proposeLesson(ctx, key, approvedBy);
+  if (ctx.state.get(key)?.lessonPending) {
+    await proposeLesson(ctx, key, approvedBy);
+    await ctx.state.patch(key, { lessonPending: false });
+  }
 }

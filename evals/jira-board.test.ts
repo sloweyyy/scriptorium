@@ -55,6 +55,8 @@ let loseNextCommentResponse = false;
 let failCommentPostIn = 0;
 /** Refuse every "Revised draft" comment, the way a 400 would, until turned off. */
 let failRevisionPosts = false;
+/** Fail the next comment post containing this text, once. */
+let failNextPostContaining: string | undefined;
 
 let tmpRoot: string;
 let vault: Vault;
@@ -138,6 +140,10 @@ function stubJira(): void {
       const body = JSON.parse(String(init?.body ?? "{}")) as { body: string; properties?: unknown };
       // Jira's own limit: a longer comment is refused, every time.
       if (body.body.length > 32_767) return new Response(JSON.stringify({ errors: { comment: "too long" } }), { status: 400 });
+      if (failNextPostContaining && body.body.includes(failNextPostContaining)) {
+        failNextPostContaining = undefined;
+        throw new TypeError("fetch failed: connect ECONNRESET");
+      }
       if (failRevisionPosts && body.body.includes("Revised draft")) return new Response(JSON.stringify({ errorMessages: ["bad request"] }), { status: 400 });
       const posted: StubComment = {
         id: `bot-${comments.length + 1}`,
@@ -194,6 +200,7 @@ beforeEach(async () => {
   await vault.ensure();
   comments = [];
   failRevisionPosts = false;
+  failNextPostContaining = undefined;
   moves = [];
   changelog = [];
   assignments = [];
@@ -710,6 +717,22 @@ describe("a lesson learned on one ticket shapes the next (TODO #6)", () => {
     const prompt = await draftDoc2();
     expect(prompt).toContain(RULE);
     expect(comments.some((comment) => comment.body.includes("L-001"))).toBe(true);
+  });
+
+  it("a publish whose 'Published' comment failed still proposes its lesson on the retry, once", async () => {
+    const proposals = () => comments.filter((comment) => comment.body.includes("Proposed house rule L-001"));
+    failNextPostContaining = "Published";
+    await learnOnDoc1(null);
+    expect(proposals()).toHaveLength(0);
+    expect(await vault.listNotes("docs")).toHaveLength(1);
+    // The next poll retries the approve: the doc is already published, the follow-ups are not.
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T20:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(proposals()).toHaveLength(1);
+    expect(await vault.listNotes("docs")).toHaveLength(1);
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T21:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(proposals()).toHaveLength(1);
   });
 
   it("a lesson left proposed, or rejected, never reaches DOC-2", async () => {

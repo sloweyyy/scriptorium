@@ -41,6 +41,16 @@ describe("runtime controls", () => {
     expect(applyAdminCommand({ ...OPEN, denyTools: ["jira_comment"] }, "status", "slack:UADMIN", now, []).message).toContain("off: jira_comment");
   });
 
+  it("a delegation must end in the future, at most 60 days away, and never be to oneself", () => {
+    const now = new Date("2026-09-27T12:00:00Z");
+    const delegate = (args: string) => applyAdminCommand(OPEN, `delegate ${args}`, "slack:UADMIN", now, []);
+    expect(delegate("<@UPM> <@UALT> 2026-10-10")).toHaveProperty("control");
+    expect(delegate("<@UPM> <@UALT> 2026-11-25")).toHaveProperty("control"); // 59 days
+    for (const refused of ["<@UPM> <@UALT> 2026-09-26", "<@UPM> <@UALT> 2026-11-30", "<@UPM> <@UALT> 2027-09-27", "<@UPM> <@UPM> 2026-10-10", "<@UPM> <@UALT> soon"]) {
+      expect(delegate(refused), refused).not.toHaveProperty("control");
+    }
+  });
+
   it("a delegation adds the stand-in only where the away approver is listed, ends by itself, and keeps separation of duties", () => {
     const envelope: Envelope = {
       agent: "Teammate",

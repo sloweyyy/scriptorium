@@ -36,10 +36,20 @@ export async function postDigestOnce(
   now: Date,
   produce: () => Promise<string>,
   post: (text: string) => Promise<void>,
+  /**
+   * Did this week's digest already land? Asked only when a crash left the op in progress:
+   * without it, a crash between the post and the ledger's "done" posted the digest twice.
+   */
+  landed?: () => Promise<boolean>,
 ): Promise<{ posted: boolean }> {
-  const { replayed } = await once(ledger, opKey("digest", channel, isoWeek(now)), async () => {
-    await post(await produce());
-    return true;
-  });
+  const { replayed } = await once(
+    ledger,
+    opKey("digest", channel, isoWeek(now)),
+    async () => {
+      await post(await produce());
+      return true;
+    },
+    landed ? { probe: async () => ((await landed()) ? true : undefined) } : {},
+  );
   return { posted: !replayed };
 }

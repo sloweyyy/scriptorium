@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { digestDue, isoWeek, postDigestOnce } from "@scriptorium/agents";
-import { MemoryEffectLedger } from "@scriptorium/runtime";
+import { MemoryEffectLedger, opKey } from "@scriptorium/runtime";
 
 /** The weekly digest: due at the right hour, and posted once per week however often it's checked. */
 describe("weekly digest", () => {
@@ -35,5 +35,21 @@ describe("weekly digest", () => {
     await expect(postDigestOnce(ledger, "C1", new Date("2026-09-28T09:00:00Z"), async () => { throw new Error("refused"); }, async (text) => void posts.push(text))).rejects.toThrow();
     await postDigestOnce(ledger, "C1", new Date("2026-09-28T10:00:00Z"), async () => "ok", async (text) => void posts.push(text));
     expect(posts).toEqual(["ok"]);
+  });
+
+  it("a crash between the post and the ledger's done is not a second digest: the post is found", async () => {
+    const ledger = new MemoryEffectLedger();
+    const now = new Date("2026-09-28T09:00:00Z");
+    // What a crash leaves: the op started, the digest in the channel, no "done".
+    await ledger.put({ op: opKey("digest", "C1", isoWeek(now)), status: "in-progress", startedAt: now.toISOString() });
+    const posts: string[] = [];
+    const inChannel = true;
+    expect(await postDigestOnce(ledger, "C1", now, async () => "again", async (text) => void posts.push(text), async () => inChannel)).toEqual({ posted: false });
+    expect(posts).toEqual([]);
+    // Not found (the crash came before the post): it is produced and posted.
+    const fresh = new MemoryEffectLedger();
+    await fresh.put({ op: opKey("digest", "C1", isoWeek(now)), status: "in-progress", startedAt: now.toISOString() });
+    expect(await postDigestOnce(fresh, "C1", now, async () => "posted", async (text) => void posts.push(text), async () => false)).toEqual({ posted: true });
+    expect(posts).toEqual(["posted"]);
   });
 });

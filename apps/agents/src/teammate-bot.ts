@@ -19,7 +19,7 @@ import { teammateConfig } from "./agents/teammate";
 import { gapTicketOpener } from "./gap-ticket";
 import { citationLinks, resolveCitations } from "./citations";
 import { answerBlocks, contextBlocks } from "./slack-format";
-import { digestDue, postDigestOnce } from "./digest";
+import { digestDue, isoWeek, postDigestOnce } from "./digest";
 import { runTeammateTurn } from "./teammate";
 import { ASKING_SUBTYPES, capQuestion, formatReply, helpText, isHelpRequest, mentionToEvent, progressText, threadContext, type SlackMention } from "./teammate-bot/messages";
 import { sharesScribeAccount, teammateConnectorTools } from "./teammate-bot/tools";
@@ -88,6 +88,10 @@ export interface TeammateJira {
   client: JiraClient;
   accountId: string;
 }
+
+/** Tags on the Teammate's scheduled posts, so a retry after a crash can find one that landed. */
+const DIGEST_EVENT_TYPE = "scriptorium_digest";
+const NUDGE_EVENT_TYPE = "scriptorium_approval_nudge";
 
 /** Slack's names for 👎. */
 const THUMBS_DOWN = new Set(["-1", "thumbsdown"]);
@@ -612,10 +616,29 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         if (!paused && nudgeMs > 0 && now.getTime() - Date.parse(request.requestedAt) >= nudgeMs) {
           const approvers = (envelope.tools[request.tool]?.approvers ?? []).filter((id) => id.startsWith("slack:")).map((id) => `<@${id.slice("slack:".length)}>`);
           if (!approvers.length) continue;
-          await once(ledger, opKey("teammate.card.nudged", request.id), async () => {
-            await slack.chat.postMessage({ channel: card.channel, thread_ts: card.ts, text: `⏰ Still waiting for an approver: ${approvers.join(", ")}. It expires <!date^${Math.floor(Date.parse(request.expiresAt) / 1000)}^{date_short_pretty}|${request.expiresAt.slice(0, 10)}>.` });
-            return true;
-          }).catch(() => undefined);
+          await once(
+            ledger,
+            opKey("teammate.card.nudged", request.id),
+            async () => {
+              await slack.chat.postMessage({
+                channel: card.channel,
+                thread_ts: card.ts,
+                text: `⏰ Still waiting for an approver: ${approvers.join(", ")}. It expires <!date^${Math.floor(Date.parse(request.expiresAt) / 1000)}^{date_short_pretty}|${request.expiresAt.slice(0, 10)}>.`,
+                metadata: { event_type: NUDGE_EVENT_TYPE, event_payload: { request: request.id } },
+              });
+              return true;
+            },
+            {
+              // A crash between the post and the ledger's "done" must not nudge twice.
+              probe: async () => {
+                const replies = await slack.conversations.replies({ channel: card.channel, ts: card.ts, include_all_metadata: true, limit: 200 });
+                const found = (replies.messages ?? []).some(
+                  (message) => message.metadata?.event_type === NUDGE_EVENT_TYPE && (message.metadata.event_payload as { request?: string } | undefined)?.request === request.id,
+                );
+                return found ? true : undefined;
+              },
+            },
+          ).catch(() => undefined);
         }
       }
     },
@@ -669,7 +692,14 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
             return formatReply(reply, currentRunId());
           },
           async (text) => {
-            await slack.chat.postMessage({ channel: digestChannel, text: `*Weekly digest*\n${text}` });
+            await slack.chat.postMessage({ channel: digestChannel, text: `*Weekly digest*\n${text}`, metadata: { event_type: DIGEST_EVENT_TYPE, event_payload: { week: isoWeek(now) } } });
+          },
+          // Asked after a crash mid-post: is this week's tagged digest already in the channel?
+          async () => {
+            const history = await slack.conversations.history({ channel: digestChannel, oldest: String(Math.floor(now.getTime() / 1000) - 8 * 86_400), include_all_metadata: true, limit: 200 });
+            return (history.messages ?? []).some(
+              (message) => message.metadata?.event_type === DIGEST_EVENT_TYPE && (message.metadata.event_payload as { week?: string } | undefined)?.week === isoWeek(now),
+            );
           },
         ),
       );
@@ -833,8 +863,9 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
     });
   }
 
-  // The weekly digest: checked hourly, posted once per ISO week (the effects ledger makes a
-  // restart or a second instance a no-op).
+  // The weekly digest: checked hourly, posted once per ISO week. The effects ledger makes a
+  // restart a no-op, and a crash mid-post is found by its tag. The ledger's lock is per
+  // process, so a second instance at once is NOT covered: run one.
   const digestCheck = (): void => {
     void core.checkDigest().catch((error) => console.warn(`[teammate] digest: ${error instanceof Error ? error.message : error}`));
     void core.checkApprovals().catch((error) => console.warn(`[teammate] approvals: ${error instanceof Error ? error.message : error}`));

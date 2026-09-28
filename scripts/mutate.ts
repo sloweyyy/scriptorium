@@ -296,6 +296,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-e2e.test.ts"],
   },
   {
+    control: "a nudge a crash left posted is found, not posted twice",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "                return found ? true : undefined;",
+    replace: "                return found ? undefined : undefined;",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "a digest a crash left posted is found, not posted twice",
+    file: "apps/agents/src/digest.ts",
+    find: "    landed ? { probe: async () => ((await landed()) ? true : undefined) } : {},",
+    replace: "    {},",
+    evals: ["evals/digest.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

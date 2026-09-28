@@ -149,6 +149,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "every comment on a long ticket is read, not just the first page",
+    file: "packages/jira/src/client.ts",
+    find: "      startAt += page.length;\n",
+    replace: "      break;\n",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

@@ -11,7 +11,7 @@ import {
   say,
   type Ctx,
 } from "./context";
-import { runDraft, runRevise } from "./drafting";
+import { hashDraft, repostDraft, runDraft, runRevise } from "./drafting";
 import { runLessonDecision } from "./lessons";
 import { runPublish } from "./publishing";
 import { dueForRemoteLinkCheck, lastDraftAttachment, remoteLinkFingerprint, sourceFingerprint } from "./source";
@@ -106,6 +106,9 @@ async function recoverState(ctx: Ctx, issue: JiraIssue): Promise<IssueState> {
       // can actually see, rather than quietly starting a different one.
       const bytes = await ctx.client.downloadAttachment(attached.attachment);
       await ctx.state.saveDraft(key, bytes.toString("utf8"));
+      // It came off the ticket, so it IS the draft on the ticket: approvable as it stands.
+      patch.postedDraftHash = hashDraft(bytes.toString("utf8"));
+      if (attached.attachment.created) patch.draftPostedAt = attached.attachment.created;
     } catch {
       // The attachment is still proof that a draft exists; runRevise force-drafts when the
       // local copy is missing, so a failed download degrades to a redraft, not to silence.
@@ -284,7 +287,7 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
     // Someone else's conversation: on a mention-only ticket the agent has never taken part
     // in, plain prose is people talking to each other and must not trigger a revise.
     // Commands and mentions still act — being answerable is the reason for watching at all.
-    if (command.kind === "ignore" || (command.kind === "feedback" && !autoDraft && !engaged(ctx.state.get(key)))) {
+    if (command.kind === "ignore" || ((command.kind === "feedback" || command.kind === "too-long") && !autoDraft && !engaged(ctx.state.get(key)))) {
       await ctx.state.markProcessed(key, [comment.id]);
       continue;
     }
@@ -316,6 +319,13 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
           break;
         case "help":
           await say(ctx, key, HELP);
+          break;
+        case "too-long":
+          await say(
+            ctx,
+            key,
+            `That comment is ${command.length.toLocaleString("en-US")} characters, far longer than feedback on a draft, so I haven't revised anything. Tell me in a few sentences what to change, or attach the material as a file.`,
+          );
           break;
         case "unclear":
           // Neither published nor rewritten: a near-miss on the one irreversible command
@@ -357,6 +367,13 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
   // human already engaged the agent here. Never on a quietly adopted ticket.
   const wanted = autoDraft || engaged(ctx.state.get(key));
   if (wanted && !ctx.state.get(key)?.hasDraft) await runDraft(ctx, issue);
+  // A first draft saved but never posted (its comment failed): `hasDraft` kept every later
+  // tick from drafting again, so it sat unseen until someone commented. Post it as it is.
+  const saved = ctx.state.get(key);
+  if (wanted && saved?.hasDraft && saved.draftUnposted) {
+    const draft = await ctx.state.readDraft(key);
+    if (draft) await repostDraft(ctx, key, draft);
+  }
 
   const approvedStatus = ctx.config.jira.approvedStatus.toLowerCase();
   const movedToApproved = status.toLowerCase() === approvedStatus && (lastStatusAtTickStart ?? "").toLowerCase() !== approvedStatus;
@@ -375,19 +392,30 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
       // and put the column back so the board doesn't claim an approval that didn't count.
       await say(ctx, key, allowed.reason);
       await moveTo(ctx, key, ctx.config.jira.inReviewStatus, ctx.config.jira.approvedStatus);
-    } else if (revisedThisTick) {
-      // Dragged to Approved while feedback was still being applied: the column was set
-      // for the old draft. Put it back in review with the new one.
+    } else if (revisedThisTick || !approvesCurrentDraft(mover?.created, ctx.state.get(key)?.draftPostedAt)) {
+      // Dragged to Approved while feedback was still being applied, or before the draft now
+      // on the ticket was posted: the column was set for an older draft. Put it back in
+      // review with the new one. The same rule as a comment approval, by the move's time.
       await holdUnseenRevision();
-      await moveTo(ctx, key, ctx.config.jira.inReviewStatus, ctx.state.get(key)?.lastStatus);
+      // Where the ticket is now: the agent's own move if it revised this tick, else where it
+      // was dragged (the ledger's baseline deliberately doesn't hold a drag it didn't see).
+      await moveTo(ctx, key, ctx.config.jira.inReviewStatus, revisedThisTick ? ctx.state.get(key)?.lastStatus : status);
     } else {
       await runPublish(ctx, issue, mover?.name ?? mover?.accountId ?? "a Jira approver", { quietWhenPublished: true });
     }
   }
 
   const refreshed = await ctx.client.getIssue(key).catch(() => issue);
+  // The baseline is what this tick saw or did: the status it started from, or its own
+  // latest move (moveTo records those). A change neither explains was made by someone
+  // while the tick ran, and is left for the next tick to see AS a change. Recording it
+  // as the baseline swallowed a drag to Approved made during a revise: the next tick saw
+  // Approved on both sides, published nothing, and told nobody.
+  const now = issueStatus(refreshed);
+  const agentsOwn = ctx.state.get(key)?.lastStatus ?? status;
+  const unseen = now.toLowerCase() !== status.toLowerCase() && now.toLowerCase() !== agentsOwn.toLowerCase();
   await ctx.state.patch(key, {
-    lastStatus: issueStatus(refreshed),
+    lastStatus: unseen ? agentsOwn : now,
     lastUpdated: refreshed.fields.updated,
     lastError: undefined,
   });

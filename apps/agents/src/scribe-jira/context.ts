@@ -1,6 +1,7 @@
 import { opKey, once, type EffectLedger } from "@scriptorium/runtime";
 import type { AppConfig, Vault } from "@scriptorium/core";
 import {
+  issueStatus,
   markdownToJira,
   type IssueState,
   type JiraClient,
@@ -120,6 +121,20 @@ export function errorMessage(error: unknown): string {
 export async function moveTo(ctx: Ctx, key: string, statusName: string, currentStatus?: string): Promise<void> {
   if (!statusName || currentStatus?.toLowerCase() === statusName.toLowerCase()) return;
   try {
+    // `currentStatus` is what the caller last saw, which may be a model call ago. A human who
+    // dragged the ticket to Approved in the meantime must not be silently undone by the
+    // agent's bookkeeping move: leave it where they put it, and the tick's end leaves the
+    // change for the next tick to judge as an approval (and to hold, if it predates the draft).
+    const approved = ctx.config.jira.approvedStatus.toLowerCase();
+    const live = await ctx.client
+      .getIssue(key)
+      .then((fresh) => issueStatus(fresh))
+      .catch(() => undefined);
+    if (live?.toLowerCase() === statusName.toLowerCase()) return;
+    if (live?.toLowerCase() === approved && (currentStatus ?? "").toLowerCase() !== approved && statusName.toLowerCase() !== approved) {
+      console.warn(`[scribe] ${key}: someone moved it to "${ctx.config.jira.approvedStatus}" while I worked, so I'm not moving it to "${statusName}"`);
+      return;
+    }
     const moved = await ctx.client.transitionTo(key, statusName);
     if (moved) await ctx.state.patch(key, { lastStatus: statusName });
     // A workflow that does not offer the column is a legitimate configuration, but silence

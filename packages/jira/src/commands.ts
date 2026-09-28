@@ -16,13 +16,15 @@ export type JiraCommand =
   /** Someone said the agent's name and nothing more useful — answer, whatever the state. */
   | { kind: "wake" }
   | { kind: "feedback"; text: string }
+  /** Feedback far longer than a review comment (a pasted log or document): asked to summarise, not revised from. */
+  | { kind: "too-long"; length: number }
   /**
    * Reads like an approval but is not one exactly (`LGTM`, `approve L-001`, `approve the
    * intro but…`). Publishing is the one irreversible thing a comment can do, so a guess is
    * never made in either direction: not published, not rewritten — asked.
    */
   | { kind: "unclear"; suggestion: string }
-  | { kind: "ignore"; reason: "own-comment" | "empty" | "other-agent" | "addressed-to-another-agent" };
+  | { kind: "ignore"; reason: "own-comment" | "empty" | "other-agent" | "addressed-to-another-agent" | "no-words" };
 
 /** What the parser needs to know about the ticket to resolve a mention. */
 export interface CommandContext {
@@ -170,5 +172,15 @@ export function parseCommand(comment: JiraComment, botAccountId?: string, contex
 
   if (mentioned && (!context?.hasDraft || mentionIsTheWholeMessage(text))) return { kind: "wake" };
 
+  // Nothing to act on: punctuation, a pasted screenshot's markup (`!shot.png|thumbnail!`),
+  // an attachment link. Each used to cost a full revise from an instruction with no words.
+  const words = text.replace(/![^!\n]+!/g, "").replace(/\[\^[^\]]+\]/g, "");
+  if (!/[\p{L}\p{N}]/u.test(words)) return { kind: "ignore", reason: "no-words" };
+  // Uncapped, a 200 KB paste went to the model and into the state file for good.
+  if (text.length > MAX_FEEDBACK_CHARS) return { kind: "too-long", length: text.length };
+
   return { kind: "feedback", text };
 }
+
+/** A review comment, however thorough, fits in this. */
+export const MAX_FEEDBACK_CHARS = 8_000;

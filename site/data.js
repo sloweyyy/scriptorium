@@ -4,10 +4,10 @@ window.SITE = {
   updated: "28 September 2026",
 
   stats: [
-    { value: "500+", label: "evals, deterministic, on every commit" },
-    { value: "39", label: "guardrails proven by mutation testing" },
+    { value: "540+", label: "evals, deterministic, on every commit" },
+    { value: "52", label: "guardrails proven by mutation testing" },
     { value: "30+", label: "tools, every write approve-tier" },
-    { value: "9", label: "reviewed pull requests merged" },
+    { value: "11", label: "reviewed pull requests merged" },
   ],
 
   capabilities: [
@@ -23,6 +23,7 @@ window.SITE = {
     { title: "Confluence, whole trees", text: "Search, read pages, walk page trees and read text attachments, with every page and child checked against the allowed spaces.", where: "Confluence" },
     { title: "Reminders", text: "\"Remind us Friday at 9\" is approved once for its exact text, channel and time, then posted once, escaped, and only in the channel that asked.", where: "Slack" },
     { title: "An approver's inbox", text: "The App Home tab lists what's waiting for your approval, linked to each card. Requests from private conversations aren't described there.", where: "Slack App Home" },
+    { title: "Answers that get better", text: "A thumbs-down on an answer flags it for review as a test case, and a golden set grades every model's answers: the right sources cited, the right facts stated, and a clean \"I don't know\" when the docs don't say.", where: "Slack, evals" },
     { title: "Team memory", text: "It remembers only what a human approved, scoped to a person, a channel or everyone. Memories expire and are signed.", where: "human-gated" },
     { title: "Weekly digest", text: "A cited summary of what moved in Jira and which doc gaps opened, posted exactly once a week.", where: "scheduled" },
     { title: "Docs from PRDs (Scribe)", text: "The original agent drafts user docs from a PRD and designs on a Jira ticket, revises on feedback, and publishes only on approval.", where: "Jira, human-gated" },
@@ -36,6 +37,7 @@ window.SITE = {
     { title: "Fail closed", text: "Unset means less. An unreadable control file means paused, a truncated model reply isn't an answer, and a restriction it can't read gets no reply." },
     { title: "Held to the conversation", text: "It reads only the thread or channel it was asked in, answers internal Jira comments at the same visibility, and plans can't escape those bounds." },
     { title: "Stop it now", text: "Admins can pause it, make it read-only, or switch off a single tool, at once and without a redeploy. A pause stops approved-but-pending work too." },
+    { title: "Erase a person, keep the record", text: "On request, everything kept about one person is erased: their words in the audit log, their memories, their pending requests. The log's chain still verifies, and who approved a write is never erased." },
     { title: "A record you can check", text: "The audit log is hash-chained: an edited, removed or reordered line is detected. A run viewer shows what each answer did and cost." },
   ],
 
@@ -49,9 +51,12 @@ window.SITE = {
     { when: "27 Sep", pr: 12, title: "Plans, reminders, the approvals inbox", text: "One approval for a multi-step plan, approved reminders, sprint reports, release notes, Confluence page trees, /teammate and the File-as-a-ticket shortcut, and an App Home inbox.", tags: ["plans", "reminders", "App Home"] },
     { when: "27 Sep, late", pr: 13, title: "Production readiness", text: "An admin kill switch, waiting out rate limits, a hash-chained audit log, Confluence attachments, bounded lists that say when they stopped short, and a DM scope fix.", tags: ["kill switch", "audit", "rate limits"] },
     { when: "28 Sep", pr: 14, title: "A project page and an open-source README", text: "This page, with its architecture diagram, favicon and social card, and a README rewritten for an open-source project, plus CONTRIBUTING and SECURITY policies.", tags: ["site", "docs"] },
+    { when: "28 Sep", pr: 15, title: "Public docs, private notes", text: "Published docs go to a public docs repo and internal notes (PRDs, gaps, house rules) to a separate private vault repo, each with its own deploy key and no fallback from one to the other.", tags: ["publishing", "security"] },
+    { when: "28 Sep", pr: 16, title: "Operable by someone who didn't build it", text: "A setup doctor, signing-key rotation, a fallback model, approval nudges and delegation to a stand-in, /metrics, and erasing one person on request without breaking the audit chain. Plus an answer golden set per model, and a thumbs-down on an answer flags it as a new test case.", tags: ["doctor", "privacy", "evals", "approvals"] },
   ],
 
   findings: [
+    { sev: "High", issue: "If a revised draft's comment failed to post (a draft too long for Jira, say), approving the draft on the ticket published the unseen revision.", fix: "Publishing requires the saved draft to be exactly the one on the ticket. If it isn't, it's posted again and needs a new approval. Long drafts are shortened in the comment and attached in full." },
     { sev: "High", issue: "A question in an internal Jira comment got a public reply, visible to customers.", fix: "Replies copy the comment's visibility. A restriction it can't read gets no reply at all." },
     { sev: "High", issue: "A multi-step plan's card showed only the first 400 characters, so a later step's comment body could be approved unseen.", fix: "The card lists every step and every argument. A plan too long for one card is refused, never cut." },
     { sev: "High", issue: "A plan could schedule reminders in channels other than the one that asked.", fix: "The per-conversation checks are one function, applied to single calls and to every plan step alike." },

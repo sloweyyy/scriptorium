@@ -26,6 +26,18 @@ describe("jira comment commands", () => {
     expect(parseCommand({ ...own, author: { accountId: "human-1", displayName: "R" } }, "bot-1").kind).toBe("feedback");
   });
 
+  it("acts on nothing without words, and asks for a summary of a wall of text", () => {
+    for (const body of [".", "… !", "!screenshot-2026-09-28.png|thumbnail!", "[^export.pdf]", "!a.png! !b.png!"]) {
+      expect(parseCommand(comment(body), "bot-1"), body).toEqual({ kind: "ignore", reason: "no-words" });
+    }
+    // A screenshot WITH words is feedback, and so is a short one.
+    expect(parseCommand(comment("match this !mock-v2.png|thumbnail!"), "bot-1").kind).toBe("feedback");
+    expect(parseCommand(comment("ok"), "bot-1").kind).toBe("feedback");
+    expect(parseCommand(comment("?"), "bot-1").kind).toBe("help");
+    const wall = "Log line from the incident export. ".repeat(400);
+    expect(parseCommand(comment(wall), "bot-1")).toEqual({ kind: "too-long", length: wall.trim().length });
+  });
+
   it("recognizes the approval vocabulary and nothing looser", () => {
     expect(parseCommand(comment("approve"), "bot-1").kind).toBe("approve-doc");
     expect(parseCommand(comment("Approve the draft"), "bot-1").kind).toBe("approve-doc");
@@ -243,6 +255,31 @@ describe("jira client", () => {
 
   const client = (): JiraClient =>
     new JiraClient({ baseUrl: "https://example.atlassian.net", email: "a@b.c", apiToken: "t", projectKey: "DOC" });
+
+  it("reads every comment on a long ticket, paged, and stops on a server that ignores paging", async () => {
+    const all = Array.from({ length: 250 }, (_, index) => ({ id: String(index + 1), body: `c${index + 1}`, created: "2026-09-28T00:00:00.000+0000" }));
+    vi.stubGlobal("fetch", async (url: string) => {
+      const query = new URL(String(url)).searchParams;
+      const startAt = Number(query.get("startAt") ?? 0);
+      const max = Number(query.get("maxResults") ?? 50);
+      return new Response(JSON.stringify({ startAt, maxResults: max, total: all.length, comments: all.slice(startAt, startAt + max) }), { status: 200 });
+    });
+    const comments = await client().listComments("DOC-1");
+    expect(comments).toHaveLength(250);
+    expect(comments.at(-1)?.body).toBe("c250");
+
+    // Past the cap, the newest are kept: that's where unread commands are.
+    expect((await client().listComments("DOC-1", 120)).map((comment) => comment.body).slice(0, 1)).toEqual(["c131"]);
+
+    // Same page every time, no total: read once, not forever.
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ comments: all.slice(0, 100) }), { status: 200 });
+    });
+    expect(await client().listComments("DOC-1")).toHaveLength(100);
+    expect(calls).toBe(2);
+  });
 
   it("falls back to the legacy search endpoint when the instance has no /search/jql", async () => {
     const calls: string[] = [];

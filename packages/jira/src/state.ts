@@ -67,6 +67,21 @@ export interface IssueState {
    * than this was given to an EARLIER draft and is not an approval of this one.
    */
   draftPostedAt?: string;
+  /**
+   * sha256 of the draft text that comment carried: set only once it is on the ticket. The
+   * saved draft is written before its comment is posted, so a failed post leaves a newer
+   * draft than anyone has seen. Publishing requires the saved draft to hash to this.
+   */
+  postedDraftHash?: string;
+  /** A first draft is saved and its comment hasn't posted yet (cleared once it has): the next tick posts it. */
+  draftUnposted?: boolean;
+  /**
+   * Follow-ups a publish still owes: the Slack announcement and the lesson proposal. Set
+   * when the publish lands, each cleared once done, so a failure between them (the
+   * "Published" comment, say) is finished by the retry instead of skipped as "already done".
+   */
+  announcePending?: boolean;
+  lessonPending?: boolean;
   /** A comment whose command keeps failing: retried, but not forever. */
   failing?: { commentId: string; attempts: number };
   appliedLessons?: string[];

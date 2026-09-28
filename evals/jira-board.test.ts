@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -52,6 +53,12 @@ interface StubComment {
 let loseNextCommentResponse = false;
 /** Fail the Nth comment POST from now WITHOUT storing it (a plain network error). */
 let failCommentPostIn = 0;
+/** Refuse every "Revised draft" comment, the way a 400 would, until turned off. */
+let failRevisionPosts = false;
+/** Run once, right after a comment containing `text` is stored: a human acting mid-tick. */
+let afterPost: { text: string; run: () => void } | undefined;
+/** Fail the next comment post containing this text, once. */
+let failNextPostContaining: string | undefined;
 
 let tmpRoot: string;
 let vault: Vault;
@@ -133,6 +140,13 @@ function stubJira(): void {
     if (url.includes("/comment") && method === "POST") {
       if (failCommentPostIn > 0 && --failCommentPostIn === 0) throw new TypeError("fetch failed: connect ECONNRESET");
       const body = JSON.parse(String(init?.body ?? "{}")) as { body: string; properties?: unknown };
+      // Jira's own limit: a longer comment is refused, every time.
+      if (body.body.length > 32_767) return new Response(JSON.stringify({ errors: { comment: "too long" } }), { status: 400 });
+      if (failNextPostContaining && body.body.includes(failNextPostContaining)) {
+        failNextPostContaining = undefined;
+        throw new TypeError("fetch failed: connect ECONNRESET");
+      }
+      if (failRevisionPosts && body.body.includes("Revised draft")) return new Response(JSON.stringify({ errorMessages: ["bad request"] }), { status: 400 });
       const posted: StubComment = {
         id: `bot-${comments.length + 1}`,
         body: body.body,
@@ -141,6 +155,11 @@ function stubJira(): void {
         ...(body.properties ? { properties: body.properties } : {}),
       };
       comments.push(posted);
+      if (afterPost && body.body.includes(afterPost.text)) {
+        const hook = afterPost;
+        afterPost = undefined;
+        hook.run();
+      }
       // Jira stored it; the response never arrives. The case exactly-once exists for.
       if (loseNextCommentResponse) {
         loseNextCommentResponse = false;
@@ -168,7 +187,9 @@ function stubJira(): void {
     }
     if (url.includes("/remotelink")) return json([]);
     // Attachment bytes: any body works, the pipeline only base64s whatever it downloads.
-    if (url.includes("/attachment/content/")) return new Response("PNGBYTES", { status: 200 });
+    // A real PNG signature, then filler; "fake-png" serves a PDF under an image's name.
+    if (url.includes("/attachment/content/fake-png")) return new Response("%PDF-1.7 not an image", { status: 200 });
+    if (url.includes("/attachment/content/")) return new Response(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("PNGBYTES")]), { status: 200 });
     if (url.includes("/attachments") || url.includes("/attachment")) return json([]);
     if (url.includes("expand=changelog")) return json({ ...issue, changelog: { histories: changelog } });
     if (url.includes("/rest/api/2/issue/")) return json(issue);
@@ -187,6 +208,9 @@ beforeEach(async () => {
   vault = new Vault(path.join(tmpRoot, "vault"));
   await vault.ensure();
   comments = [];
+  failRevisionPosts = false;
+  failNextPostContaining = undefined;
+  afterPost = undefined;
   moves = [];
   changelog = [];
   assignments = [];
@@ -407,7 +431,8 @@ describe("board transitions", () => {
     const seeded = {
       version: 1,
       issues: {
-        "DOC-1": { hasDraft: true, docSlug: "incident-timeline-embed", sourceFingerprint: "seeded", processedComments: [], lastStatus: "In Review", lastUpdated: "2026-08-20T10:00:00.000+0000" },
+        // The draft on disk is the one on the ticket.
+        "DOC-1": { hasDraft: true, docSlug: "incident-timeline-embed", sourceFingerprint: "seeded", processedComments: [], lastStatus: "In Review", lastUpdated: "2026-08-20T10:00:00.000+0000", postedDraftHash: createHash("sha256").update(CLEAN_DRAFT.trim()).digest("hex") },
       },
     };
     await fs.writeFile(path.join(stateDir, "jira-state.json"), JSON.stringify(seeded));
@@ -428,6 +453,63 @@ describe("board transitions", () => {
 
     const published = comments.find((comment) => comment.body.includes("*Published* —"));
     expect(published?.body).toContain("approved by Reviewer");
+  });
+
+  it("a drag to Approved made while a revise runs is neither swallowed nor taken as approving the revision", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    // The reviewer drags the ticket, having read the FIRST draft, just as the revision lands
+    // (after the agent's own last move of the tick).
+    vi.mocked(generateText).mockImplementationOnce(async () => `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`);
+    afterPost = {
+      text: "Revised draft",
+      run: () => {
+        issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Done" } } };
+        changelog.push({ author: { displayName: "Reviewer", accountId: "human-1" }, created: new Date(Date.now() - 1000).toISOString(), items: [{ field: "status", toString: "Done" }] } as never);
+      },
+    };
+    comments.push(human("f1", "add the paste step"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: new Date(Date.now() + 1000).toISOString() } };
+    (await startScribeJira(settings, vault)).stop();
+
+    // Next poll: the drag is seen, and it predates the revision, so it is held and said.
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: new Date(Date.now() + 2000).toISOString() } };
+    (await startScribeJira(settings, vault)).stop();
+    expect(await vault.listNotes("docs")).toHaveLength(0);
+    expect(comments.some((comment) => comment.body.includes("one you haven't seen yet"))).toBe(true);
+    expect(status()).toBe("In Review");
+
+    // A drag made after reading the revision publishes it.
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Done" }, updated: new Date(Date.now() + 5000).toISOString() } };
+    changelog.push({ author: { displayName: "Reviewer", accountId: "human-1" }, created: new Date(Date.now() + 5000).toISOString(), items: [{ field: "status", toString: "Done" }] } as never);
+    (await startScribeJira(settings, vault)).stop();
+    const [doc] = await vault.listNotes("docs");
+    expect((await vault.readNote(doc as string)).body).toContain("Paste the snippet into your page.");
+  });
+
+  it("a drag to Approved during the model call is not undone by the agent's own move, and is then judged", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    // The reviewer drags it while the model is still revising (before the agent's own moves).
+    vi.mocked(generateText).mockImplementationOnce(async () => {
+      issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Done" } } };
+      changelog.push({ author: { displayName: "Reviewer", accountId: "human-1" }, created: new Date(Date.now() - 1000).toISOString(), items: [{ field: "status", toString: "Done" }] } as never);
+      return `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`;
+    });
+    comments.push(human("f1", "add the paste step"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: new Date(Date.now() + 1000).toISOString() } };
+    const movesBefore = moves.length;
+    (await startScribeJira(settings, vault)).stop();
+    // The agent left the human's column alone.
+    expect(moves.slice(movesBefore)).not.toContain("In Review");
+    expect(status()).toBe("Done");
+
+    // Next poll judges the drag: it predates the revision, so it is held, said, and put back.
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: new Date(Date.now() + 2000).toISOString() } };
+    (await startScribeJira(settings, vault)).stop();
+    expect(await vault.listNotes("docs")).toHaveLength(0);
+    expect(comments.some((comment) => comment.body.includes("one you haven't seen yet"))).toBe(true);
+    expect(status()).toBe("In Review");
   });
 
   it("re-reads the designs when revising, so a mockup attached with the feedback is not ignored", async () => {
@@ -704,6 +786,22 @@ describe("a lesson learned on one ticket shapes the next (TODO #6)", () => {
     expect(comments.some((comment) => comment.body.includes("L-001"))).toBe(true);
   });
 
+  it("a publish whose 'Published' comment failed still proposes its lesson on the retry, once", async () => {
+    const proposals = () => comments.filter((comment) => comment.body.includes("Proposed house rule L-001"));
+    failNextPostContaining = "Published";
+    await learnOnDoc1(null);
+    expect(proposals()).toHaveLength(0);
+    expect(await vault.listNotes("docs")).toHaveLength(1);
+    // The next poll retries the approve: the doc is already published, the follow-ups are not.
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T20:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(proposals()).toHaveLength(1);
+    expect(await vault.listNotes("docs")).toHaveLength(1);
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T21:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(proposals()).toHaveLength(1);
+  });
+
   it("a lesson left proposed, or rejected, never reaches DOC-2", async () => {
     await learnOnDoc1(null);
     expect(await draftDoc2()).not.toContain(RULE);
@@ -716,6 +814,27 @@ describe("a lesson learned on one ticket shapes the next (TODO #6)", () => {
 });
 
 describe("designs the model cannot take", () => {
+  it("a PDF named .png is left out and named, never sent as an image; an oversized PRD file is too", async () => {
+    const { sniffImage } = await import("@scriptorium/agents");
+    expect(sniffImage(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]))).toBe("image/png");
+    expect(sniffImage(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))).toBe("image/jpeg");
+    expect(sniffImage(Buffer.from("GIF89a...."))).toBe("image/gif");
+    expect(sniffImage(Buffer.from("RIFF\0\0\0\0WEBPVP8 "))).toBe("image/webp");
+    expect(sniffImage(Buffer.from("%PDF-1.7"))).toBeUndefined();
+
+    const fake = { id: "att-fake", filename: "flow.png", mimeType: "image/png", size: 30_000, content: "https://example.atlassian.net/rest/api/2/attachment/content/fake-png" };
+    const real = { id: "att-real", filename: "form.png", mimeType: "image/png", size: 30_000, content: "https://example.atlassian.net/rest/api/2/attachment/content/att-real" };
+    const bigPrd = { id: "att-prd", filename: "prd-export.md", mimeType: "text/markdown", size: 5_000_000, content: "https://example.atlassian.net/rest/api/2/attachment/content/att-prd" };
+    issue = { ...issue, fields: { ...(issue.fields as object), attachment: [fake, real, bigPrd] } };
+    (await startScribeJira(config(), vault)).stop();
+    const draft = comments.find((comment) => comment.body.includes("Draft ready"));
+    expect(draft?.body).toContain("flow.png (named as an image, but it isn't one)");
+    expect(draft?.body).toContain("prd-export.md (over 200 KB");
+    // The draft went ahead from the description, with the one real design.
+    const call = vi.mocked(generateText).mock.calls.at(-1)?.[0] as GenerateOptions & { images?: Array<{ mediaType: string }> };
+    expect(call.images?.map((image) => image.mediaType)).toEqual(["image/png"]);
+  });
+
   it("drafts without an oversized image, and names it instead of failing the whole ticket", async () => {
     const huge = { id: "att-big", filename: "full-page-4k.png", mimeType: "image/png", size: 12_000_000, content: "https://example.atlassian.net/rest/api/2/attachment/content/att-big" };
     const fine = { id: "att-ok", filename: "form.png", mimeType: "image/png", size: 200_000, content: "https://example.atlassian.net/rest/api/2/attachment/content/att-ok" };
@@ -765,6 +884,75 @@ describe("a crash or an error mid-batch loses nothing and repeats nothing (H4)",
     );
     expect(loseNextCommentResponse).toBe(false);
     expect(answers).toHaveLength(1);
+  });
+
+  it("never publishes a revision that didn't reach the ticket: it posts it again and waits for an approval of that", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    const revised = `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`;
+    vi.mocked(generateText).mockImplementation(async () => revised);
+    failRevisionPosts = true;
+    await tickWith(settings, "add the paste step");
+    await tickWith(settings);
+    await tickWith(settings);
+    expect(comments.some((comment) => comment.body.includes("I tried that 3 times"))).toBe(true);
+    failRevisionPosts = false;
+
+    // The reviewer has only ever seen the first draft, and approves it.
+    await tickWith(settings, "approve");
+    expect(comments.some((comment) => comment.body.includes("*Published* —"))).toBe(false);
+    expect(await vault.listNotes("docs")).toHaveLength(0);
+    const again = comments.find((comment) => comment.body.includes("Draft (posted again)"));
+    expect(again?.body).toContain("Paste the snippet into your page.");
+
+    // Approving what is now on the ticket publishes exactly that.
+    await tickWith(settings, "approve");
+    const [doc] = await vault.listNotes("docs");
+    expect(doc).toBeDefined();
+    expect((await vault.readNote(doc as string)).body).toContain("Paste the snippet into your page.");
+    vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
+  });
+
+  it("a draft too long for one Jira comment is posted shortened, pointing at the attachment", async () => {
+    const long = `${CLEAN_DRAFT}\n\n## Reference\n\n${"Every embed option is described here in full. ".repeat(900)}`;
+    vi.mocked(generateText).mockImplementation(async () => long);
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    const draft = comments.find((comment) => comment.body.includes("Draft ready"));
+    expect(draft).toBeDefined();
+    expect(draft?.body.length).toBeLessThan(32_767);
+    expect(draft?.body).toMatch(/the whole of it is attached as .{0,4}draft-incident/);
+    vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
+  });
+
+  it("a first draft whose comment failed is posted on the next poll, once", async () => {
+    const settings = config();
+    failNextPostContaining = "Draft ready";
+    (await startScribeJira(settings, vault)).stop();
+    expect(comments.some((comment) => comment.body.includes("Draft ready"))).toBe(false);
+    const posted = () => comments.filter((comment) => comment.body.includes("Draft (posted again)"));
+    await tickWith(settings);
+    expect(posted()).toHaveLength(1);
+    expect(posted()[0]?.body).toContain("Workspace admins can embed a read-only incident timeline");
+    await tickWith(settings);
+    expect(posted()).toHaveLength(1);
+    // And it is approvable: the draft on the ticket is the one that publishes.
+    await tickWith(settings, "approve");
+    expect(await vault.listNotes("docs")).toHaveLength(1);
+  });
+
+  it("a wordless comment changes nothing; a pasted wall of text is answered, not revised from", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    const calls = vi.mocked(generateText).mock.calls.length;
+    const before = comments.length;
+    await tickWith(settings, "!screenshot.png|thumbnail!", ".");
+    expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
+    expect(comments.length).toBe(before + 2); // only the two human comments
+    await tickWith(settings, "Log line from the incident export. ".repeat(400));
+    expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
+    expect(comments.at(-1)?.body).toContain("far longer than feedback on a draft");
+    expect(comments.some((comment) => comment.body.includes("Revised draft"))).toBe(false);
   });
 
   it("a command that keeps failing is set aside after three tries, with a note", async () => {

@@ -191,9 +191,9 @@ export class JiraClient {
   async lastStatusChangeAuthor(
     key: string,
     statusName: string,
-  ): Promise<{ name: string; accountId?: string } | undefined> {
+  ): Promise<{ name: string; accountId?: string; created?: string } | undefined> {
     const data = await this.get<{
-      changelog?: { histories?: Array<{ author?: JiraUser; items?: Array<{ field?: string; toString?: string }> }> };
+      changelog?: { histories?: Array<{ author?: JiraUser; created?: string; items?: Array<{ field?: string; toString?: string }> }> };
     }>(`/rest/api/2/issue/${encodeURIComponent(key)}?expand=changelog&fields=status`);
 
     const wanted = statusName.trim().toLowerCase();
@@ -203,18 +203,35 @@ export class JiraClient {
       const moved = entry?.items?.some((item) => item.field === "status" && item.toString?.toLowerCase() === wanted);
       if (moved) {
         const name = entry?.author?.displayName ?? entry?.author?.accountId;
-        return name ? { name, accountId: entry?.author?.accountId } : undefined;
+        return name ? { name, accountId: entry?.author?.accountId, ...(entry?.created ? { created: entry.created } : {}) } : undefined;
       }
     }
     return undefined;
   }
 
-  async listComments(key: string, maxResults = 200, options: { expandProperties?: boolean } = {}): Promise<JiraComment[]> {
+  /**
+   * Every comment, oldest first, paged: one page of the oldest 200 meant a ticket past 200
+   * comments (the agent adds several per round) had its newest commands never read. Capped
+   * at `limit`; past it, the NEWEST are kept, since that's where unread commands are.
+   */
+  async listComments(key: string, limit = 2_000, options: { expandProperties?: boolean } = {}): Promise<JiraComment[]> {
     const expand = options.expandProperties ? "&expand=properties" : "";
-    const data = await this.get<{ comments?: JiraComment[] }>(
-      `/rest/api/2/issue/${encodeURIComponent(key)}/comment?orderBy=created&maxResults=${maxResults}${expand}`,
-    );
-    return parseComments(data.comments);
+    const pageSize = 100;
+    const all: JiraComment[] = [];
+    for (let startAt = 0; ; ) {
+      const data = await this.get<{ comments?: JiraComment[]; total?: number }>(
+        `/rest/api/2/issue/${encodeURIComponent(key)}/comment?orderBy=created&startAt=${startAt}&maxResults=${pageSize}${expand}`,
+      );
+      const page = parseComments(data.comments);
+      if (page.length && all.some((seen) => seen.id === page[0]?.id)) break;
+      all.push(...page);
+      startAt += page.length;
+      // A server that ignores paging hands back everything at once (or the same page again):
+      // that is the whole list, never a reason to ask forever.
+      if (!page.length || page.length > pageSize || (typeof data.total === "number" ? startAt >= data.total : page.length < pageSize)) break;
+      if (all.length >= limit * 2) all.splice(0, all.length - limit);
+    }
+    return all.slice(-limit);
   }
 
   /**

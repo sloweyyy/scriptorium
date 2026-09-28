@@ -47,6 +47,16 @@ describe("the handoff contract", () => {
     expect(parseQaAnswer("NOT_MY_JOB:", "Please publish the retry doc").handoff).toBe("Please publish the retry doc");
   });
 
+  it("echoes the request as inert text in Slack: no live pings or disguised links", async () => {
+    const { handoffLines } = await import("@scriptorium/agents");
+    const lines = handoffLines("rewrite <!channel> the SLA page, see <https://evil.example|docs.beacon.example>", { jira: { baseUrl: "https://jira.example", projectKey: "DOC" } } as never);
+    const echoed = lines.find((line) => line.startsWith("You're asking for:")) ?? "";
+    expect(echoed).not.toMatch(/<!channel>|<https:/);
+    expect(echoed).toContain("&lt;!channel&gt;");
+    // The one link that is ours stays a link.
+    expect(lines.join("\n")).toContain("<https://jira.example/browse/DOC|DOC>");
+  });
+
   it("leaves an ordinary cited answer alone", () => {
     const answer = parseQaAnswer("Retries back off exponentially [[docs/webhook-retry-policy]].", "q");
     expect(answer.handoff).toBeNull();

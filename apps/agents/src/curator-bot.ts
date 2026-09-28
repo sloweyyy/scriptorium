@@ -6,6 +6,7 @@ import { pushInternalPlane } from "./docs-repo";
 import { citationLinks, resolveCitations } from "./citations";
 import { answerBlocks, contextBlocks, progressLine, toSlackMrkdwn } from "./slack-format";
 import { stripMentions } from "./util";
+import { escapeMrkdwn } from "@scriptorium/connectors";
 
 /**
  * Curator in Slack.
@@ -129,6 +130,19 @@ class Progress {
   }
 }
 
+/** Curator's reply to a request to change documentation: it points at Scribe, and authors nothing. */
+export function handoffLines(handoff: string, config: Pick<AppConfig, "jira">): string[] {
+  return [
+    "*That's an edit, and I don't author documentation* — I only organize it and answer from it.",
+    // Echoed as text: it is the asker's request in the model's words, so a <!channel> or a
+    // <https://…|disguised> link in it must not go live.
+    `You're asking for: ${escapeMrkdwn(handoff)}`,
+    "",
+    "Scribe (Agent A) does that, on a Jira ticket, where a named human approves every word before it publishes.",
+    `Open a ticket on the <${config.jira.baseUrl}/browse/${config.jira.projectKey}|${config.jira.projectKey}> board and Scribe will pick it up.`,
+  ];
+}
+
 export async function startCuratorBot(config: AppConfig, vault: Vault): Promise<void> {
   const app = new App({
     token: config.curator.botToken,
@@ -172,13 +186,7 @@ export async function startCuratorBot(config: AppConfig, vault: Vault): Promise<
         // No gap note, no ticket. Curator opening one here would put a person's unverified
         // claim into Scribe's queue as a documented hole in the vault — the human opens
         // the ticket themselves, and the claim is theirs, on the record, in Jira.
-        const lines = [
-          "*That's an edit, and I don't author documentation* — I only organize it and answer from it.",
-          `You're asking for: ${answer.handoff}`,
-          "",
-          "Scribe (Agent A) does that, on a Jira ticket, where a named human approves every word before it publishes.",
-          `Open a ticket on the <${config.jira.baseUrl}/browse/${config.jira.projectKey}|${config.jira.projectKey}> board and Scribe will pick it up.`,
-        ];
+        const lines = handoffLines(answer.handoff, config);
         await say({
           thread_ts: threadTs,
           text: lines.join("\n"),

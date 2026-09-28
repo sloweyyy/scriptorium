@@ -212,6 +212,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira.test.ts"],
   },
   {
+    control: "a first draft whose comment failed is posted on the next poll",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "  if (wanted && saved?.hasDraft && saved.draftUnposted) {",
+    replace: "  if (false) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

@@ -925,6 +925,22 @@ describe("a crash or an error mid-batch loses nothing and repeats nothing (H4)",
     vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
   });
 
+  it("a first draft whose comment failed is posted on the next poll, once", async () => {
+    const settings = config();
+    failNextPostContaining = "Draft ready";
+    (await startScribeJira(settings, vault)).stop();
+    expect(comments.some((comment) => comment.body.includes("Draft ready"))).toBe(false);
+    const posted = () => comments.filter((comment) => comment.body.includes("Draft (posted again)"));
+    await tickWith(settings);
+    expect(posted()).toHaveLength(1);
+    expect(posted()[0]?.body).toContain("Workspace admins can embed a read-only incident timeline");
+    await tickWith(settings);
+    expect(posted()).toHaveLength(1);
+    // And it is approvable: the draft on the ticket is the one that publishes.
+    await tickWith(settings, "approve");
+    expect(await vault.listNotes("docs")).toHaveLength(1);
+  });
+
   it("a wordless comment changes nothing; a pasted wall of text is answered, not revised from", async () => {
     const settings = config();
     (await startScribeJira(settings, vault)).stop();

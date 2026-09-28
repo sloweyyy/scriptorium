@@ -73,6 +73,8 @@ export interface IssueState {
    * draft than anyone has seen. Publishing requires the saved draft to hash to this.
    */
   postedDraftHash?: string;
+  /** A first draft is saved and its comment hasn't posted yet (cleared once it has): the next tick posts it. */
+  draftUnposted?: boolean;
   /**
    * Follow-ups a publish still owes: the Slack announcement and the lesson proposal. Set
    * when the publish lands, each cleared once done, so a failure between them (the

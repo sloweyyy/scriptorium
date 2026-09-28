@@ -107,7 +107,7 @@ export async function repostDraft(ctx: Ctx, key: string, markdown: string): Prom
       "Reply with feedback in plain English and I'll revise, or comment `approve` to publish it.",
     ].join("\n"),
   );
-  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(markdown) });
+  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(markdown), draftUnposted: false });
   await audit(ctx.config.auditFile, { type: "jira.draft.reposted", actor: "scribe", issue: key });
 }
 
@@ -252,6 +252,7 @@ export async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: bo
   await ctx.state.saveDraft(key, result.markdown);
   await ctx.state.patch(key, {
     hasDraft: true,
+    draftUnposted: true,
     draftPublished: false,
     docSlug: slug,
     sourcePrd: `prd/${slug}`,
@@ -273,7 +274,7 @@ export async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: bo
       attachment: `draft-${slug}.md`,
     }),
   );
-  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(result.markdown) });
+  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(result.markdown), draftUnposted: false });
   // A draft exists and the next move is a human's — so it goes back to them, by name.
   await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
   await handBack(ctx, key, issue);

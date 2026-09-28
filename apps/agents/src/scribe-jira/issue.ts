@@ -11,7 +11,7 @@ import {
   say,
   type Ctx,
 } from "./context";
-import { runDraft, runRevise } from "./drafting";
+import { hashDraft, repostDraft, runDraft, runRevise } from "./drafting";
 import { runLessonDecision } from "./lessons";
 import { runPublish } from "./publishing";
 import { dueForRemoteLinkCheck, lastDraftAttachment, remoteLinkFingerprint, sourceFingerprint } from "./source";
@@ -106,6 +106,9 @@ async function recoverState(ctx: Ctx, issue: JiraIssue): Promise<IssueState> {
       // can actually see, rather than quietly starting a different one.
       const bytes = await ctx.client.downloadAttachment(attached.attachment);
       await ctx.state.saveDraft(key, bytes.toString("utf8"));
+      // It came off the ticket, so it IS the draft on the ticket: approvable as it stands.
+      patch.postedDraftHash = hashDraft(bytes.toString("utf8"));
+      if (attached.attachment.created) patch.draftPostedAt = attached.attachment.created;
     } catch {
       // The attachment is still proof that a draft exists; runRevise force-drafts when the
       // local copy is missing, so a failed download degrades to a redraft, not to silence.
@@ -364,6 +367,13 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
   // human already engaged the agent here. Never on a quietly adopted ticket.
   const wanted = autoDraft || engaged(ctx.state.get(key));
   if (wanted && !ctx.state.get(key)?.hasDraft) await runDraft(ctx, issue);
+  // A first draft saved but never posted (its comment failed): `hasDraft` kept every later
+  // tick from drafting again, so it sat unseen until someone commented. Post it as it is.
+  const saved = ctx.state.get(key);
+  if (wanted && saved?.hasDraft && saved.draftUnposted) {
+    const draft = await ctx.state.readDraft(key);
+    if (draft) await repostDraft(ctx, key, draft);
+  }
 
   const approvedStatus = ctx.config.jira.approvedStatus.toLowerCase();
   const movedToApproved = status.toLowerCase() === approvedStatus && (lastStatusAtTickStart ?? "").toLowerCase() !== approvedStatus;

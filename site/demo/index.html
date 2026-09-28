@@ -6,17 +6,46 @@
 <title>scriptorium demo</title>
 <meta name="description" content="An animated walkthrough of scriptorium: cited answers, gaps that become tickets, approvals bound to the exact change, docs that learn with permission, and a record you can check.">
 <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<meta property="og:type" content="video.other">
+<meta property="og:title" content="scriptorium in 80 seconds: an AI teammate that asks before it acts">
+<meta property="og:description" content="Cited answers, gaps that become tickets, approvals bound to the exact change, and docs that learn only what a human approves. Open source.">
+<meta property="og:url" content="https://scriptorium-teammate.vercel.app/demo/">
+<meta property="og:image" content="https://scriptorium-teammate.vercel.app/demo/poster.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="720">
+<meta property="og:video" content="https://scriptorium-teammate.vercel.app/demo/demo.mp4">
+<meta property="og:video:type" content="video/mp4">
+<meta property="og:video:width" content="1280">
+<meta property="og:video:height" content="720">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://scriptorium-teammate.vercel.app/demo/poster.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,500;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  /* The stage is always dark: it is a film, not a page. The frame around it follows the viewer. */
-  :root {
-    --page: #fbfaf7; --page-ink: #1b1d22; --page-muted: #5d6270; --page-line: #e6e3dc;
-    --bg: #0f1116; --surface: #171a22; --surface-2: #1d212b; --line: #2a2e38;
+  /* The page follows the viewer; the stage (the film) follows the page, unless ?theme= pins it. */
+  :root { --page: #fbfaf7; --page-ink: #1b1d22; --page-muted: #5d6270; --page-line: #e6e3dc; }
+  #stage {
+    --bg: #0f1116; --glow: #161a28; --surface: #171a22; --surface-2: #1d212b; --line: #2a2e38;
     --ink: #eceef2; --muted: #a6abb8; --faint: #6f7482;
-    --accent: #9aa8ff; --accent-strong: #2d3a8c; --accent-soft: #1e2440;
-    --good: #6fd3a0; --good-soft: #15291f; --bad: #ff8f8f; --bad-soft: #3a1b1d; --warn: #f0b667;
+    --accent: #9aa8ff; --accent-strong: #2d3a8c; --accent-soft: #1e2440; --accent-line: #36407a; --chip: #232a4a;
+    --good: #6fd3a0; --good-soft: #15291f; --good-line: #24543a; --bad: #ff8f8f; --bad-soft: #3a1b1d; --bad-line: #6a2d31;
+    --warn: #f0b667; --warn-soft: #2d2215;
+    --skeleton: #2c3140; --skeleton-accent: #3a4a9a; --btn: #253166; --btn-line: #3a4a9a;
+    --wire: #3a4270; --wire-good: #2f7a55; --wire-bad: #9a3a40;
+    --veil: rgba(15, 17, 22, .72); --glow-accent: rgba(154, 168, 255, .35); --glow-good: rgba(111, 211, 160, .35); --agent-shadow: rgba(45, 58, 140, .45);
+    --switch-off: #2c3140; --switch-on: #3a2d18;
+  }
+  #stage[data-theme="light"] {
+    --bg: #fbfaf7; --glow: #eef0fa; --surface: #ffffff; --surface-2: #f4f2ec; --line: #e2ded5;
+    --ink: #1b1d22; --muted: #5d6270; --faint: #8c909b;
+    --accent: #2d3a8c; --accent-strong: #2d3a8c; --accent-soft: #eceffb; --accent-line: #c9d0f0; --chip: #eceffb;
+    --good: #1f7a4d; --good-soft: #e6f4ec; --good-line: #b9dfc9; --bad: #b3261e; --bad-soft: #fbe9e7; --bad-line: #efc2bd;
+    --warn: #9a5b12; --warn-soft: #fbf0e0;
+    --skeleton: #e6e3dc; --skeleton-accent: #b8c1ec; --btn: #2d3a8c; --btn-line: #2d3a8c;
+    --wire: #b8c1ec; --wire-good: #8fcca9; --wire-bad: #e2a19b;
+    --veil: rgba(251, 250, 247, .78); --glow-accent: rgba(45, 58, 140, .18); --glow-good: rgba(31, 122, 77, .18); --agent-shadow: rgba(45, 58, 140, .25);
+    --switch-off: #e6e3dc; --switch-on: #f5d9ad;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) { --page: #111318; --page-ink: #eceef2; --page-muted: #a6abb8; --page-line: #2a2e38; }
@@ -33,8 +62,8 @@
   .top .brand { display: inline-flex; align-items: center; gap: 10px; font-family: Newsreader, Georgia, serif; font-weight: 600; font-size: 20px; color: var(--page-ink); }
   .top .spacer { flex: 1; }
 
-  .frame { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: var(--bg); border: 1px solid var(--page-line); }
-  #stage { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; transform-origin: 0 0; overflow: hidden; background: radial-gradient(1200px 700px at 70% 10%, #161a28 0%, var(--bg) 60%); color: var(--ink); }
+  .frame { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: var(--page); border: 1px solid var(--page-line); }
+  #stage { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; transform-origin: 0 0; overflow: hidden; background: radial-gradient(1200px 700px at 70% 10%, var(--glow) 0%, var(--bg) 60%); color: var(--ink); }
 
   .controls { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 14px; color: var(--page-muted); }
   .controls button { font: inherit; border: 1px solid var(--page-line); background: transparent; color: var(--page-ink); border-radius: 999px; padding: 6px 14px; cursor: pointer; }
@@ -60,31 +89,31 @@
   .avatar { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 20px; color: #0f1116; }
   .who { font-size: 13px; color: var(--muted); white-space: nowrap; }
   .bubble { padding: 12px 16px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); font-size: 17px; }
-  .bubble.answer { background: var(--accent-soft); border-color: #33407a; }
+  .bubble.answer { background: var(--accent-soft); border-color: var(--accent-line); }
   .type { display: inline-block; white-space: nowrap; }
-  .chip { display: inline-flex; align-items: center; gap: 6px; font: 500 13px "JetBrains Mono", monospace; padding: 4px 9px; border-radius: 999px; background: #232a4a; color: var(--accent); border: 1px solid #36407a; white-space: nowrap; }
-  .chip.good { background: var(--good-soft); color: var(--good); border-color: #24543a; }
-  .chip.bad { background: var(--bad-soft); color: var(--bad); border-color: #6a2d31; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font: 500 13px "JetBrains Mono", monospace; padding: 4px 9px; border-radius: 999px; background: var(--chip); color: var(--accent); border: 1px solid var(--accent-line); white-space: nowrap; }
+  .chip.good { background: var(--good-soft); color: var(--good); border-color: var(--good-line); }
+  .chip.bad { background: var(--bad-soft); color: var(--bad); border-color: var(--bad-line); }
   .badge { font-size: 14px; font-weight: 600; padding: 7px 12px; border-radius: 8px; white-space: nowrap; }
   .badge.good { background: var(--good-soft); color: var(--good); }
   .badge.bad { background: var(--bad-soft); color: var(--bad); }
   .badge.info { background: var(--accent-soft); color: var(--accent); }
 
-  .agent { width: 104px; height: 104px; border-radius: 26px; background: var(--accent-strong); display: grid; place-items: center; box-shadow: 0 0 0 8px rgba(154,168,255,.08), 0 20px 50px rgba(45,58,140,.45); }
+  .agent { width: 104px; height: 104px; border-radius: 26px; background: var(--accent-strong); display: grid; place-items: center; box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 8%, transparent), 0 20px 50px var(--agent-shadow); }
   .agent-label { font-size: 14px; font-weight: 600; text-align: center; width: 160px; }
-  .gate { width: 6px; border-radius: 6px; background: linear-gradient(#36407a, #2a2e38); }
+  .gate { width: 6px; border-radius: 6px; background: linear-gradient(var(--accent-line), var(--line)); }
   .gate-label { font: 600 11px Inter, sans-serif; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
   .flash { font: 500 12px "JetBrains Mono", monospace; padding: 4px 8px; border-radius: 6px; white-space: nowrap; }
   .flash.centred { translate: -50% 0; }
   .flash.allow { background: var(--accent-soft); color: var(--accent); }
   .flash.approve { background: var(--good-soft); color: var(--good); }
-  .flash.hold { background: #2d2215; color: var(--warn); }
+  .flash.hold { background: var(--warn-soft); color: var(--warn); }
 
   .source { width: 300px; height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 14px; font-size: 15px; font-weight: 500; }
   .source .dot { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font: 700 12px Inter, sans-serif; color: #0f1116; }
   .source .meta { margin-left: auto; font: 12px "JetBrains Mono", monospace; color: var(--faint); }
-  .hl { border-radius: 12px; box-shadow: 0 0 0 2px var(--accent), 0 0 30px rgba(154,168,255,.35); pointer-events: none; }
-  .hl.good { box-shadow: 0 0 0 2px var(--good), 0 0 30px rgba(111,211,160,.35); }
+  .hl { border-radius: 12px; box-shadow: 0 0 0 2px var(--accent), 0 0 30px var(--glow-accent); pointer-events: none; }
+  .hl.good { box-shadow: 0 0 0 2px var(--good), 0 0 30px var(--glow-good); }
   .hl.dim { box-shadow: 0 0 0 2px var(--faint); }
   .packet { width: 12px; height: 12px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 14px var(--accent); }
   .packet.good { background: var(--good); box-shadow: 0 0 14px var(--good); }
@@ -95,35 +124,35 @@
   .approval .kv span { color: var(--faint); }
   .approval .foot { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
   .btn { font: 600 14px Inter, sans-serif; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); }
-  .btn.primary { background: #253166; border-color: #3a4a9a; }
+  .btn.primary { background: var(--btn); border-color: var(--btn-line); color: #fff; }
   .hash { margin-left: auto; font: 12px "JetBrains Mono", monospace; color: var(--faint); display: inline-flex; gap: 6px; align-items: center; }
   .stamp { font: 700 22px Inter, sans-serif; letter-spacing: .06em; text-transform: uppercase; color: var(--good); border: 3px solid var(--good); border-radius: 10px; padding: 6px 14px; transform: rotate(-6deg); }
   .cursor { width: 22px; height: 22px; }
   .toast { font-size: 14px; padding: 10px 14px; border-radius: 10px; white-space: nowrap; }
-  .toast.bad { background: var(--bad-soft); color: var(--bad); border: 1px solid #6a2d31; }
-  .toast.good { background: var(--good-soft); color: var(--good); border: 1px solid #24543a; }
+  .toast.bad { background: var(--bad-soft); color: var(--bad); border: 1px solid var(--bad-line); }
+  .toast.good { background: var(--good-soft); color: var(--good); border: 1px solid var(--good-line); }
 
   .doc { width: 190px; padding: 14px; }
   .doc .kind { font: 600 11px Inter, sans-serif; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
   .doc .name { font-size: 15px; font-weight: 600; margin-top: 4px; }
   .doc .lines { margin-top: 10px; display: grid; gap: 6px; }
-  .doc .lines i { display: block; height: 6px; border-radius: 3px; background: #2c3140; }
-  .doc .lines i.accent { background: #3a4a9a; }
+  .doc .lines i { display: block; height: 6px; border-radius: 3px; background: var(--skeleton); }
+  .doc .lines i.accent { background: var(--skeleton-accent); }
   .lesson { width: 420px; padding: 14px 16px; }
   .lesson .id { font: 600 13px "JetBrains Mono", monospace; color: var(--accent); }
   .lesson .rule { font-size: 16px; margin-top: 4px; }
   .status { font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 999px; }
-  .status.proposed { background: #2d2215; color: var(--warn); }
+  .status.proposed { background: var(--warn-soft); color: var(--warn); }
   .status.approved { background: var(--good-soft); color: var(--good); }
 
   .block { width: 150px; height: 84px; padding: 12px; }
   .block .t { font: 600 13px Inter, sans-serif; }
   .block .h { font: 11px "JetBrains Mono", monospace; color: var(--faint); margin-top: 8px; }
-  .block.bad { border-color: #6a2d31; background: var(--bad-soft); }
+  .block.bad { border-color: var(--bad-line); background: var(--bad-soft); }
   .pause-pill { display: inline-flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 999px; font-size: 15px; }
-  .switch { width: 44px; height: 24px; border-radius: 999px; background: #2c3140; position: relative; }
+  .switch { width: 44px; height: 24px; border-radius: 999px; background: var(--switch-off); position: relative; }
   .switch i { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--muted); }
-  .veil { background: rgba(15,17,22,.72); backdrop-filter: grayscale(1); border-radius: 16px; display: grid; place-items: center; font-size: 18px; font-weight: 600; color: var(--warn); }
+  .veil { background: var(--veil); backdrop-filter: grayscale(1); border-radius: 16px; display: grid; place-items: center; font-size: 18px; font-weight: 600; color: var(--warn); }
 
   .stat { width: 330px; padding: 22px 24px; }
   .stat .n { font-family: Newsreader, Georgia, serif; font-size: 52px; font-weight: 600; line-height: 1; }
@@ -135,9 +164,9 @@
   .end-sub { font-size: 22px; color: var(--muted); }
   .end-url { font: 500 16px "JetBrains Mono", monospace; color: var(--accent); }
   svg.wires { position: absolute; inset: 0; width: 1280px; height: 720px; overflow: visible; }
-  svg.wires path { fill: none; stroke: #3a4270; stroke-width: 2; stroke-linecap: round; }
-  svg.wires path.good { stroke: #2f7a55; }
-  svg.wires path.bad { stroke: #9a3a40; }
+  svg.wires path { fill: none; stroke: var(--wire); stroke-width: 2; stroke-linecap: round; }
+  svg.wires path.good { stroke: var(--wire-good); }
+  svg.wires path.bad { stroke: var(--wire-bad); }
 </style>
 </head>
 <body>
@@ -162,6 +191,14 @@
 <script>
 (() => {
   const stage = document.getElementById("stage");
+  const params = new URLSearchParams(location.search);
+  // ?theme=light|dark pins it (rendering uses both); otherwise the film matches the page.
+  const theme = params.get("theme") === "light" || params.get("theme") === "dark"
+    ? params.get("theme")
+    : document.documentElement.dataset.theme ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  stage.dataset.theme = theme;
+  document.getElementById("download").href = theme === "light" ? "demo-light.mp4" : "demo.mp4";
+  const token = (name) => getComputedStyle(stage).getPropertyValue(name).trim();
   const anims = [];
   const EASE = "cubic-bezier(.2,.7,.2,1)";
 
@@ -399,7 +436,7 @@
   const review = el("card doc", '<div class="kind">Review</div><div class="name">"State the timezone."</div><div class="lines"><i style="width:55%"></i></div><div class="who" style="margin-top:8px">— Ana</div>', docX[2], docY);
   const v2 = el("card doc", '<div class="kind">Draft v2</div><div class="name">Incident PDF export</div><div class="lines"><i class="accent"></i><i></i><i style="width:85%"></i></div>', docX[3], docY);
   const pub = el("card doc", '<div class="kind">Published</div><div class="name">✓ approved by Ana</div><div class="lines"><i class="accent"></i><i></i></div><div class="who" style="margin-top:8px">docs site · pull request</div>', docX[4], docY);
-  pub.style.borderColor = "#24543a";
+  pub.style.borderColor = "var(--good-line)";
   inn(prd, 47.5);
   const w4 = [];
   w4.push(wire(`M${docX[0] + 190} ${docY + 60} L${docX[1]} ${docY + 60}`, 48.3, 400));
@@ -446,10 +483,8 @@
   inn(pill, 66.6);
   const knob = pill.querySelector(".switch i");
   const track = pill.querySelector(".switch");
-  knob.animate([{ transform: "none", background: "#a6abb8" }, { transform: "translateX(20px)", background: "#f0b667" }], { duration: 250, delay: s(67.5), fill: "forwards" }).pause();
-  anims.push(knob.getAnimations().at(-1));
-  track.animate([{ background: "#2c3140" }, { background: "#3a2d18" }], { duration: 250, delay: s(67.5), fill: "forwards" }).pause();
-  anims.push(track.getAnimations().at(-1));
+  anim(knob, [{ transform: "none", background: token("--muted") }, { transform: "translateX(20px)", background: token("--warn") }], s(67.5), 250);
+  anim(track, [{ background: token("--switch-off") }, { background: token("--switch-on") }], s(67.5), 250);
   const veil = el("veil", "⏸ Paused: nothing is answered or carried out", 90, 232, 1100, 124);
   anim(veil, [{ opacity: 0 }, { opacity: 1 }], s(67.9), 400);
   hideAll([...blocks, verdictOk, pill, veil], 70.4);
@@ -516,7 +551,7 @@
   new ResizeObserver(fit).observe(frame);
   fit();
 
-  const render = new URLSearchParams(location.search).has("render");
+  const render = params.has("render");
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let playing = !render && !reduced;
   let last = 0;
@@ -541,7 +576,7 @@
   document.addEventListener("keydown", (event) => { if (event.code === "Space" && event.target === document.body) { event.preventDefault(); toggle(); } });
 
   if (render) {
-    document.body.style.background = "#0f1116";
+    document.body.style.background = token("--bg");
     document.querySelector(".page").style.cssText = "max-width:none;padding:0";
     for (const id of ["controls", "chapters"]) document.getElementById(id).style.display = "none";
     document.querySelector(".top").style.display = "none";

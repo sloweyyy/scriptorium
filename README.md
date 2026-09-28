@@ -35,7 +35,12 @@ actually fetched. Each of those rules has a mutation test that breaks it on purp
 be caught.
 
 <p align="center">
-  <a href="https://scriptorium-teammate.vercel.app/demo/"><img src="site/demo/poster.png" width="720" alt="The 80-second demo: a cited answer in Slack, with its sources"></a><br>
+  <a href="https://scriptorium-teammate.vercel.app/demo/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="site/demo/poster.png">
+      <img src="site/demo/poster-light.png" width="720" alt="The 80-second demo: a cited answer in Slack, with its sources">
+    </picture>
+  </a><br>
   <sub><a href="https://scriptorium-teammate.vercel.app/demo/">▶ Watch the 80-second demo</a>: cited answers, gaps that become tickets, approvals, and docs that learn with permission.</sub>
 </p>
 

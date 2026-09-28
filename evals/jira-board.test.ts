@@ -485,6 +485,31 @@ describe("board transitions", () => {
     expect((await vault.readNote(doc as string)).body).toContain("Paste the snippet into your page.");
   });
 
+  it("a drag to Approved during the model call is not undone by the agent's own move, and is then judged", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    // The reviewer drags it while the model is still revising (before the agent's own moves).
+    vi.mocked(generateText).mockImplementationOnce(async () => {
+      issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Done" } } };
+      changelog.push({ author: { displayName: "Reviewer", accountId: "human-1" }, created: new Date(Date.now() - 1000).toISOString(), items: [{ field: "status", toString: "Done" }] } as never);
+      return `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`;
+    });
+    comments.push(human("f1", "add the paste step"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: new Date(Date.now() + 1000).toISOString() } };
+    const movesBefore = moves.length;
+    (await startScribeJira(settings, vault)).stop();
+    // The agent left the human's column alone.
+    expect(moves.slice(movesBefore)).not.toContain("In Review");
+    expect(status()).toBe("Done");
+
+    // Next poll judges the drag: it predates the revision, so it is held, said, and put back.
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: new Date(Date.now() + 2000).toISOString() } };
+    (await startScribeJira(settings, vault)).stop();
+    expect(await vault.listNotes("docs")).toHaveLength(0);
+    expect(comments.some((comment) => comment.body.includes("one you haven't seen yet"))).toBe(true);
+    expect(status()).toBe("In Review");
+  });
+
   it("re-reads the designs when revising, so a mockup attached with the feedback is not ignored", async () => {
     // A reviewer who attaches a corrected wireframe and writes "match this" has said half
     // of it visually. The revision used to run on the feedback TEXT alone — the image was

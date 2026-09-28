@@ -177,6 +177,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "the agent's own board move never undoes a human's drag to Approved",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "    if (live?.toLowerCase() === approved && (currentStatus",
+    replace: "    if (false && live?.toLowerCase() === approved && (currentStatus",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

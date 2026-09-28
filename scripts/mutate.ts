@@ -100,6 +100,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-e2e.test.ts"],
   },
   {
+    control: "/metrics is closed without its own token",
+    file: "apps/agents/src/ingress.ts",
+    find: "        // 404 whether metrics are off or the token is wrong, like the run viewer.\n        if (!token || !secretMatches(provided, token)) {",
+    replace: "        // 404 whether metrics are off or the token is wrong, like the run viewer.\n        if (false) {",
+    evals: ["evals/ingress.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

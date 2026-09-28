@@ -287,6 +287,52 @@ describe("run viewer", () => {
   });
 });
 
+describe("metrics", () => {
+  it("is closed without its bearer token, and exposes counts and tokens, never questions, channels or people", async () => {
+    const auditFile = path.join(tmpRoot, "audit.jsonl");
+    await fs.mkdir(path.dirname(auditFile), { recursive: true });
+    await fs.writeFile(
+      auditFile,
+      [
+        JSON.stringify({ ts: "2026-09-27T10:00:00Z", type: "teammate.answer", question: "what is our Q3 churn?", channel: "C-SECRET", askedBy: "U-ALICE" }),
+        JSON.stringify({ ts: "2026-09-27T10:00:01Z", type: "teammate.answer" }),
+        JSON.stringify({ ts: "2026-09-27T10:00:02Z", type: "llm.usage", scope: "C-SECRET", input: 1200, cacheRead: 300, cacheWrite: 0, output: 250 }),
+        JSON.stringify({ ts: "2026-09-27T10:00:03Z", type: 'x"} 1\nfake_metric{a="' }),
+      ].join("\n"),
+    );
+    const server = startIngress({ config: { ...config(), auditFile, webhook: { ...config().webhook, traceToken: "tok-123", metricsToken: "met-456" } } as AppConfig, hooks: {} });
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const at = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      expect((await fetch(`${at}/metrics`)).status).toBe(404);
+      // The run viewer's token is not the metrics token.
+      expect((await fetch(`${at}/metrics`, { headers: { Authorization: "Bearer tok-123" } })).status).toBe(404);
+      const scraped = await fetch(`${at}/metrics`, { headers: { Authorization: "Bearer met-456" } });
+      expect(scraped.status).toBe(200);
+      const text = await scraped.text();
+      expect(text).toContain('scriptorium_audit_events_total{type="teammate.answer"} 2');
+      expect(text).toContain('scriptorium_llm_tokens_total{kind="input"} 1200');
+      expect(text).toContain('scriptorium_llm_tokens_total{kind="output"} 250');
+      expect(text).not.toMatch(/churn|C-SECRET|U-ALICE/);
+      // A hostile type name can't forge a metric line.
+      expect(text.split("\n").filter((line) => line.startsWith("fake_metric"))).toHaveLength(0);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("is off when no token is set", async () => {
+    const server = startIngress({ config: config(), hooks: {} });
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const at = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      expect((await fetch(`${at}/metrics`, { headers: { Authorization: "Bearer " } })).status).toBe(404);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
 describe("pull request webhooks", () => {
   it("hands opened, reopened and ready-for-review PRs to the Teammate — never drafts or other actions", async () => {
     const { pullRequestFrom } = await import("@scriptorium/agents");

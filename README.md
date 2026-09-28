@@ -50,7 +50,7 @@ be caught.
   system of record, so there's no database to run. It works with the Anthropic API, Claude on
   Vertex, or Gemini.
 - **Built to be operated.** Admins get a kill switch, spend caps and rate-limit backoff. The
-  audit log is hash-chained, a run viewer shows what each answer did and cost, and turns cut
+  audit log is hash-chained, a run viewer shows what each answer did and cost, `/metrics` feeds your dashboards, and turns cut
   off by a restart are closed honestly.
 
 ## What it can do
@@ -165,7 +165,7 @@ the trigger, policy decisions, tool calls, approvals, the reply, and what it cos
 pnpm typecheck            # strict TypeScript, no build step (tsx runs source)
 pnpm eval                 # 500+ deterministic checks, no API key needed
 RUN_LLM_EVALS=1 pnpm eval # plus live checks: grounded Q&A, red team, answer golden set per model
-pnpm mutate               # sabotage each of 35 guardrails; its eval must catch it
+pnpm mutate               # sabotage each of 36 guardrails; its eval must catch it
 pnpm auditlog verify      # the audit log's hash chain holds
 ```
 

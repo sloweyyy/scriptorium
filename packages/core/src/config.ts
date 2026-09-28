@@ -195,6 +195,8 @@ export interface WebhookSettings {
    * audit trail — questions, tool calls, approvals — so it is a credential, not a nicety.
    */
   traceToken?: string;
+  /** Opens `/metrics` (`Authorization: Bearer …`). Unset: no metrics endpoint. */
+  metricsToken?: string;
   /** Where the ingress is reachable (`https://…run.app`), for "view run" links on replies. */
   publicBaseUrl?: string;
   /** GitHub signs with HMAC-SHA256, so this is a real shared secret. */
@@ -350,6 +352,7 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       jiraHmacSecret: env("JIRA_WEBHOOK_HMAC_SECRET"),
       githubSecret: env("GITHUB_WEBHOOK_SECRET"),
       traceToken: env("TRACE_TOKEN"),
+      metricsToken: env("METRICS_TOKEN"),
       publicBaseUrl: env("PUBLIC_BASE_URL"),
     },
     docsRepo: {

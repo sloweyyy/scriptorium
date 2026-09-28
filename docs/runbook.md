@@ -30,6 +30,7 @@ Every one of these fails closed: unset means *less* is allowed, never more.
 | `DOCS_REPO_URL` / `VAULT_REPO_URL` | no publishing; without the vault repo, internal notes (PRDs, gaps, house rules) go nowhere and aren't restored on boot. They never fall back to the docs repo | the public docs repo and the **private** vault repo, each with its own deploy key (`DOCS_REPO_SSH_KEY`, `VAULT_REPO_SSH_KEY`) |
 | `SLACK_WORKSPACE_URL` | Slack messages an answer cites are shown as ids, not links | `https://<your-team>.slack.com` |
 | `TRACE_TOKEN` + `PUBLIC_BASE_URL` | no run viewer, so replies show a bare run id | a long random token and the service URL |
+| `METRICS_TOKEN` | no `/metrics` | a long random token, different from `TRACE_TOKEN`, for your scraper (`Authorization: Bearer …`) |
 
 Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
 
@@ -127,6 +128,15 @@ clear every control.
   a notice asking the person to ask again.
 - **Never share an Atlassian token between agents.** Two agents on one token are one
   identity, and the permission boundary between them is gone.
+
+## Metrics
+
+`GET /metrics` serves Prometheus text to a scraper holding `METRICS_TOKEN`. It is derived from
+the audit log, so it survives restarts and agrees with the record:
+`scriptorium_audit_events_total{type=…}` (answers, gaps, refusals, errors, `llm.fallback`,
+approvals, feedback…) and `scriptorium_llm_tokens_total{kind=…}`. It holds only type names
+and numbers. Worth alerting on: a rising `teammate.error` or `llm.fallback` rate, and
+`teammate.gap` growing faster than docs are published.
 
 ## Cost
 

@@ -83,6 +83,36 @@ export function feedbackCandidates(lines: readonly AuditLine[]): FeedbackCandida
     .sort((a, b) => b.lastFlagged.localeCompare(a.lastFlagged));
 }
 
+/**
+ * `/metrics`: Prometheus text, derived from the audit log so it survives a restart and can't
+ * disagree with the record. Event counts by type, and tokens by kind. Only type names and
+ * numbers: never a question, a channel or a person, so a scraper learns how busy it is and
+ * how it fails, not who asked what.
+ */
+export function auditMetrics(lines: readonly AuditLine[]): string {
+  const events = new Map<string, number>();
+  const tokens = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+  for (const line of lines) {
+    // Type names are code, but the log is a file: keep a label to what Prometheus allows.
+    const type = line.type.replace(/[^\w.:-]/g, "_").slice(0, 80);
+    events.set(type, (events.get(type) ?? 0) + 1);
+    if (line.type !== "llm.usage") continue;
+    for (const kind of Object.keys(tokens) as Array<keyof typeof tokens>) {
+      const value = line[kind];
+      if (typeof value === "number" && Number.isFinite(value) && value > 0) tokens[kind] += value;
+    }
+  }
+  const out = [
+    "# HELP scriptorium_audit_events_total Audit log events, by type.",
+    "# TYPE scriptorium_audit_events_total counter",
+    ...[...events.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([type, count]) => `scriptorium_audit_events_total{type="${type}"} ${count}`),
+    "# HELP scriptorium_llm_tokens_total Model tokens, by kind.",
+    "# TYPE scriptorium_llm_tokens_total counter",
+    ...Object.entries(tokens).map(([kind, count]) => `scriptorium_llm_tokens_total{kind="${kind}"} ${count}`),
+  ];
+  return `${out.join("\n")}\n`;
+}
+
 export function formatLine(line: AuditLine): string {
   const { ts, run: _run, type, ...rest } = line;
   const detail = Object.entries(rest)

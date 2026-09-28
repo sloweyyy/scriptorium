@@ -1,3 +1,4 @@
+import path from "node:path";
 import { firstHeading, type Vault } from "@scriptorium/core";
 import MiniSearch from "minisearch";
 
@@ -86,8 +87,19 @@ function makeSnippet(body: string, query: string): string {
  */
 export const PRIVATE_FOLDERS = ["_memory/"] as const;
 
+/**
+ * A vault path as the filesystem will resolve it: separators unified, `.` and `..` folded,
+ * no leading `./` or `/`. Checks on a folder prefix must run on this, never on the raw
+ * string: `docs/../_memory/alice` resolves inside `_memory/` while starting with `docs/`,
+ * and passed the private-note check as written.
+ */
+export function normalizeVaultPath(relPath: string): string {
+  return path.posix.normalize(relPath.replace(/\\/g, "/")).replace(/^(\.\/|\/)+/, "");
+}
+
 export function isPrivateNote(relPath: string): boolean {
-  const normalized = relPath.replace(/^\.?\/+/, "");
+  // Case-folded too: on a case-insensitive disk (macOS by default) `_Memory/` is `_memory/`.
+  const normalized = normalizeVaultPath(relPath).toLowerCase();
   return PRIVATE_FOLDERS.some((folder) => normalized.startsWith(folder));
 }
 

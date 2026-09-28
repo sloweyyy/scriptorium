@@ -240,6 +240,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "a private memory can't be read however its path is spelled (.., case, backslashes)",
+    file: "packages/curator/src/search.ts",
+    find: "  const normalized = normalizeVaultPath(relPath).toLowerCase();",
+    replace: "  const normalized = relPath.replace(/^\\.?\\/+/, \"\");",
+    evals: ["evals/memory.test.ts"],
+  },
+  {
+    control: "a gap, inbox or memory note is never evidence, however its path is spelled",
+    file: "packages/curator/src/qa-contract.ts",
+    find: "    const resolved = EXTERNAL_CITATION.test(relPath) ? relPath : normalizeVaultPath(relPath);",
+    replace: "    const resolved = relPath;",
+    evals: ["evals/grounding.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

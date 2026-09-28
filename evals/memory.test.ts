@@ -79,6 +79,10 @@ describe("memories are private to their scope", () => {
     expect(await tools.search_vault!.run({ query: "salary private" })).not.toContain("_memory");
     expect(await tools.read_note!.run({ path: "_memory/M-1" })).toMatch(/^NOT_ALLOWED/);
     expect(await tools.read_note!.run({ path: "./_memory/M-1.md" })).toMatch(/^NOT_ALLOWED/);
+    // However the path is spelled: through `..`, with backslashes, in another case.
+    for (const spelled of ["docs/../_memory/M-1", "docs\\..\\_memory\\M-1.md", "_Memory/M-1", "/_memory/M-1", "docs/./../_memory/M-1"]) {
+      expect(await tools.read_note!.run({ path: spelled }), spelled).toMatch(/^NOT_ALLOWED/);
+    }
     expect(await tools.vault_overview!.run({})).not.toContain("_memory");
   });
 });

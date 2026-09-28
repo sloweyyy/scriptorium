@@ -1,6 +1,6 @@
 import { extractWikilinks, type ToolSpec, type Vault } from "@scriptorium/core";
 import { z } from "zod";
-import { isPrivateNote, retrievalBody, type VaultIndex } from "./search";
+import { isPrivateNote, normalizeVaultPath, retrievalBody, type VaultIndex } from "./search";
 
 /**
  * Curator's grounded-Q&A contract — the whole of it, in one file.
@@ -186,7 +186,7 @@ export function qaTools(vault: Vault, index: VaultIndex): ToolSpec[] {
       description: "Read one note's full content by its vault-relative path exactly as returned by search_vault.",
       inputSchema: z.object({ path: z.string().describe("Vault-relative path, with or without the .md suffix.") }),
       run: async ({ path: relPath }) => {
-        if (isPrivateNote(relPath.replace(/\\/g, "/"))) return `NOT_ALLOWED: ${relPath} is not readable through retrieval.`;
+        if (isPrivateNote(relPath)) return `NOT_ALLOWED: ${relPath} is not readable through retrieval.`;
         try {
           const note = await vault.readNote(relPath.endsWith(".md") ? relPath : `${relPath}.md`);
           // Truncate AFTER the status banner, never through it — see `retrievalBody`.
@@ -197,7 +197,7 @@ export function qaTools(vault: Vault, index: VaultIndex): ToolSpec[] {
         }
       },
       records: ({ path: relPath }, output) =>
-        output === NOTE_NOT_FOUND || output.startsWith("NOT_ALLOWED") ? [] : [relPath.replace(/\\/g, "/").replace(/^\.?\/+/, "").replace(/\.md$/, "")],
+        output === NOTE_NOT_FOUND || output.startsWith("NOT_ALLOWED") ? [] : [normalizeVaultPath(relPath).replace(/\.md$/, "")],
     }),
   ];
 }
@@ -242,8 +242,8 @@ const EXTERNAL_CITATION = /^(confluence:\d+|jira:[A-Z][A-Z0-9_]*-\d+|github:[a-z
 /** Tool outputs that report an action NOT taken or a read refused — never evidence. */
 const REFUSAL = /^\s*(NOT_ALLOWED|DENIED|NOT_DONE|APPROVAL_PENDING|REFUSED)\b/;
 
-/** Queues and drafts, not knowledge: never evidence for a claim about the product. */
-const NOT_CITABLE = ["_gaps/", "_inbox/"];
+/** Queues, drafts and private memory, not knowledge: never evidence for a claim about the product. */
+const NOT_CITABLE = ["_gaps/", "_inbox/", "_memory/"];
 
 /**
  * No citation, no claim — enforced on the answer, not only requested in the prompt.
@@ -262,7 +262,9 @@ export async function enforceGrounding(vault: Vault, answer: QaAnswer, evidence:
   const citations: string[] = [];
   for (const citation of answer.citations) {
     const relPath = citation.replace(/#.*$/, "").replace(/\.md$/, "");
-    if (NOT_CITABLE.some((prefix) => relPath.startsWith(prefix))) continue;
+    // Judged as the path resolves: `docs/../_gaps/x` is a gap note, whatever it starts with.
+    const resolved = EXTERNAL_CITATION.test(relPath) ? relPath : normalizeVaultPath(relPath);
+    if (NOT_CITABLE.some((prefix) => resolved.toLowerCase().startsWith(prefix))) continue;
     // A refusal is not evidence: "NOT_ALLOWED: jira:DOC-99 is not an issue key" echoes the
     // id it refused, and counting that as retrieval would ground a claim in nothing.
     const fetched = evidence.records ? evidence.records.has(relPath) : evidence.retrieved.some((result) => !REFUSAL.test(result) && mentions(result, relPath));

@@ -89,6 +89,15 @@ describe("enforceGrounding", () => {
     expect(answer.ungrounded).toBe(true);
   });
 
+  it("a gap, inbox or memory note is not evidence however its path is spelled", async () => {
+    await vault.writeNote("_gaps/G-001-sso.md", "Question: does Beacon support SSO?", {});
+    await vault.writeNote("_memory/M-00000001.md", "Alice's SSO notes.", { scope: "person:slack:UALICE" });
+    for (const cited of ["docs/../_gaps/G-001-sso", "./_gaps/G-001-sso", "_memory/M-00000001", "docs/../_memory/M-00000001"]) {
+      const answer = await enforceGrounding(vault, parseQaAnswer(`Beacon supports SSO [[${cited}]].`, "q"), { usedOverview: false, retrieved: [], records: new Set([cited]) });
+      expect(answer.ungrounded, cited).toBe(true);
+    }
+  });
+
   it("accepts a Confluence or Jira citation only when a tool returned that record", async () => {
     const retrieved = ["confluence:101 — Maintenance windows (space BEACON)", '[{"key":"DOC-7"}] jira:DOC-7'];
     expect((await judge("Windows are 4h [[confluence:101]].", false, retrieved)).ungrounded).toBeUndefined();

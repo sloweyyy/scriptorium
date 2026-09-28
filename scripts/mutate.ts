@@ -233,6 +233,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "a draft is attached once, not once per retry",
+    file: "apps/agents/src/scribe-jira/drafting.ts",
+    find: "    if (already && already.toString(\"utf8\").trim() === markdown.trim()) return;",
+    replace: "    if (false) return;",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

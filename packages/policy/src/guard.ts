@@ -1,6 +1,6 @@
 import { PLAN_TOOL, summarizePlan } from "./plan";
 import { audit, type ToolSpec } from "@scriptorium/core";
-import { consumeApproval, requestApproval, restoreApproval, type ApprovalRequest, type ApprovalStore } from "./approvals";
+import { consumeApproval, effectiveStatus, requestApproval, restoreApproval, type ApprovalRequest, type ApprovalStore } from "./approvals";
 import { evaluate, type Envelope } from "./policy";
 
 /**
@@ -86,6 +86,13 @@ export async function runUnderPolicy(envelope: Envelope, tool: ToolSpec, input: 
     return { kind: "ran", result, approval };
   }
 
+  // Carrying out a given approval that can't be spent (expired, or already used) must never
+  // turn into asking for a new one: that posted a fresh card on every Retry click.
+  if (deps.approvalId) {
+    await audit(deps.auditFile, { type: "policy.approval.unspendable", ...base, approval: deps.approvalId });
+    return { kind: "unavailable", reason: `approval ${deps.approvalId} can't be used: it expired or was already carried out` };
+  }
+
   const { request, created } = await requestApproval(deps.store, {
     agent: envelope.agent,
     tool: tool.name,
@@ -145,7 +152,7 @@ export async function executeApproved(
   deps: GuardDeps,
 ): Promise<Outcome | { kind: "not-runnable"; reason: string }> {
   const request = (await deps.store.all()).find((candidate) => candidate.id === requestId);
-  if (!request || request.status !== "approved") return { kind: "not-runnable", reason: `request ${requestId} is not an approved, unspent request` };
+  if (!request || effectiveStatus(request) !== "approved") return { kind: "not-runnable", reason: `request ${requestId} is not an approved, unspent, unexpired request` };
   if (request.agent !== envelope.agent) return { kind: "not-runnable", reason: `request ${requestId} belongs to ${request.agent}` };
   const tool = tools.find((candidate) => candidate.name === request.tool);
   if (!tool) return { kind: "not-runnable", reason: `no tool ${request.tool} on this host` };

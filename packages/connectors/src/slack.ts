@@ -320,12 +320,17 @@ export async function handleApprovalClick(
   }
 
   const verdict = decision === "approved" ? "✅ Approved" : "🚫 Rejected";
+  // The decision is recorded by now. Replacing the card only stops it inviting a second
+  // click (the store refuses one anyway), so a Slack error here is logged, never thrown:
+  // thrown, it skipped carrying out an approval that had been given, and left it stuck.
   if (click.channel && click.messageTs) {
     await client.chat.update({
       channel: click.channel,
       ts: click.messageTs,
       text: `${verdict} by ${escapeMrkdwn(click.userName ?? click.userId ?? "")}: ${escapeMrkdwn(describeRequest(request))}`,
       blocks: [{ type: "section", text: { type: "mrkdwn", text: `${verdict} by <@${click.userId}> — ${escapeMrkdwn(describeRequest(request))}\n\`\`\`${escapeMrkdwn(request.summary).replace(/```/g, "ˋˋˋ")}\`\`\`` } }] as never,
+    }).catch((error: unknown) => {
+      console.warn(`[approvals] ${request.id}: decided, but the card could not be updated: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
   // The person who asked hears the decision, where they asked. A rejection is final; an

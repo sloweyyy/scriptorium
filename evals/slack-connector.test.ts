@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { WebClient } from "@slack/web-api";
 import { z } from "zod";
 import type { ToolSpec } from "@scriptorium/core";
@@ -138,6 +138,21 @@ describe("slack approval card", () => {
 
     expect((await runUnderPolicy(envelope, tool, { key: "DOC-7", body: "hi" }, deps)).kind).toBe("ran");
     expect(ran).toHaveLength(1);
+  });
+
+  it("a card Slack won't update still records the approval, and it can be carried out", async () => {
+    const slack = fakeSlack();
+    const store = new MemoryApprovalStore();
+    const deps = { store, channel: new SlackApprovalChannel(slack.client), auditFile: "/dev/null", key: "slack:thread:C1/1.0", requestedBy: "slack:U_ASKER" };
+    const outcome = await runUnderPolicy(envelope, tool, { key: "DOC-7", body: "hi" }, deps);
+    if (outcome.kind !== "pending") throw new Error("expected pending");
+    (slack.client.chat as { update: unknown }).update = async () => {
+      throw new Error("message_not_found");
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(await handleApprovalClick(slack.client, store, () => envelope, { action: APPROVE_ACTION, requestId: outcome.request.id, userId: "U_PM", channel: "C1", messageTs: "1.1" })).toEqual({ ok: true, message: "✅ Approved." });
+    warn.mockRestore();
+    expect((await runUnderPolicy(envelope, tool, { key: "DOC-7", body: "hi" }, deps)).kind).toBe("ran");
   });
 });
 

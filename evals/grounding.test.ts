@@ -76,6 +76,14 @@ describe("enforceGrounding", () => {
     const answer = await judge("Severity is Minor, Major or Critical [[docs/scheduled-maintenance]] [[docs/made-up]].");
     expect(answer.ungrounded).toBeUndefined();
     expect(answer.citations).toEqual(["docs/scheduled-maintenance"]);
+    // The dropped one no longer reads as a source, and the reader is told one was left out.
+    expect(answer.text).not.toContain("made-up");
+    expect(answer.text).toContain("[[docs/scheduled-maintenance]]");
+    expect(answer.text.split("\n")[0]).toBe("Severity is Minor, Major or Critical [[docs/scheduled-maintenance]].");
+    expect(answer.text).toContain("couldn't be verified");
+    // Aliased and heading forms of a dropped link go too.
+    const aliased = await judge("Minor, Major or Critical [[docs/scheduled-maintenance]], see [[docs/made-up|the SLA page]] and [[docs/made-up#tiers]].");
+    expect(aliased.text).not.toMatch(/made-up|SLA page/);
   });
 
   it("refuses a citation to a real note the model never retrieved", async () => {

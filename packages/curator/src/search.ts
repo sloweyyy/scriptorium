@@ -42,12 +42,23 @@ interface IndexedNote {
  * human said no to.
  */
 export function rejectionNotice(frontmatter: Record<string, unknown>): string | undefined {
-  if (frontmatter["status"] !== "rejected") return undefined;
-  const who = typeof frontmatter["rejected_by"] === "string" ? frontmatter["rejected_by"] : "a human reviewer";
-  return (
-    `REJECTED — ${who} reviewed this rule and refused it. This note is the record of that ` +
-    `decision, not guidance. Never present it as a rule to follow, and never apply it to any document.`
-  );
+  const status = frontmatter["status"];
+  if (status === "rejected") {
+    const who = typeof frontmatter["rejected_by"] === "string" ? frontmatter["rejected_by"] : "a human reviewer";
+    return (
+      `REJECTED — ${who} reviewed this rule and refused it. This note is the record of that ` +
+      `decision, not guidance. Never present it as a rule to follow, and never apply it to any document.`
+    );
+  }
+  // A house rule counts only once a human approved it, and stops counting when revoked. Read
+  // without saying so, a proposed or withdrawn rule was retrieved exactly like one in force.
+  const isLesson = typeof frontmatter["id"] === "string" && /^L-\d+$/i.test(frontmatter["id"]);
+  if (!isLesson || status === "approved") return undefined;
+  if (status === "revoked") {
+    const who = typeof frontmatter["revoked_by"] === "string" ? frontmatter["revoked_by"] : "a human reviewer";
+    return `REVOKED — ${who} withdrew this rule. It no longer applies; this note is the record, not guidance. Never present it as a rule in force.`;
+  }
+  return "NOT APPROVED — this rule was proposed but no human has approved it, so it is not a rule. Never present it as one, or as how documents are written.";
 }
 
 /** `read_note`'s view: the notice first, then the note, so a full read cannot miss it. */

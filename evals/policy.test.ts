@@ -199,6 +199,21 @@ describe("carrying out an approval", () => {
     expect(runs).toHaveLength(1);
   });
 
+  it("an approval that expired is not carried out, and never becomes a new request", async () => {
+    const store = new MemoryApprovalStore();
+    const outcome = await runUnderPolicy(envelope, publish, DRAFT, deps(store));
+    if (outcome.kind !== "pending") throw new Error("expected pending");
+    await decideApproval(store, envelope, outcome.request.id, "approved", { accountId: "pm-1" });
+    // Its stored status still reads "approved"; the clock says otherwise.
+    await store.update(outcome.request.id, (current) => ({ ...current, expiresAt: new Date(Date.now() - 1000).toISOString() }));
+    expect((await executeApproved(envelope, [publish], outcome.request.id, deps(store))).kind).toBe("not-runnable");
+    expect(runs).toHaveLength(0);
+    expect(await store.all()).toHaveLength(1);
+    // Asked to spend a named approval it can't, the guard never files a fresh one either.
+    expect((await runUnderPolicy(envelope, publish, DRAFT, { ...deps(store), approvalId: outcome.request.id })).kind).toBe("unavailable");
+    expect(await store.all()).toHaveLength(1);
+  });
+
   it("will not carry out another agent's approval", async () => {
     const store = new MemoryApprovalStore();
     const outcome = await runUnderPolicy(envelope, publish, DRAFT, deps(store));

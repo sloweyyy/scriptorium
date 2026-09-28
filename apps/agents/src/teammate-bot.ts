@@ -12,7 +12,7 @@ import {
   handleApprovalClick,
 } from "@scriptorium/connectors";
 import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type CommentRestriction, type JiraClient } from "@scriptorium/jira";
-import { FileApprovalStore, PLAN_TOOL, executeApproved, mayApprove, planTool, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
+import { FileApprovalStore, PLAN_TOOL, effectiveStatus, executeApproved, mayApprove, planTool, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
 import { DailyBudget, FileEffectLedger, Gate, KeyedQueue, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, scopesFor, type AgentEvent } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
@@ -385,7 +385,9 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     if (notRun) {
       await audit(config.auditFile, { type: "teammate.approval.not_run", actor: "teammate", request: request.id, outcome: notRun, reason: "reason" in outcome ? outcome.reason : undefined }).catch(() => undefined);
     }
-    const retryable = (await store.all()).find((candidate) => candidate.id === request.id)?.status === "approved";
+    // Only while it can still be spent: an expired approval offered a Retry that couldn't work.
+    const stored = (await store.all()).find((candidate) => candidate.id === request.id);
+    const retryable = Boolean(stored && effectiveStatus(stored) === "approved");
     if (where.channel) {
       await slack.chat.postMessage({
         channel: where.channel,
@@ -561,7 +563,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         // A retry decides nothing new: the request is already approved. It only asks a
         // listed approver's say-so to run it again.
         const request = (await store.all()).find((candidate) => candidate.id === requestId);
-        if (!request || request.status !== "approved") return "Nothing to retry: it was already carried out, rejected or expired.";
+        if (!request || effectiveStatus(request) !== "approved") return "Nothing to retry: it was already carried out, rejected or expired.";
         const delegated = withDelegations(envelope, current);
         const allowed = mayApprove(delegated, delegated.tools[request.tool] ?? { tier: "deny" }, payload.user?.id ? { accountId: `slack:${payload.user.id}` } : undefined, request.requestedBy);
         if (!allowed.ok) return `Not retried: ${allowed.reason}.`;

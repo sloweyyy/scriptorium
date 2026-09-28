@@ -254,6 +254,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/grounding.test.ts"],
   },
   {
+    control: "an expired approval is never carried out",
+    file: "packages/policy/src/guard.ts",
+    find: "  if (!request || effectiveStatus(request) !== \"approved\") return { kind: \"not-runnable\"",
+    replace: "  if (!request || request.status !== \"approved\") return { kind: \"not-runnable\"",
+    evals: ["evals/policy.test.ts"],
+  },
+  {
+    control: "carrying out an approval never files a new one",
+    file: "packages/policy/src/guard.ts",
+    find: "  if (deps.approvalId) {\n    await audit(deps.auditFile, { type: \"policy.approval.unspendable\"",
+    replace: "  if (false) {\n    await audit(deps.auditFile, { type: \"policy.approval.unspendable\"",
+    evals: ["evals/policy.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

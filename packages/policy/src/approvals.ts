@@ -148,6 +148,15 @@ export class MemoryApprovalStore implements ApprovalStore {
   }
 }
 
+/**
+ * A request's status as of `now`. Expiry is computed, never written: the stored status of
+ * an expired request still reads "pending" or "approved". Judge a stored request by this,
+ * never by `request.status` alone.
+ */
+export function effectiveStatus(request: ApprovalRequest, now = new Date()): ApprovalStatus {
+  return live(request, now).status;
+}
+
 function live(request: ApprovalRequest, now: Date): ApprovalRequest {
   if ((request.status === "pending" || request.status === "approved") && Date.parse(request.expiresAt) <= now.getTime()) {
     return { ...request, status: "expired" };

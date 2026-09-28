@@ -246,6 +246,17 @@ describe("teammate, end to end", () => {
     expect(await vault.listNotes("_memory")).toHaveLength(0);
 
     expect(await click(RETRY_ACTION, "U_RANDOM")).toMatch(/^Not retried/);
+    // Once expired, Retry does nothing: no run, and no fresh card for the same action.
+    const stored = JSON.parse(await fs.readFile(path.join(tmpRoot, "state", "approvals.json"), "utf8")) as Array<{ id: string; expiresAt: string }>;
+    const realExpiry = stored.find((entry) => entry.id === requestId)!.expiresAt;
+    await fs.writeFile(path.join(tmpRoot, "state", "approvals.json"), JSON.stringify(stored.map((entry) => (entry.id === requestId ? { ...entry, expiresAt: new Date(Date.now() - 1000).toISOString() } : entry))));
+    const cardsBefore = posted.filter((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION)).length;
+    expect(await click(RETRY_ACTION, "UPM")).toMatch(/^Nothing to retry/);
+    expect(posted.filter((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION))).toHaveLength(cardsBefore);
+    expect(await vault.listNotes("_memory")).toHaveLength(0);
+    const restored = JSON.parse(await fs.readFile(path.join(tmpRoot, "state", "approvals.json"), "utf8")) as Array<{ id: string; expiresAt: string }>;
+    await fs.writeFile(path.join(tmpRoot, "state", "approvals.json"), JSON.stringify(restored.map((entry) => (entry.id === requestId ? { ...entry, expiresAt: realExpiry } : entry))));
+
     expect(await click(RETRY_ACTION, "UPM")).toBeUndefined();
     expect(posted.at(-1)?.text).toContain("✅ Done");
     expect(await vault.listNotes("_memory")).toHaveLength(1);

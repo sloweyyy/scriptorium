@@ -373,6 +373,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/handoff.test.ts"],
   },
   {
+    control: "an unapproved house rule is retrieved saying so, never as a rule in force",
+    file: "packages/curator/src/search.ts",
+    find: "  if (!isLesson || status === \"approved\") return undefined;",
+    replace: "  if (!isLesson || status !== \"revoked\") return undefined;",
+    evals: ["evals/rejected-retrieval.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

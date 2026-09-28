@@ -66,7 +66,21 @@ describe("rejected notes in retrieval", () => {
     expect(retrievalBody({ status: "rejected" }, REJECTED_RULE)).toMatch(/^REJECTED — a human reviewer/);
   });
 
-  it("leaves approved and unjudged notes exactly as they are", () => {
+  it("a house rule nobody approved, or one revoked, is retrieved saying so, never as a rule in force", async () => {
+    expect(retrievalBody({ id: "L-002", status: "proposed" }, "Use sentence case.")).toMatch(/^NOT APPROVED —/);
+    expect(retrievalBody({ id: "L-004", status: "revoked", revoked_by: "Ana" }, "Use sentence case.")).toMatch(/^REVOKED — Ana withdrew/);
+    expect(retrievalBody({ id: "L-001", status: "approved" }, "Use sentence case.")).toBe("Use sentence case.");
+    // An unreadable status is not approval.
+    expect(retrievalBody({ id: "L-005" }, "Use sentence case.")).toMatch(/^NOT APPROVED —/);
+
+    await vault.writeNote("_lessons/L-002-sentence-case.md", "Headings use sentence case.\n", { id: "L-002", scope: "global", status: "proposed" });
+    const tools = Object.fromEntries(qaTools(vault, await buildIndex(vault)).map((tool) => [tool.name, tool]));
+    expect(await tools.read_note!.run({ path: "_lessons/L-002-sentence-case" })).toMatch(/^NOT APPROVED —/);
+    const hit = (await buildIndex(vault)).search("headings sentence case").find((r) => r.relPath.includes("L-002"));
+    expect(hit?.notice).toMatch(/^NOT APPROVED —/);
+  });
+
+  it("leaves approved notes, and notes that aren't house rules, exactly as they are", () => {
     expect(retrievalBody({ status: "approved" }, REJECTED_RULE)).toBe(REJECTED_RULE);
     expect(retrievalBody({ status: "proposed" }, REJECTED_RULE)).toBe(REJECTED_RULE);
     expect(retrievalBody({}, REJECTED_RULE)).toBe(REJECTED_RULE);

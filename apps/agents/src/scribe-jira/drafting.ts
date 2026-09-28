@@ -314,6 +314,20 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]):
     return;
   }
 
+  // This feedback was already turned into the saved draft, whose comment never landed (a
+  // failure after the save, retried): post that revision, don't revise it again.
+  const fromThis = createHash("sha256").update(feedback.join("\u0000")).digest("hex");
+  const known0 = ctx.state.get(key);
+  if (known0?.revisedFrom === fromThis && known0.postedDraftHash !== hashDraft(draft)) {
+    const recorded = known0.feedback ?? [];
+    for (const item of feedback) if (!recorded.includes(item)) await ctx.state.appendFeedback(key, item);
+    await repostDraft(ctx, key, draft);
+    await ctx.state.patch(key, { revisedFrom: undefined });
+    await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
+    await handBack(ctx, key, issue);
+    return;
+  }
+
   await moveTo(ctx, key, ctx.config.jira.inProgressStatus, issueStatus(issue));
   await assignTo(ctx, key, ctx.botAccountId);
 
@@ -325,7 +339,7 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]):
   const result = await reviseDoc(ctx.vault, draft, feedback, designs.images);
   await ctx.state.saveDraft(key, result.markdown);
   // The vault copy is now stale relative to this draft: the next approve republishes.
-  await ctx.state.patch(key, { draftPublished: false });
+  await ctx.state.patch(key, { draftPublished: false, revisedFrom: fromThis });
   await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
   await handBack(ctx, key, issue);
   for (const item of feedback) await ctx.state.appendFeedback(key, item);
@@ -351,6 +365,6 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]):
       attachment: `draft-${slug}.md`,
     }),
   );
-  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(result.markdown) });
+  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(result.markdown), revisedFrom: undefined });
   await audit(ctx.config.auditFile, { type: "jira.draft.revised", actor: "scribe", issue: key, feedback });
 }

@@ -226,6 +226,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/backoff.test.ts"],
   },
   {
+    control: "a revise retried after its comment failed posts the revision, not a second revise",
+    file: "apps/agents/src/scribe-jira/drafting.ts",
+    find: "  if (known0?.revisedFrom === fromThis && known0.postedDraftHash !== hashDraft(draft)) {",
+    replace: "  if (false) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

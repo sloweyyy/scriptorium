@@ -53,7 +53,7 @@ interface StubComment {
 let loseNextCommentResponse = false;
 /** Fail the Nth comment POST from now WITHOUT storing it (a plain network error). */
 let failCommentPostIn = 0;
-/** Refuse every "Revised draft" comment, the way a 400 would, until turned off. */
+/** Refuse every comment carrying a revision (first try or re-post), the way a 400 would, until turned off. */
 let failRevisionPosts = false;
 /** Run once, right after a comment containing `text` is stored: a human acting mid-tick. */
 let afterPost: { text: string; run: () => void } | undefined;
@@ -146,7 +146,7 @@ function stubJira(): void {
         failNextPostContaining = undefined;
         throw new TypeError("fetch failed: connect ECONNRESET");
       }
-      if (failRevisionPosts && body.body.includes("Revised draft")) return new Response(JSON.stringify({ errorMessages: ["bad request"] }), { status: 400 });
+      if (failRevisionPosts && (body.body.includes("Revised draft") || body.body.includes("Draft (posted again)"))) return new Response(JSON.stringify({ errorMessages: ["bad request"] }), { status: 400 });
       const posted: StubComment = {
         id: `bot-${comments.length + 1}`,
         body: body.body,
@@ -922,6 +922,26 @@ describe("a crash or an error mid-batch loses nothing and repeats nothing (H4)",
     expect(draft).toBeDefined();
     expect(draft?.body.length).toBeLessThan(32_767);
     expect(draft?.body).toMatch(/the whole of it is attached as .{0,4}draft-incident/);
+    vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
+  });
+
+  it("a revise retried after its comment failed posts the revision, instead of revising it again", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    const revised = `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`;
+    vi.mocked(generateText).mockImplementation(async () => revised);
+    failNextPostContaining = "Revised draft";
+    await tickWith(settings, "add the paste step");
+    const modelCalls = vi.mocked(generateText).mock.calls.length;
+    await tickWith(settings);
+    // No second revise of the revision: the model wasn't asked again.
+    expect(vi.mocked(generateText).mock.calls.length).toBe(modelCalls);
+    const reposts = comments.filter((comment) => comment.body.includes("Draft (posted again)"));
+    expect(reposts).toHaveLength(1);
+    expect(reposts[0]?.body.match(/Paste the snippet into your page\./g)).toHaveLength(1);
+    await tickWith(settings, "approve");
+    const [doc] = await vault.listNotes("docs");
+    expect((await vault.readNote(doc as string)).body).toContain("Paste the snippet into your page.");
     vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
   });
 

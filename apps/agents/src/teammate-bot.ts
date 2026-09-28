@@ -67,6 +67,8 @@ export interface TeammateCore {
   onSlashCommand(input: { channel: string; user: string; text: string; commandId: string }): Promise<string | undefined>;
   /** The "File as a ticket" message shortcut. Returns a message for the invoker only, if any. */
   onFileAsTicket(input: { channel: string; user: string; messageTs: string; threadTs?: string; shortcutId: string }): Promise<string | undefined>;
+  /** A reaction added to a message. A 👎 on one of its replies is recorded for review (`pnpm feedback`). */
+  onReaction(input: { reaction: string; user: string; channel: string; ts: string; itemUser?: string }): Promise<void>;
   /** The App Home for this Slack user: their approvals inbox, as Block Kit blocks. */
   homeView(userId: string): Promise<unknown[]>;
   /** A pull request to check against its ticket (from the GitHub webhook). */
@@ -86,6 +88,9 @@ export interface TeammateJira {
   client: JiraClient;
   accountId: string;
 }
+
+/** Slack's names for 👎. */
+const THUMBS_DOWN = new Set(["-1", "thumbsdown"]);
 
 /** Not a Slack ts: a shortcut's "trigger" excludes nothing from the thread it reads. */
 const SHORTCUT_TRIGGER = "shortcut";
@@ -209,7 +214,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         // closes the gate and waits for any update already in flight.
         let finished = false;
         let inFlight: Promise<unknown> = Promise.resolve();
-        const deliver = async (message: string, blocks?: unknown[]): Promise<void> => {
+        /** Returns the reply's own ts, so feedback on it can be traced back to this run. */
+        const deliver = async (message: string, blocks?: unknown[]): Promise<string | undefined> => {
           finished = true;
           await inFlight;
           const close = async () => {
@@ -217,10 +223,14 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
           };
           if (placeholder?.ts) {
             const updated = await slack.chat.update({ channel, ts: placeholder.ts, text: message, ...(blocks ? { blocks: blocks as never } : {}) }).catch(() => undefined);
-            if (updated?.ok) return close();
+            if (updated?.ok) {
+              await close();
+              return placeholder.ts;
+            }
           }
-          await slack.chat.postMessage({ channel, thread_ts: threadTs, text: message, ...(blocks ? { blocks: blocks as never } : {}) });
+          const posted = await slack.chat.postMessage({ channel, thread_ts: threadTs, text: message, ...(blocks ? { blocks: blocks as never } : {}) });
           await close();
+          return posted?.ts;
         };
         try {
           if (isHelpRequest(text)) {
@@ -254,8 +264,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
                   ...contextBlocks(textOut.slice(textOut.lastIndexOf("\n_AI-generated") + 1)),
                 ]
               : undefined;
-          await deliver(textOut, blocks);
-          await audit(config.auditFile, { type: `teammate.${reply.kind}`, actor: "teammate", key, askedBy: event.actor.id, event: event.id });
+          const message = await deliver(textOut, blocks);
+          await audit(config.auditFile, { type: `teammate.${reply.kind}`, actor: "teammate", key, askedBy: event.actor.id, event: event.id, channel, ...(message ? { message } : {}) });
         } catch (error) {
           await audit(config.auditFile, { type: "teammate.error", actor: "teammate", key, event: event.id, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
           await deliver(`⚠️ I couldn't finish that, so I haven't answered or changed anything. _run \`${(currentRunId() ?? "").slice(0, 8)}\`_`).catch(() => undefined);
@@ -424,6 +434,14 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         return;
       }
       queue.push(agentEvent);
+    },
+
+    async onReaction({ reaction, user, channel, ts, itemUser }) {
+      // Only a 👎 on one of its own replies, where it answers. Pointers only: the review reads
+      // the run with `pnpm trace`, so no Slack text is kept for this.
+      if (!THUMBS_DOWN.has(reaction.replace(/::skin-tone-\d$/, "")) || itemUser !== selfUserId || user === selfUserId) return;
+      if (!(await answersIn(channel, user))) return;
+      await audit(config.auditFile, { type: "teammate.feedback", actor: "teammate", channel, message: ts, by: user, reaction: "-1" });
     },
 
     async homeView(userId) {
@@ -773,6 +791,10 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
 
   app.event("app_mention", async ({ event }) => core.onMention(event as SlackMention));
   app.message(async ({ message }) => core.onDirectMessage(message as SlackMention & { channel_type?: string; subtype?: string }));
+  app.event("reaction_added", async ({ event }) => {
+    if (event.item.type !== "message") return;
+    await core.onReaction({ reaction: event.reaction, user: event.user, channel: event.item.channel, ts: event.item.ts, itemUser: event.item_user });
+  });
   app.event("app_home_opened", async ({ event, client }) => {
     if (event.tab !== "home") return;
     const blocks = await core.homeView(event.user);

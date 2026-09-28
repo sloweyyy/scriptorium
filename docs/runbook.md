@@ -133,3 +133,20 @@ clear every control.
 Each Teammate turn audits `llm.usage` with the true input, meaning uncached + cache read +
 cache write, plus output. `pnpm trace <run>` shows what a single answer cost. Prompt caching
 is on for the first-party Anthropic API.
+
+## Answer quality
+
+People mark a wrong answer with 👎 on the reply. The Teammate records a pointer: the
+channel, the message, who flagged it, and the run that produced the answer. It never records
+the Slack text. `pnpm feedback` lists flagged answers newest first, each with its
+`pnpm trace <run>`. For each one worth keeping, add a case to `evals/golden/answers.json`:
+the question, the notes it must cite, and the facts it must state. An answer that should have
+been "I don't know" becomes an `unanswerable` case.
+
+`RUN_LLM_EVALS=1 npx vitest run evals/answer-golden.test.ts` grades every case against the
+configured model. Each `provider:model` has its own baseline in `evals/baselines/answers.json`:
+record it with `UPDATE_BASELINE=1` before switching `MODEL`, and compare. Refusing what the
+docs don't say has no baseline. Every model must get all of those right.
+
+Recording 👎 needs the `reactions:read` scope and the `reaction_added` event, which are in the
+manifest. `pnpm doctor` names a missing scope until the app is reinstalled.

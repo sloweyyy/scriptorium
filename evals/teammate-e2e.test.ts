@@ -134,6 +134,29 @@ describe("teammate, end to end", () => {
     expect(audit).toContain('"type":"teammate.ignored"');
   });
 
+  it("a 👎 on one of its answers becomes a review candidate, traced to the run, with no Slack text kept", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 local time [[docs/digest-emails]]." };
+    await core.onMention({ channel: "C1", ts: "1.0", user: "U1", text: "<@UBOT> when are digests sent?" });
+    await settle(core);
+    // The answer is the placeholder message it posted and then updated.
+    await core.onReaction({ reaction: "-1", user: "U2", channel: "C1", ts: "9.1", itemUser: "UBOT" });
+    await core.onReaction({ reaction: "thumbsdown::skin-tone-3", user: "U3", channel: "C1", ts: "9.1", itemUser: "UBOT" });
+    await core.onReaction({ reaction: "-1", user: "U2", channel: "C1", ts: "9.1", itemUser: "UBOT" }); // again: still one person
+    // Not a 👎, not its message, not where it answers: nothing.
+    await core.onReaction({ reaction: "+1", user: "U2", channel: "C1", ts: "9.1", itemUser: "UBOT" });
+    await core.onReaction({ reaction: "-1", user: "U2", channel: "C1", ts: "1.0", itemUser: "U1" });
+    await core.onReaction({ reaction: "-1", user: "U2", channel: "C9", ts: "9.1", itemUser: "UBOT" });
+
+    const { feedbackCandidates, parseAudit } = await import("@scriptorium/core");
+    const text = await fs.readFile(path.join(tmpRoot, "audit.jsonl"), "utf8");
+    const candidates = feedbackCandidates(parseAudit(text));
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({ channel: "C1", message: "9.1", kind: "answer", flaggedBy: ["U2", "U3"] });
+    expect(candidates[0]?.run).toMatch(/^[0-9a-f-]{8,}/);
+    expect(text.split("\n").filter((line) => line.includes("teammate.feedback")).join()).not.toContain("digest");
+  });
+
   it("a turn cut off by a restart is closed with a notice on the next boot, not left 'Looking into it…'", async () => {
     const before = await createTeammate(config(), vault, slack as never, "UBOT");
     script = { calls: [], reply: "never", hang: true };

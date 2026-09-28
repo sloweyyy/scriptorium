@@ -24,6 +24,7 @@ pnpm trace [run-id]     # what one agent run did (from the audit log); no arg = 
 pnpm mutate             # sabotage each guardrail once; its eval must go red (weekly in CI)
 pnpm auditlog verify    # the audit log's hash chain holds (export --from --to for a signed extract)
 pnpm resign             # after rotating SCRIPTORIUM_SIGNING_KEY: move approvals onto the new key (--dry-run)
+pnpm feedback           # answers flagged 👎 in Slack, each with its run: the queue for new answer golden cases
 ```
 
 ## Architecture

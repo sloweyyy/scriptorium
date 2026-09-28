@@ -93,6 +93,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/answer-golden.test.ts"],
   },
   {
+    control: "only a 👎 on one of its own replies is recorded as feedback",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: " || itemUser !== selfUserId || ",
+    replace: " || ",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

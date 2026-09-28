@@ -157,6 +157,20 @@ describe("teammate, end to end", () => {
     expect(text.split("\n").filter((line) => line.includes("teammate.feedback")).join()).not.toContain("digest");
   });
 
+  it("a Slack retry that reaches it after a restart is not answered twice", async () => {
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 local time [[docs/digest-emails]]." };
+    const mention = { channel: "C1", ts: "5.0", user: "U1", text: "<@UBOT> when are digests sent?", client_msg_id: "msg-5" };
+    const before = await createTeammate(config(), vault, slack as never, "UBOT");
+    await before.onMention(mention);
+    await settle(before);
+    const answers = () => posted.filter((message) => message.text.includes("09:00 local time")).length;
+    expect(answers()).toBe(1);
+    const after = await createTeammate(config(), vault, slack as never, "UBOT");
+    await after.onMention(mention);
+    await settle(after);
+    expect(answers()).toBe(1);
+  });
+
   it("a turn cut off by a restart is closed with a notice on the next boot, not left 'Looking into it…'", async () => {
     const before = await createTeammate(config(), vault, slack as never, "UBOT");
     script = { calls: [], reply: "never", hang: true };
@@ -374,6 +388,21 @@ describe("approvals nobody decides, while paused or erased", () => {
     await settle(core);
     return posted.findIndex((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION));
   };
+
+  it("a crash between a nudge and its ledger record doesn't nudge twice", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    const cardIndex = await ask(core);
+    const file = path.join(tmpRoot, "state", "approvals.json");
+    const [request] = JSON.parse(await fs.readFile(file, "utf8")) as Array<{ id: string }>;
+    const { FileEffectLedger, opKey } = await import("@scriptorium/runtime");
+    await new FileEffectLedger(path.join(tmpRoot, "state", "effects.json")).put({ op: opKey("teammate.card.nudged", request!.id), status: "in-progress", startedAt: new Date().toISOString() });
+    // The nudge the crashed run posted is in the card's thread.
+    threadReplies = [{ ts: "9.99", text: "⏰ Still waiting for an approver", metadata: { event_type: "scriptorium_approval_nudge", event_payload: { request: request!.id } } } as never];
+    const count = posted.length;
+    await core.checkApprovals(new Date(Date.now() + 25 * 3_600_000));
+    expect(posted.slice(count).filter((message) => message.text.includes("Still waiting"))).toHaveLength(0);
+    expect(cardIndex).toBeGreaterThanOrEqual(0);
+  });
 
   it("sends no nudge while paused", async () => {
     const core = await createTeammate({ ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig, vault, slack as never, "UBOT");

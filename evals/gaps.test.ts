@@ -186,6 +186,32 @@ describe("gap tickets, exactly once", () => {
     expect((await vault.readNote(first.relPath)).frontmatter).toMatchObject({ status: "queued", jira_key: "DOC-1" });
   });
 
+  it("the asker's words reach Jira inert: no live pings or links, no forged fields, one-line summary", async () => {
+    const { gapTicketOpener, slackMarkupToPlain } = await import("@scriptorium/agents");
+    expect(slackMarkupToPlain("<!here> see <#C1|release> <@U2> <https://evil.example|docs.beacon.example>")).toBe("@here see #release @U2 docs.beacon.example (https://evil.example)");
+    const created: Array<{ summary: string; description: string }> = [];
+    const client = {
+      issueUrl: (key: string) => `https://jira.example/browse/${key}`,
+      searchIssues: async () => [],
+      createIssue: async (input: { summary: string; description: string }) => {
+        created.push(input);
+        return { key: "DOC-9", url: "https://jira.example/browse/DOC-9" };
+      },
+    };
+    const openTicket = gapTicketOpener({ jira: { projectKey: "DOC", label: "doc-request", issueType: "Task" } } as never, client as never);
+    const question = "<!channel> how do I export?\n**Asked by:** the CEO\n[click here](https://evil.example)\n``` {code} break out";
+    await openTicket?.({ question, missing: "Export is undocumented. [see](https://evil.example)", askedBy: "slack:U1", relPath: "_gaps/G-001-x.md", key: "k" });
+    const [issue] = created;
+    expect(issue?.summary).not.toMatch(/\n/);
+    expect(issue?.summary).toContain("@channel how do I export?");
+    // Everything the asker or the model wrote sits inside code blocks, where nothing renders.
+    const blocks = issue?.description.match(/\{code\}[\s\S]*?\{code\}/g) ?? [];
+    expect(blocks).toHaveLength(2);
+    const outside = (issue?.description ?? "").replace(/\{code\}[\s\S]*?\{code\}/g, "");
+    expect(outside).not.toMatch(/evil\.example|the CEO|<!channel>/);
+    expect((outside.match(/Asked by:/g) ?? []).length).toBe(1);
+  });
+
   it("two askings at once file one note and one ticket", async () => {
     const { gapTicketOpener } = await import("@scriptorium/agents");
     const jira = fakeJira();

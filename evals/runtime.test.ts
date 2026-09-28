@@ -1,5 +1,8 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { Gate, KeyedQueue, keys, sourceOfKey, type AgentEvent } from "@scriptorium/runtime";
+import { FileSeenIds, Gate, KeyedQueue, keys, sourceOfKey, type AgentEvent } from "@scriptorium/runtime";
 
 /**
  * The runtime's intake (ADR-001 slice 2a): a gate that says why it ignored something,
@@ -33,6 +36,23 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 describe("gate", () => {
   const A = keys.jiraIssue("doc-1");
+
+  it("a redelivery after a restart is still a redelivery, and the window stays bounded", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scriptorium-seen-"));
+    const file = path.join(dir, "seen.json");
+    const first = event(A);
+    expect(new Gate({ selfIds: [] }, 5_000, new FileSeenIds(file)).check(first)).toEqual({ accepted: true });
+    // A new process: a new Gate, the same file.
+    expect(new Gate({ selfIds: [] }, 5_000, new FileSeenIds(file)).check(first)).toEqual({ accepted: false, reason: "duplicate delivery" });
+    const small = new FileSeenIds(path.join(dir, "small.json"), 3);
+    for (const id of ["a", "b", "c", "d"]) small.add(id);
+    const reloaded = new FileSeenIds(path.join(dir, "small.json"), 3);
+    expect(["a", "b", "c", "d"].map((id) => reloaded.has(id))).toEqual([false, true, true, true]);
+    // An unreadable file starts empty, never throws.
+    fs.writeFileSync(path.join(dir, "bad.json"), "{not json");
+    expect(new FileSeenIds(path.join(dir, "bad.json")).has("a")).toBe(false);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 
   it("drops a redelivery, its own events and other bots — each with a reason", () => {
     const gate = new Gate({ selfIds: ["bot-1"] });

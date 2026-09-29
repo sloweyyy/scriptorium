@@ -13,9 +13,30 @@ function env(name: string): string | undefined {
   return value ? value : undefined;
 }
 
-function envNumber(name: string, fallback: number): number {
-  const parsed = Number(env(name));
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+/**
+ * A numeric setting. Unset: the fallback. Set to something that is not a number in range:
+ * refuse to start. A typo used to fall back silently — `TEAMMATE_DAILY_TOKENS=50k` meant no
+ * cap at all, and a documented `0` ("never", "Sunday", "midnight") meant the default.
+ */
+function envNumber(name: string, fallback: number, range: { min?: number; max?: number } = {}): number {
+  return envOptionalNumber(name, range) ?? fallback;
+}
+
+function envOptionalNumber(name: string, { min = 1, max = Number.MAX_SAFE_INTEGER }: { min?: number; max?: number } = {}): number | undefined {
+  const raw = env(name);
+  if (raw === undefined) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${name}=${JSON.stringify(raw)} is not a number from ${min} to ${max}; fix or unset it`);
+  }
+  return parsed;
+}
+
+/** Two remotes are the same repo if they name the same owner/name, whatever the URL form. */
+function sameRepo(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false;
+  const slugA = repoSlugFromUrl(a);
+  return slugA ? slugA.toLowerCase() === repoSlugFromUrl(b)?.toLowerCase() : a.replace(/\/+$/, "") === b.replace(/\/+$/, "");
 }
 
 export interface SlackAppTokens {
@@ -288,6 +309,11 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
         : env("ANTHROPIC_API_KEY")
           ? "anthropic"
           : "none";
+  // The internal plane going to the public docs repo is the one leak the split exists to
+  // prevent; the same URL in both settings is refused, not published.
+  if (sameRepo(env("VAULT_REPO_URL"), env("DOCS_REPO_URL"))) {
+    throw new Error("VAULT_REPO_URL names the same repository as DOCS_REPO_URL; internal notes must go to a separate, private repo");
+  }
   return {
     model: env("MODEL") ?? "claude-opus-5",
     hasModelAccess: provider !== "none",
@@ -324,14 +350,14 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       allowDms: env("TEAMMATE_ALLOW_DMS") === "true",
       people: parsePeople(env("TEAMMATE_PEOPLE")),
       admins: list(env("TEAMMATE_ADMINS")),
-      approvalNudgeHours: envNumber("TEAMMATE_APPROVAL_NUDGE_HOURS", 24),
+      approvalNudgeHours: envNumber("TEAMMATE_APPROVAL_NUDGE_HOURS", 24, { min: 0 }),
       triageProjects: list(env("TEAMMATE_TRIAGE_PROJECTS")),
       triagePerHour: envNumber("TEAMMATE_TRIAGE_PER_HOUR", 20),
-      dailyTokens: env("TEAMMATE_DAILY_TOKENS") ? Number(env("TEAMMATE_DAILY_TOKENS")) : undefined,
-      dailyTokensTotal: env("TEAMMATE_DAILY_TOKENS_TOTAL") ? Number(env("TEAMMATE_DAILY_TOKENS_TOTAL")) : undefined,
+      dailyTokens: envOptionalNumber("TEAMMATE_DAILY_TOKENS"),
+      dailyTokensTotal: envOptionalNumber("TEAMMATE_DAILY_TOKENS_TOTAL"),
       digestChannel: env("TEAMMATE_DIGEST_CHANNEL"),
-      digestWeekday: envNumber("TEAMMATE_DIGEST_WEEKDAY", 1),
-      digestHour: envNumber("TEAMMATE_DIGEST_HOUR", 9),
+      digestWeekday: envNumber("TEAMMATE_DIGEST_WEEKDAY", 1, { min: 0, max: 6 }),
+      digestHour: envNumber("TEAMMATE_DIGEST_HOUR", 9, { min: 0, max: 23 }),
     },
     jira: {
       baseUrl: env("JIRA_BASE_URL"),
@@ -340,7 +366,9 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       projectKey: env("JIRA_PROJECT_KEY"),
       jql: env("JIRA_JQL"),
       label: env("JIRA_LABEL") ?? "doc-request",
-      prdSpaces: list(env("SCRIBE_CONFLUENCE_SPACES") ?? env("TEAMMATE_CONFLUENCE_SPACES")).map((key) => key.toUpperCase()),
+      // Set, even to empty, it is Scribe's own list: empty means "no Confluence PRDs", never
+      // "whatever the Teammate may read".
+      prdSpaces: list(process.env.SCRIBE_CONFLUENCE_SPACES !== undefined ? env("SCRIBE_CONFLUENCE_SPACES") : env("TEAMMATE_CONFLUENCE_SPACES")).map((key) => key.toUpperCase()),
       issueType: env("JIRA_ISSUE_TYPE") ?? "Task",
       inProgressStatus: env("JIRA_IN_PROGRESS_STATUS") ?? "In Progress",
       inReviewStatus: env("JIRA_IN_REVIEW_STATUS") ?? "In Review",

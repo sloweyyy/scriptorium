@@ -40,7 +40,7 @@ Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
    signing, where the audit log lives, approvers and admins, spend caps, the Slack app's
    scopes and channel membership, Confluence spaces, GitHub repos, and that the vault repo is
    separate from the docs repo. Each problem is printed with its fix. It is read-only.
-2. `curl $URL/health` should report the configured surfaces (`jira`, `docsRepo`, webhooks).
+2. `curl $URL/health` should report the configured surfaces (`jira`, `docsRepo`, webhooks) and which agents started. A 503 with `"status": "degraded"` names the one that failed under `surfaces`; its start error is in the logs.
 3. `pnpm jira:doctor`, run locally against the same Jira, checks auth, JQL, comments,
    attachments and transitions (read-only unless `--write`).
 4. In an allowed channel, `@Teammate what does <a documented feature> do?` should get a

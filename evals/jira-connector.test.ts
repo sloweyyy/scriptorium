@@ -108,7 +108,7 @@ describe("jira_children", () => {
 });
 
 describe("small Jira edits: move, assign, label, link", () => {
-  function stubEdits(users: Array<{ accountId: string; displayName: string }>) {
+  function stubEdits(users: Array<{ accountId: string; displayName: string; emailAddress?: string }>) {
     vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
       const url = decodeURIComponent(String(input));
       const method = init?.method ?? "GET";
@@ -128,13 +128,20 @@ describe("small Jira edits: move, assign, label, link", () => {
     expect(await tools().jira_transition!.run({ key: "HR-1", status: "Done" })).toMatch(/^NOT_ALLOWED/);
   });
 
-  it("assigns only when exactly one person matches the name the approver read", async () => {
-    stubEdits([{ accountId: "acc-mai", displayName: "Mai Tran" }]);
-    expect(await tools().jira_assign!.run({ key: "DOC-7", assignee: "Mai" }, { approval: { id: "a1" } })).toBe("Assigned jira:DOC-7 to Mai Tran.");
+  it("assigns only the one person whose name or email is exactly what the approver read", async () => {
+    stubEdits([{ accountId: "acc-mai", displayName: "Mai Tran", emailAddress: "mai@beacon.example" }, { accountId: "acc-maia", displayName: "Maia Lee" }]);
+    expect(await tools().jira_assign!.run({ key: "DOC-7", assignee: "mai tran" }, { approval: { id: "a1" } })).toBe("Assigned jira:DOC-7 to Mai Tran.");
     expect(requests.find((request) => request.method === "PUT")?.body).toEqual({ accountId: "acc-mai" });
-    stubEdits([{ accountId: "a", displayName: "Mai A" }, { accountId: "b", displayName: "Mai B" }]);
-    expect(await tools().jira_assign!.run({ key: "DOC-7", assignee: "Mai" }, { approval: { id: "a2" } })).toMatch(/^NOT_ALLOWED: "Mai" matches 2 people/);
-    expect(await tools().jira_assign!.run({ key: "DOC-7", assignee: "unassigned" }, { approval: { id: "a3" } })).toBe("Assigned jira:DOC-7 to nobody.");
+    expect(await tools().jira_assign!.run({ key: "DOC-7", assignee: "Mai@Beacon.example" }, { approval: { id: "a1b" } })).toBe("Assigned jira:DOC-7 to Mai Tran.");
+    // A partial name is whoever the fuzzy search returns today: refused, even with one hit.
+    stubEdits([{ accountId: "acc-mai", displayName: "Mai Tran" }]);
+    const puts = () => requests.filter((request) => request.method === "PUT").length;
+    const before = puts();
+    expect(await tools().jira_assign!.run({ key: "DOC-7", assignee: "Mai" }, { approval: { id: "a2" } })).toMatch(/^NOT_ALLOWED: No Jira user is named exactly "Mai"/);
+    expect(puts()).toBe(before);
+    stubEdits([{ accountId: "a", displayName: "Mai Tran" }, { accountId: "b", displayName: "Mai Tran" }]);
+    expect(await tools().jira_assign!.run({ key: "DOC-7", assignee: "Mai Tran" }, { approval: { id: "a3" } })).toMatch(/^NOT_ALLOWED: "Mai Tran" is the name of 2 people/);
+    expect(await tools().jira_assign!.run({ key: "DOC-7", assignee: "unassigned" }, { approval: { id: "a4" } })).toBe("Assigned jira:DOC-7 to nobody.");
   });
 
   it("labels are validated, and a link needs both ends inside the allow-list", async () => {

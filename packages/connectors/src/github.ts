@@ -25,6 +25,9 @@ export interface GitHubToolSettings {
 }
 
 const PullNumber = z.number().int().positive();
+const PR_BODY_CHARS = 4_000;
+const PR_FILES_LIMIT = 100;
+
 const Pull = z.object({
   number: z.number(),
   title: z.string(),
@@ -94,10 +97,14 @@ export function githubTools(settings: GitHubToolSettings): ToolSpec[] {
             `github:${repo}/pull/${number} — ${pull.title} [${pull.state}] by ${pull.user?.login ?? "unknown"} (${pull.head.ref}) ${pull.html_url}`,
             keys.length ? `Jira keys mentioned: ${keys.join(", ")}` : "No Jira key mentioned.",
             "",
-            (pull.body ?? "").slice(0, 4_000) || "_(no description)_",
+            (pull.body ?? "").length > PR_BODY_CHARS
+              ? `${(pull.body ?? "").slice(0, PR_BODY_CHARS)}\n\n_(description cut at ${PR_BODY_CHARS} characters; the rest is not shown)_`
+              : pull.body || "_(no description)_",
             "",
-            `Files changed (${files.length}):`,
-            ...files.slice(0, 100).map((file) => `- ${file.status} ${file.filename} (+${file.additions}/-${file.deletions})`),
+            files.length >= PR_FILES_LIMIT
+              ? `Files changed (the first ${PR_FILES_LIMIT} only; the PR may change more — say the list is partial):`
+              : `Files changed (${files.length}):`,
+            ...files.slice(0, PR_FILES_LIMIT).map((file) => `- ${file.status} ${file.filename} (+${file.additions}/-${file.deletions})`),
           ].join("\n");
         }),
       records: (input, output) => {

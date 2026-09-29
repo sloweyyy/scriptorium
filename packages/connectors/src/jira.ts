@@ -70,10 +70,11 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
           if (!projects.length) throw new JiraAccessError("No Jira projects are allowed for this agent.");
           // `days` is validated as an integer, so it is safe to place in JQL; nothing else is.
           const jql = `project in (${projects.map(jqlString).join(",")}) AND updated >= -${days}d ORDER BY updated DESC`;
-          const issues = await settings.client.searchIssues(jql, 30);
-          return JSON.stringify(
-            issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
-          );
+          const issues = await settings.client.searchIssues(jql, RECENT_LIMIT);
+          return JSON.stringify([
+            ...issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
+            ...cutNote(issues.length, RECENT_LIMIT, "issues updated in that window"),
+          ]);
         }),
       records: citeRecords,
     },
@@ -86,10 +87,11 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
           const key = checkKey(z.object({ key: z.string() }).parse(input).key);
           // Only a validated, project-checked key reaches the JQL — nothing the model wrote.
           const jql = `project in (${projects.map(jqlString).join(",")}) AND parent = ${jqlString(key)} ORDER BY status ASC, updated DESC`;
-          const issues = await settings.client.searchIssues(jql, 50);
-          return JSON.stringify(
-            issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
-          );
+          const issues = await settings.client.searchIssues(jql, CHILDREN_LIMIT);
+          return JSON.stringify([
+            ...issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
+            ...cutNote(issues.length, CHILDREN_LIMIT, "child issues"),
+          ]);
         }),
       records: citeRecords,
     },
@@ -178,8 +180,8 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
     },
     {
       name: "jira_assign",
-      description: "Assign a Jira issue to a person (their name or email), or \"unassigned\". Requires human approval; it is not done until approved.",
-      inputSchema: z.object({ key: z.string(), assignee: z.string().min(1).max(120).describe('A name or email, or "unassigned".') }),
+      description: "Assign a Jira issue to a person, by their full Jira display name or email exactly, or \"unassigned\". A partial name is refused: ask who they mean. Requires human approval; it is not done until approved.",
+      inputSchema: z.object({ key: z.string(), assignee: z.string().min(1).max(120).describe('Their full Jira display name or email, exactly; or "unassigned".') }),
       run: (input, context) =>
         refusalOr(async () => {
           const parsed = z.object({ key: z.string(), assignee: z.string().min(1).max(120) }).parse(input);
@@ -188,9 +190,19 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
           let person: { accountId: string | null; name: string };
           if (/^unassign(ed)?$/i.test(wanted)) person = { accountId: null, name: "nobody" };
           else {
-            // The approver read a name, not an id: exactly one person may match it, or nothing is done.
-            const matches = await settings.client.findUsers(wanted);
-            if (matches.length !== 1) throw new JiraAccessError(matches.length ? `"${wanted}" matches ${matches.length} people; name one exactly.` : `No Jira user matches "${wanted}".`);
+            // The approver read a name, not an id, and the lookup runs after they approved. So
+            // the name must BE the person: an exact display name or email, held by exactly one
+            // user. Jira's search is fuzzy — "Mai" finds "Mai Tran" today and "Maia" tomorrow,
+            // and the approver would have signed off on whoever came back.
+            const exact = wanted.toLowerCase();
+            const matches = (await settings.client.findUsers(wanted)).filter(
+              (user) => user.displayName.toLowerCase() === exact || user.emailAddress?.toLowerCase() === exact,
+            );
+            if (matches.length !== 1) {
+              throw new JiraAccessError(
+                matches.length ? `"${wanted}" is the name of ${matches.length} people; use their email.` : `No Jira user is named exactly "${wanted}"; use their full display name or email.`,
+              );
+            }
             person = { accountId: (matches[0] as { accountId: string }).accountId, name: (matches[0] as { displayName: string }).displayName };
           }
           await once(settings.ledger, opKey("jira.assign", key, person.accountId ?? "", context?.approval?.id), () => settings.client.assign(key, person.accountId), { meta: { tool: "jira_assign", key } });
@@ -251,6 +263,18 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
   }
 
   return tools;
+}
+
+const RECENT_LIMIT = 30;
+const CHILDREN_LIMIT = 50;
+
+/**
+ * A list that filled its limit may be missing entries, and a summary built from it must say
+ * so instead of reading as the whole picture ("all 50 children are done"). The note carries
+ * no `cite`, so it is never a record.
+ */
+function cutNote(count: number, limit: number, what: string): Array<{ note: string }> {
+  return count >= limit ? [{ note: `Only the first ${limit} ${what} are listed; there may be more. Say the list is partial.` }] : [];
 }
 
 function citeRecords(_input: unknown, output: string): string[] {

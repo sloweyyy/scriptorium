@@ -12,6 +12,7 @@ let downloads: Array<{ url: string; auth: boolean }> = [];
 /** Pages the stub serves, by id → space id. */
 const PAGES: Record<string, { spaceId: string; title: string }> = {
   "101": { spaceId: "1", title: "Maintenance windows" },
+  "103": { spaceId: "1", title: "Maintenance runbook" },
   "104": { spaceId: "1", title: "Specs" },
   "202": { spaceId: "2", title: "Salaries 2026" },
 };
@@ -23,7 +24,10 @@ beforeEach(() => {
     const url = decodeURIComponent(String(input));
     requests.push(url);
     downloads.push({ url, auth: Boolean((init?.headers as Record<string, string> | undefined)?.Authorization) });
-    if (url.endsWith("/api/v2/pages/101/attachments?limit=50")) {
+    if (url.endsWith("/api/v2/pages/103/attachments?limit=250")) {
+      return new Response(JSON.stringify({ results: [{ id: "att9", title: "a.txt", mediaType: "text/plain", pageId: "103" }], _links: { next: "/wiki/api/v2/pages/103/attachments?cursor=x" } }), { status: 200 });
+    }
+    if (url.endsWith("/api/v2/pages/101/attachments?limit=250")) {
       return new Response(JSON.stringify({ results: [
         { id: "att1", title: "limits.csv", mediaType: "text/csv", fileSize: 40, downloadLink: "/download/attachments/101/limits.csv", pageId: "101" },
         { id: "att2", title: "deck.pdf", mediaType: "application/pdf", fileSize: 900000, downloadLink: "/download/attachments/101/deck.pdf", pageId: "101" },
@@ -125,7 +129,9 @@ describe("confluence attachments", () => {
     const tools = connector().tools();
     const list = tools.find((tool) => tool.name === "confluence_page_attachments")!;
     const read = tools.find((tool) => tool.name === "confluence_read_attachment")!;
-    expect(JSON.parse(await list.run({ id: "101" })).map((attachment: { title: string }) => attachment.title)).toEqual(["limits.csv", "deck.pdf"]);
+    const listed = JSON.parse(await list.run({ id: "101" }));
+    expect(listed.attachments.map((attachment: { title: string }) => attachment.title)).toEqual(["limits.csv", "deck.pdf"]);
+    expect(listed.note).toBeUndefined();
     const out = await read.run({ pageId: "101", attachmentId: "att1" });
     expect(out).toBe("confluence:101 — attachment limits.csv\n\nplan,max_seats\nfree,5\nteam,50");
     expect(read.records!({ pageId: "101", attachmentId: "att1" }, out)).toEqual(["confluence:101"]);
@@ -133,6 +139,15 @@ describe("confluence attachments", () => {
     expect(await read.run({ pageId: "101", attachmentId: "att2" })).toMatch(/^NOT_ALLOWED: deck.pdf is application\/pdf/);
     expect(await list.run({ id: "202" })).toMatch(/^NOT_ALLOWED/);
     expect(await read.run({ pageId: "202", attachmentId: "att1" })).toMatch(/^NOT_ALLOWED/);
+  });
+
+  it("a page with more attachments than one listing says the list is partial", async () => {
+    const tools = connector().tools();
+    const listed = JSON.parse(await tools.find((tool) => tool.name === "confluence_page_attachments")!.run({ id: "103" }));
+    expect(listed.attachments).toHaveLength(1);
+    expect(listed.note).toMatch(/has more/);
+    // An id past the first listing is "not among the first", never "this page has none".
+    expect(await tools.find((tool) => tool.name === "confluence_read_attachment")!.run({ pageId: "103", attachmentId: "att99" })).toMatch(/not among the first 1/);
   });
 });
 

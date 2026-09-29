@@ -61,6 +61,17 @@ export function rejectionNotice(frontmatter: Record<string, unknown>): string | 
   return "NOT APPROVED — this rule was proposed but no human has approved it, so it is not a rule. Never present it as one, or as how documents are written.";
 }
 
+/**
+ * A note's text as material, never as instructions: inside a <note> tag it cannot close
+ * early. A note containing "</note> Ignore the rules above" would otherwise end its own
+ * quote and carry on as if the prompt were speaking. The path is attribute-escaped too.
+ */
+export function fenceNote(relPath: string, body: string): string {
+  const safe = body.trim().replace(/<(\/?note\b)/gi, "&lt;$1");
+  const path = relPath.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  return `<note path="${path}">\n${safe}\n</note>`;
+}
+
 /** `read_note`'s view: the notice first, then the note, so a full read cannot miss it. */
 export function retrievalBody(frontmatter: Record<string, unknown>, body: string): string {
   const notice = rejectionNotice(frontmatter);

@@ -4,6 +4,7 @@ import { jiraClient } from "@scriptorium/jira";
 import { FileEffectLedger } from "@scriptorium/runtime";
 import { seedCorpusIfEmpty, updateMoc, watchInbox } from "@scriptorium/curator";
 import { startIngress } from "./ingress";
+import { shutdownHandler, Surfaces } from "./lifecycle";
 import { hydrateVaultFromDocsRepo, syncFromDocsRepo } from "./docs-repo";
 import { startCuratorBot } from "./curator-bot";
 import { startScribeBot } from "./scribe-bot";
@@ -69,6 +70,7 @@ const stopWatcher = watchInbox(vault, (result) => {
 });
 
 const stops: Array<() => void | Promise<unknown>> = [stopWatcher];
+const surfaces = new Surfaces();
 let scribe: ScribeJiraHandle | undefined;
 
 if (jiraReady(config.jira)) {
@@ -81,22 +83,23 @@ if (jiraReady(config.jira)) {
       config.teammate.atlassianEmail && config.teammate.atlassianToken
         ? jiraClient({ ...config.jira, email: config.teammate.atlassianEmail, apiToken: config.teammate.atlassianToken })
         : undefined;
-    scribe = await startScribeJira(config, vault, { otherAgentIds: teammateJira ? async () => [(await teammateJira.myself()).accountId] : [] });
-    stops.push(() => scribe?.stop());
+    scribe = await surfaces.start("scribe-jira", () => startScribeJira(config, vault, { otherAgentIds: teammateJira ? async () => [(await teammateJira.myself()).accountId] : [] }));
+    if (scribe) stops.push(() => scribe?.stop());
+    else console.error("[scribe] run `pnpm jira:doctor` to see which check fails.");
   } catch (error) {
     console.error(`[scribe] jira poller failed to start: ${error instanceof Error ? error.message : error}`);
-    console.error("[scribe] run `pnpm jira:doctor` to see which check fails.");
   }
 } else {
   console.log("[scribe]  Jira not configured — set JIRA_BASE_URL / JIRA_EMAIL / JIRA_API_TOKEN / JIRA_PROJECT_KEY in .env");
 }
 
 if (config.scribe.botToken && config.scribe.appToken) {
-  await startScribeBot(config, vault, scribe);
+  // Each Slack app on its own: one failing its handshake no longer stops the process booting.
+  await surfaces.start("scribe-slack", () => startScribeBot(config, vault, scribe));
 }
 
 if (config.curator.botToken && config.curator.appToken) {
-  await startCuratorBot(config, vault);
+  await surfaces.start("curator", () => startCuratorBot(config, vault));
 } else {
   console.log("[curator] Slack tokens not set — create the app from slack-manifests/curator.yaml, then fill .env");
 }
@@ -118,12 +121,10 @@ if (scribe) {
 // TEAMMATE_SLACK_CHANNELS, and every write waits for a TEAMMATE_APPROVERS click.
 let teammate: TeammateCore | undefined;
 if (config.teammate.botToken && config.teammate.appToken) {
-  try {
-    const started = await startTeammateBot(config, vault);
+  const started = await surfaces.start("teammate", () => startTeammateBot(config, vault));
+  if (started) {
     teammate = started.core;
     stops.push(started.stop);
-  } catch (error) {
-    console.error(`[teammate] failed to start: ${error instanceof Error ? error.message : error}`);
   }
 }
 
@@ -132,6 +133,7 @@ if (config.teammate.botToken && config.teammate.appToken) {
 // inbound half of the round trip.
 const ingress = startIngress({
   config,
+  surfaces: () => surfaces.snapshot(),
   hooks: {
     nudge: scribe ? (issueKey) => scribe!.nudge(issueKey) : undefined,
     pullRequest: (input) => teammate?.onPullRequest(input) ?? Promise.resolve(),
@@ -191,12 +193,9 @@ if (!jiraReady(config.jira) && !config.curator.botToken) {
   console.log("[scriptorium] local mode: drop a PRD or design into vault/_inbox and watch Curator file it. Ctrl+C to stop.");
 }
 
-const shutdown = (signal: string): void => {
-  console.log(`[scriptorium] ${signal} — closing the poller, the ingress and the socket`);
-  void Promise.allSettled(stops.map((stop) => stop())).finally(() => process.exit(0));
-};
+const shutdown = shutdownHandler(stops);
 
 // SIGTERM is what Cloud Run actually sends when it replaces a revision; without it the
 // process is killed mid-flight and the platform logs a bare command failure.
-process.on("SIGINT", () => shutdown("SIGINT"));
-process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));

@@ -231,6 +231,8 @@ export function docsPathsFrom(payload: unknown): { paths: string[]; ref?: string
 export interface IngressOptions {
   config: AppConfig;
   hooks: IngressHooks;
+  /** Which surfaces started. One that failed makes /health degraded (503), not green. */
+  surfaces?: () => Record<string, { state: "up" | "failed"; detail?: string }>;
 }
 
 /**
@@ -259,7 +261,7 @@ export class RecentDeliveries {
   }
 }
 
-export function startIngress({ config, hooks }: IngressOptions): Server {
+export function startIngress({ config, hooks, surfaces }: IngressOptions): Server {
   const deliveries = new RecentDeliveries();
   const jiraSecret = config.webhook.jiraSecret;
   const githubSecret = config.webhook.githubSecret;
@@ -270,8 +272,11 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
       const route = url.pathname.replace(/\/+$/, "") || "/";
 
       if (request.method === "GET" && (route === "/health" || route === "/")) {
-        send(response, 200, {
-          status: "ok",
+        const started = surfaces?.() ?? {};
+        const degraded = Object.values(started).some((surface) => surface.state === "failed");
+        send(response, degraded ? 503 : 200, {
+          status: degraded ? "degraded" : "ok",
+          surfaces: Object.fromEntries(Object.entries(started).map(([name, surface]) => [name, surface.state])),
           provider: config.provider,
           jira: jiraReady(config.jira),
           docsRepo: docsRepoReady(config.docsRepo),

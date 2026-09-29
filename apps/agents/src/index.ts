@@ -15,3 +15,4 @@ export * from "./digest";
 export * from "./staleness-watch";
 export * from "./doctor";
 export * from "./erase";
+export * from "./lifecycle";

@@ -144,6 +144,14 @@
   .hero-video { margin: 40px 0 0; }
   .hero-video video { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 16px; border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow); }
   .hero-video figcaption { margin-top: 10px; font-size: 14px; color: var(--muted); }
+  .hero-video .player { position: relative; }
+  .hero-video .sound { position: absolute; right: 12px; bottom: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 999px; border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 86%, transparent); color: var(--muted); font: 600 13px/1 Inter, system-ui, sans-serif; cursor: pointer; backdrop-filter: blur(6px); }
+  .hero-video .sound:hover { color: var(--ink); }
+  .hero-video .sound[aria-pressed="true"] { color: var(--accent); }
+  .hero-video .sound svg { width: 15px; height: 15px; }
+  .hero-video .sound .on, .hero-video .sound[aria-pressed="true"] .off { display: none; }
+  .hero-video .sound[aria-pressed="true"] .on { display: inline; }
+  @media (max-width: 600px) { .hero-video .sound { right: 8px; bottom: 8px; padding: 5px 8px; font-size: 12px; } .hero-video .sound .label { display: none; } }
   details.more { margin-top: 16px; }
   details.more summary { cursor: pointer; color: var(--accent); font-weight: 600; font-size: 15px; list-style: none; }
   details.more summary::-webkit-details-marker { display: none; }
@@ -180,14 +188,21 @@
     <h1>The AI teammate that shows its receipts.</h1>
     <p class="lede">Every answer comes with its sources. Every change comes with a named person's sign-off. Everything lands on a record nobody can quietly edit. scriptorium does real work across your tools, and it can show you proof of all of it.</p>
     <div class="cta">
-      <a class="btn primary" href="demo/">▶ Watch the 80-second demo</a>
+      <a class="btn primary" href="demo/">▶ Watch the 96-second demo</a>
       <a class="btn" href="https://github.com/sloweyyy/scriptorium">View the source</a>
       <a class="btn" href="https://github.com/sloweyyy/scriptorium#quick-start">Self-host it</a>
       <a class="btn" href="https://github.com/sloweyyy/scriptorium/blob/main/docs/security-model.md">Read the security model</a>
     </div>
     <figure class="hero-video">
-      <video id="heroVideo" autoplay muted loop playsinline preload="metadata" poster="demo/poster-light.png" aria-label="20-second clip: a cited answer, then an approval that runs exactly once"></video>
-      <figcaption><a href="demo/">▶ The full 80-second demo</a> · cited answers, gaps that become tickets, approvals, docs that learn with permission</figcaption>
+      <div class="player">
+        <video id="heroVideo" autoplay muted loop playsinline preload="metadata" poster="demo/poster-light.png" aria-label="20-second clip: a cited answer, then an approval that is refused, given, and carried out exactly once"></video>
+        <button class="sound" id="heroSound" type="button" aria-pressed="false" aria-label="Sound" hidden>
+          <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="m22 9-6 6M16 9l6 6"/></svg>
+          <svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+          <span class="label">Sound off</span>
+        </button>
+      </div>
+      <figcaption><a href="demo/">▶ The full 96-second demo</a> · cited answers, gaps that become tickets, approvals shown in full, docs that learn with permission</figcaption>
     </figure>
     <div class="stats" id="stats"></div>
   </div>
@@ -369,7 +384,19 @@ pnpm doctor                   # names anything missing, and how to fix it</code>
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
   video.poster = dark ? "demo/poster.png" : "demo/poster-light.png";
   if (matchMedia("(prefers-reduced-motion: reduce)").matches) video.removeAttribute("autoplay");
-  else video.src = dark ? "demo/highlight.mp4" : "demo/highlight-light.mp4";
+  else {
+    video.src = dark ? "demo/highlight.mp4" : "demo/highlight-light.mp4";
+    // It autoplays muted; the sound comes on only when asked for, and restarts the clip so it
+    // is heard from the top.
+    const sound = el("heroSound");
+    sound.hidden = false;
+    sound.addEventListener("click", () => {
+      video.muted = !video.muted;
+      if (!video.muted) { video.currentTime = 0; video.play().catch(() => {}); }
+      sound.setAttribute("aria-pressed", String(!video.muted));
+      sound.querySelector(".label").textContent = video.muted ? "Sound off" : "Sound on";
+    });
+  }
   el("rules").innerHTML = D.rules.map((r, i) => `<div class="rule"><div class="n">${i + 1}</div><div><h3>${esc(r.title)}</h3><p>${esc(r.text)}</p></div></div>`).join("");
   el("findings").innerHTML =
     `<tr><th>Severity</th><th>What could have gone wrong</th><th>Fix</th></tr>` +

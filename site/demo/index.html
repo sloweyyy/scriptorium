@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>scriptorium demo</title>
-<meta name="description" content="An animated walkthrough of scriptorium: cited answers, gaps that become tickets, approvals bound to the exact change, docs that learn with permission, and a record you can check.">
+<meta name="description" content="An animated walkthrough of scriptorium, with sound: cited answers, gaps that become tickets, approvals that show every argument and are bound to the exact change, docs that learn with permission, a record you can check, and a teammate safe to leave running.">
 <link rel="icon" href="../favicon.svg" type="image/svg+xml">
 <meta property="og:type" content="video.other">
-<meta property="og:title" content="scriptorium in 80 seconds: the AI teammate that shows its receipts">
+<meta property="og:title" content="scriptorium in 96 seconds: the AI teammate that shows its receipts">
 <meta property="og:description" content="A source for every answer, a named sign-off for every change, a record nobody can quietly edit. Open source, for Slack, Jira, Confluence and GitHub.">
 <meta property="og:url" content="https://scriptorium-teammate.vercel.app/demo/">
 <meta property="og:image" content="https://scriptorium-teammate.vercel.app/demo/poster.png">
@@ -108,6 +108,14 @@
   .flash.allow { background: var(--accent-soft); color: var(--accent); }
   .flash.approve { background: var(--good-soft); color: var(--good); }
   .flash.hold { background: var(--warn-soft); color: var(--warn); }
+  .flash.deny { background: var(--bad-soft); color: var(--bad); }
+  .term { font: 14px/1.6 "JetBrains Mono", monospace; padding: 10px 14px; white-space: pre; }
+  .term .p { color: var(--faint); }
+  .term .ok { color: var(--good); }
+  .term .no { color: var(--bad); }
+  .inst { width: 300px; padding: 14px 16px; }
+  .inst .kind { font: 600 11px Inter, sans-serif; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+  .inst .name { font-size: 16px; font-weight: 600; margin-top: 4px; }
 
   .source { width: 300px; height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 14px; font-size: 15px; font-weight: 500; }
   .source .dot { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font: 700 12px Inter, sans-serif; color: #0f1116; }
@@ -177,10 +185,12 @@
     <a href="../">Project page</a>
     <a href="demo.mp4" id="download">Download video</a>
   </div>
+  <audio id="soundtrack" preload="none"></audio>
   <div class="frame" id="frame"><div id="stage" aria-label="Animated walkthrough of scriptorium"></div></div>
   <div class="controls" id="controls">
     <button id="play" type="button">Pause</button>
     <button id="restart" type="button">Restart</button>
+    <button id="sound" type="button" aria-pressed="false" title="The soundtrack is off until you turn it on">Sound off</button>
     <div class="bar" id="bar"><div class="fill" id="fill"></div></div>
     <span class="time mono" id="time">0:00</span>
   </div>
@@ -188,6 +198,8 @@
   <p class="note">A sketch of how it works, not screenshots: Slack, Jira, Confluence and GitHub are drawn as simple shapes. The product and people are fictional (the "Beacon" status-page product).</p>
 </div>
 
+<!-- The project page's numbers, so the film never quotes a different count than the site. -->
+<script src="../data.js"></script>
 <script>
 (() => {
   const stage = document.getElementById("stage");
@@ -201,6 +213,13 @@
   const token = (name) => getComputedStyle(stage).getPropertyValue(name).trim();
   const anims = [];
   const EASE = "cubic-bezier(.2,.7,.2,1)";
+  /**
+   * The sound cues, in ms: the helpers below add one wherever they animate something worth
+   * hearing, so picture and sound come from the same timeline. scripts/render-demo.mjs reads
+   * them (window.__demo.cues) and synthesizes the soundtrack from them.
+   */
+  const cues = [];
+  const cue = (type, seconds) => { cues.push({ type, t: Math.round(seconds * 1000) }); };
 
   // ---- building blocks -------------------------------------------------------------------
   function el(cls, html, x, y, w, h) {
@@ -223,17 +242,28 @@
   }
   const s = (seconds) => seconds * 1000;
   const inn = (node, t, d = 500, from = "translateY(14px) scale(.98)") => anim(node, [{ opacity: 0, transform: from }, { opacity: 1, transform: "none" }], s(t), d);
-  const pop = (node, t, d = 450) => anim(node, [{ opacity: 0, transform: "scale(.6)" }, { opacity: 1, transform: "scale(1.06)", offset: 0.7 }, { opacity: 1, transform: "scale(1)" }], s(t), d);
+  /** Pops in with a tick (or `sound`, or silently with null). */
+  const pop = (node, t, d = 450, sound = "tick") => {
+    if (sound) cue(sound, t);
+    return anim(node, [{ opacity: 0, transform: "scale(.6)" }, { opacity: 1, transform: "scale(1.06)", offset: 0.7 }, { opacity: 1, transform: "scale(1)" }], s(t), d);
+  };
   const out = (node, t, d = 400) => anim(node, [{ opacity: 1 }, { opacity: 0 }], s(t), d);
   const fade = (node, t, to, d = 400) => anim(node, [{ opacity: 1 }, { opacity: to }], s(t), d);
   const move = (node, t, d, dx, dy, easing = EASE) => anim(node, [{ opacity: 1, transform: "translate(0,0)" }, { opacity: 1, transform: `translate(${dx}px,${dy}px)` }], s(t), d, easing);
-  const shake = (node, t) => anim(node, [{ transform: "translateX(0)" }, { transform: "translateX(-8px)" }, { transform: "translateX(8px)" }, { transform: "translateX(-5px)" }, { transform: "translateX(0)" }], s(t), 420, "linear");
+  /** A refusal: the node shakes, and the refusal tone plays. */
+  const shake = (node, t) => {
+    cue("deny", t);
+    return anim(node, [{ transform: "translateX(0)" }, { transform: "translateX(-8px)" }, { transform: "translateX(8px)" }, { transform: "translateX(-5px)" }, { transform: "translateX(0)" }], s(t), 420, "linear");
+  };
   /** Text that types itself in: revealed left to right. */
   function typed(node, t, d) {
+    // One key blip per revealed step: steps(28, end) jumps at the end of each 28th.
+    for (let k = 1; k <= 28; k += 1) cue("type", t + (k * d) / 28 / 1000);
     anim(node, [{ opacity: 1, clipPath: "inset(0 100% 0 0)" }, { opacity: 1, clipPath: "inset(0 0 0 0)" }], s(t), d, "steps(28, end)");
   }
   /** A packet that flies from (x1,y1) to (x2,y2), then vanishes. */
   function packet(x1, y1, x2, y2, t, d = 700, cls = "") {
+    cue(cls === "good" ? "packetBack" : "packet", t);
     const dot = el(`packet ${cls}`, "", x1 - 6, y1 - 6);
     anim(dot, [{ opacity: 0, transform: "translate(0,0) scale(.5)" }, { opacity: 1, transform: "translate(0,0) scale(1)", offset: 0.12 }, { opacity: 1, transform: `translate(${x2 - x1}px,${y2 - y1}px) scale(1)`, offset: 0.9 }, { opacity: 0, transform: `translate(${x2 - x1}px,${y2 - y1}px) scale(.4)` }], s(t), d, "cubic-bezier(.45,0,.2,1)");
     return dot;
@@ -244,6 +274,7 @@
     return ring;
   }
   function flash(cls, text, x, y, t, d = 1300) {
+    if (/\bhold\b/.test(cls)) cue("soft", t);
     const node = el(`flash ${cls}`, text, x, y);
     anim(node, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none", offset: 0.15 }, { opacity: 1, transform: "none", offset: 0.8 }, { opacity: 0, transform: "translateY(-6px)" }], s(t), d);
     return node;
@@ -273,6 +304,7 @@
   const chapters = [];
   function caption(n, name, title, sub, t, end) {
     chapters.push({ name, t: s(t) });
+    cue("whoosh", t);
     const e = el("eyebrow", `${String(n).padStart(2, "0")} · ${name}`, 64, 44);
     const h = el("title", title, 64, 68);
     const p = el("sub", sub, 64, 120);
@@ -289,7 +321,7 @@
   name.style.textAlign = "center";
   const tag = el("end-sub", "The AI teammate for Slack, Jira, Confluence and GitHub<br>that shows its receipts.", 240, 390, 800);
   tag.style.textAlign = "center";
-  pop(logo, 0.3, 600);
+  pop(logo, 0.3, 600, "swell");
   inn(name, 0.8, 600);
   inn(tag, 1.4, 600);
   hideAll([logo, name, tag], 4.3);
@@ -322,7 +354,7 @@
   }
   const cast = [ana, anaWho, agent, agentLabel, gate, gateLabel, ...sources];
 
-  // ---- 01 · Ask (5–19s) -------------------------------------------------------------------
+  // ---- 01 · Sourced (5–19s) ---------------------------------------------------------------
   caption(1, "Sourced", "Every answer shows where it came from", "It answers from your docs, Jira, Confluence and GitHub, and cites the record behind each fact.", 5, 18.4);
   inn(ana, 5.4);
   inn(anaWho, 5.5);
@@ -350,54 +382,66 @@
   pop(cite1, 13.3);
   const ok1 = el("badge good", "✓ Every claim cites a record a tool actually fetched", 164, 430);
   inn(ok1, 13.9);
+  const run1 = el("chip", "receipt · run r-7f2c · pnpm trace r-7f2c", 164, 482);
+  pop(run1, 14.5);
   const fake = el("chip", "↳ docs/sla-page", 380, 380);
-  pop(fake, 15.0);
+  pop(fake, 15.4);
   const fakeNo = el("chip bad", "✗ never fetched: removed", 380, 380);
-  inn(fakeNo, 15.9, 300, "none");
-  out(fake, 15.9, 200);
-  anim(fakeNo, [{ opacity: 1 }, { opacity: 1, offset: 0.7 }, { opacity: 0 }], s(16.3), 1400);
-  hideAll([q1, a1, cite1, ok1], 18.4);
+  inn(fakeNo, 16.2, 300, "none");
+  cue("deny", 16.2);
+  out(fake, 16.2, 200);
+  anim(fakeNo, [{ opacity: 1 }, { opacity: 1, offset: 0.7 }, { opacity: 0 }], s(16.6), 1400);
+  hideAll([q1, a1, cite1, ok1, run1], 18.4);
 
   // ---- 02 · Gap (19–31s) ------------------------------------------------------------------
-  caption(2, "No citation, no claim", "If it isn't written down, it says so", "A question the docs can't answer becomes a gap note, and a documentation ticket.", 19, 30.4);
+  caption(2, "No citation, no claim", "If it isn't written down, it says so", "A question the docs can't answer becomes a gap note, then a ticket for the docs agent.", 19, 30.4);
   const q2 = el("bubble", '<span class="type">Can I export incidents as a PDF?</span>', 164, 240);
   inn(q2, 19.4, 350);
   typed(q2.firstChild, 19.5, 800);
   call(0, 20.6);
   const none1 = el("flash hold", "0 results", 1110, srcY(0) + 14);
   inn(none1, 21.2, 300);
+  cue("soft", 21.2);
   call(2, 21.6);
   const none2 = el("flash hold", "0 results", 1110, srcY(2) + 14);
   inn(none2, 22.2, 300);
+  cue("soft", 22.2);
   const a2 = el("bubble answer", '<span class="type">That isn\'t documented yet, so I won\'t guess.</span>', 164, 318);
   inn(a2, 23.0, 350);
   typed(a2.firstChild, 23.1, 900);
+  const nik = el("chip bad", "NOT_IN_KB", 180, 380);
+  pop(nik, 24.1);
   const gap = el("card doc", '<div class="kind">Gap note</div><div class="name">G-014 · incident PDF export</div><div class="lines"><i></i><i style="width:70%"></i></div>', 540, 420);
-  inn(gap, 24.4);
+  inn(gap, 24.6);
+  cue("tick", 24.6);
   const lane = el("card", '<div class="doc" style="width:auto;padding:12px 16px"><div class="kind">Docs agent\'s queue</div></div>', 900, 560, 300);
-  inn(lane, 24.8);
+  inn(lane, 25.0);
   move(gap, 25.8, 1100, 380, 120);
+  cue("whoosh", 25.8);
   out(gap, 26.8, 300);
   const ticket = el("chip good", "DOC-57 · doc request", 920, 606);
-  pop(ticket, 26.9);
+  pop(ticket, 26.9, 450, "packetBack");
   const loop = el("badge info", "The answer it couldn't give becomes the next page to write", 164, 430);
   inn(loop, 27.4);
-  hideAll([q2, a2, none1, none2, gap, lane, ticket, loop], 30.4);
+  hideAll([q2, a2, nik, none1, none2, gap, lane, ticket, loop], 30.4);
 
-  // ---- 03 · Approve (31–47s) --------------------------------------------------------------
-  caption(3, "Signed, not assumed", "Every change carries a named person's sign-off", "Every write waits on a card, bound by hash to the exact change the approver saw.", 31, 46.4);
+  // ---- 03 · Signed (31–51s) ---------------------------------------------------------------
+  caption(3, "Signed, not assumed", "Every change carries a named person's sign-off", "The card shows every argument in full. The signed approval is bound by hash to exactly that, and works once.", 31, 50.4);
   const q3 = el("bubble", '<span class="type">File this thread as a Jira ticket.</span>', 164, 240);
   inn(q3, 31.4, 350);
   typed(q3.firstChild, 31.5, 800);
-  const card = el("card approval", `<div class="head">⏳ Approval needed · jira_create_issue</div><div class="kv"><span>project:</span> DOC<br><span>summary:</span> Incident PDF export<br><span>labels:</span> customer-ask</div><div class="foot"><span class="btn primary">Approve</span><span class="btn">Reject</span><span class="hash">${LOCK} args #9f3c…a1</span></div>`, 330, 380);
-  packet(640, 342, 560, 400, 32.6, 600);
+  const card = el("card approval", `<div class="head">⏳ Approval needed · jira_create_issue</div><div class="kv"><span>project:</span> DOC<br><span>summary:</span> Incident PDF export<br><span>labels:</span> customer-ask<br><span>description:</span> Two customers asked to export<br>an incident's timeline as a PDF.</div><div class="foot"><span class="btn primary">Approve</span><span class="btn">Reject</span><span class="hash">${LOCK} signed · args #9f3c…a1</span></div>`, 164, 370);
+  packet(600, 330, 420, 390, 32.6, 600);
   inn(card, 33.1);
-  const lockNote = el("badge info", "Approval covers these exact arguments, nothing else", 790, 612);
+  cue("tick", 33.1);
+  const lockNote = el("badge info", "Every argument shown in full, never cut", 790, 560);
   inn(lockNote, 34.0);
+  const lockNote2 = el("badge info", "The approval covers exactly these, nothing else", 790, 604);
+  inn(lockNote2, 34.5);
   const cur1 = el("", CURSOR, 150, 300);
   inn(cur1, 35.0, 250, "none");
-  move(cur1, 35.1, 900, 222, 202);
-  const deny = el("toast bad", "Not recorded: the person who asked can't approve it", 330, 330);
+  move(cur1, 35.1, 900, 50, 262);
+  const deny = el("toast bad", "Not recorded: the person who asked can't approve it", 196, 314);
   inn(deny, 36.2, 300);
   shake(card, 36.2);
   out(deny, 37.8);
@@ -409,100 +453,175 @@
   inn(benWho, 38.1);
   const cur2 = el("", CURSOR, 150, 520);
   inn(cur2, 38.6, 250, "none");
-  move(cur2, 38.7, 800, 222, -18);
-  const approved = el("toast good", "✓ Approved by Ben", 330, 330);
+  move(cur2, 38.7, 800, 50, 42);
+  const approved = el("toast good", "✓ Approved by Ben", 196, 314);
   inn(approved, 39.6, 300);
+  cue("chime", 39.6);
   out(cur2, 40.2, 200);
   packet(AGENT_OUT[0], AGENT_OUT[1], ...toSource(1), 40.4, 650, "good");
   flash("approve centred", "approve · spent once", 803, srcY(1) - 30, 40.6, 1300);
   highlight(900, srcY(1), 300, 52, 40.95, 1500, "good");
   const created = el("chip good", "DOC-58 created", 1062, srcY(1) + 13);
   pop(created, 41.4);
-  const stamp = el("stamp", "Exactly once", 560, 596);
-  pop(stamp, 42.4, 500);
+  hideAll([lockNote, lockNote2], 42.0);
+  const stamp = el("stamp", "Exactly once", 850, 560);
+  pop(stamp, 42.4, 500, "thump");
   packet(AGENT_OUT[0], AGENT_OUT[1], ...toSource(1), 43.4, 650);
   flash("hold centred", "retry · already done", 803, srcY(1) - 30, 43.6, 1400);
-  const once = el("badge good", "Retries, restarts and double clicks never do it twice", 790, 612);
+  const once = el("badge good", "Retries, restarts and double clicks never do it twice", 790, 630);
   inn(once, 44.2);
-  out(lockNote, 44.0, 200);
-  hideAll([q3, card, ben, benWho, approved, created, stamp, once, ...cast], 46.4);
+  hideAll([q3, card, approved, created, stamp, once, ben, benWho], 45.6);
+  // A change too long to show in full is refused before any card, never shown cut.
+  const q4 = el("bubble", '<span class="type">Put the whole runbook on Confluence.</span>', 164, 240);
+  inn(q4, 46.0, 350);
+  typed(q4.firstChild, 46.1, 900);
+  packet(AGENT_OUT[0], AGENT_OUT[1], 800, 290, 47.3, 450);
+  flash("deny centred", "31,400 chars · too long for one card", 803, 545, 47.7, 2300);
+  const tooLong = el("toast bad", "✗ Refused before any card is posted: nobody approves what they can't read", 164, 380);
+  inn(tooLong, 47.8, 300);
+  shake(tooLong, 47.9);
+  const split = el("badge info", "The model is told to split it into changes a person can check", 164, 440);
+  inn(split, 48.6);
+  hideAll([q4, tooLong, split, ...cast], 50.4);
 
-  // ---- 04 · Learn (47–61s) ----------------------------------------------------------------
-  caption(4, "Docs that learn, with permission", "It drafts the docs. People approve every word", "The docs agent writes from a PRD on the ticket, revises on feedback, and learns only the rules a human approves.", 47, 60.4);
+  // ---- 04 · Learn (51–65s) ----------------------------------------------------------------
+  caption(4, "Docs that learn, with permission", "It drafts the docs. People approve every word", "It writes from the ticket's PRD, revises on feedback, opens one pull request per ticket, and learns only rules a human approves.", 51, 64.4);
   const docX = [70, 320, 570, 820, 1070];
   const docY = 250;
   const prd = el("card doc", '<div class="kind">Ticket · DOC-57</div><div class="name">PRD + wireframe</div><div class="lines"><i></i><i style="width:80%"></i><i style="width:60%"></i></div>', docX[0], docY);
   const v1 = el("card doc", '<div class="kind">Draft v1</div><div class="name">Incident PDF export</div><div class="lines"><i class="accent"></i><i></i><i style="width:75%"></i></div>', docX[1], docY);
   const review = el("card doc", '<div class="kind">Review</div><div class="name">"State the timezone."</div><div class="lines"><i style="width:55%"></i></div><div class="who" style="margin-top:8px">— Ana</div>', docX[2], docY);
   const v2 = el("card doc", '<div class="kind">Draft v2</div><div class="name">Incident PDF export</div><div class="lines"><i class="accent"></i><i></i><i style="width:85%"></i></div>', docX[3], docY);
-  const pub = el("card doc", '<div class="kind">Published</div><div class="name">✓ approved by Ana</div><div class="lines"><i class="accent"></i><i></i></div><div class="who" style="margin-top:8px">docs site · pull request</div>', docX[4], docY);
+  const pub = el("card doc", '<div class="kind">Pull request · DOC-57</div><div class="name">✓ approved by Ana</div><div class="lines"><i class="accent"></i><i></i></div><div class="who" style="margin-top:8px">1 file: this ticket\'s doc only</div>', docX[4], docY);
   pub.style.borderColor = "var(--good-line)";
-  inn(prd, 47.5);
+  const b4 = 51;
+  inn(prd, b4 + 0.5);
+  cue("tick", b4 + 0.5);
   const w4 = [];
-  w4.push(wire(`M${docX[0] + 190} ${docY + 60} L${docX[1]} ${docY + 60}`, 48.3, 400));
-  inn(v1, 48.6);
-  w4.push(wire(`M${docX[1] + 190} ${docY + 60} L${docX[2]} ${docY + 60}`, 49.4, 400));
-  inn(review, 49.7);
-  w4.push(wire(`M${docX[2] + 190} ${docY + 60} L${docX[3]} ${docY + 60}`, 50.8, 400));
-  inn(v2, 51.1);
-  w4.push(wire(`M${docX[3] + 190} ${docY + 60} L${docX[4]} ${docY + 60}`, 52.1, 400, "good"));
-  inn(pub, 52.4);
+  w4.push(wire(`M${docX[0] + 190} ${docY + 60} L${docX[1]} ${docY + 60}`, b4 + 1.3, 400));
+  inn(v1, b4 + 1.6);
+  cue("tick", b4 + 1.6);
+  w4.push(wire(`M${docX[1] + 190} ${docY + 60} L${docX[2]} ${docY + 60}`, b4 + 2.4, 400));
+  inn(review, b4 + 2.7);
+  cue("tick", b4 + 2.7);
+  w4.push(wire(`M${docX[2] + 190} ${docY + 60} L${docX[3]} ${docY + 60}`, b4 + 3.8, 400));
+  inn(v2, b4 + 4.1);
+  cue("tick", b4 + 4.1);
+  w4.push(wire(`M${docX[3] + 190} ${docY + 60} L${docX[4]} ${docY + 60}`, b4 + 5.1, 400, "good"));
+  inn(pub, b4 + 5.4);
+  cue("chime", b4 + 5.4);
   const lesson = el("card lesson", '<div style="display:flex;align-items:center;gap:10px"><span class="id">L-007</span><span class="status proposed" id="st">proposed</span></div><div class="rule">Always state the timezone for scheduled times.</div>', 460, 450);
-  w4.push(wire(`M${docX[2] + 95} ${docY + 140} L${docX[2] + 95} 450`, 53.6, 500));
-  inn(lesson, 54.0);
+  w4.push(wire(`M${docX[2] + 95} ${docY + 150} L${docX[2] + 95} 450`, b4 + 6.6, 500));
+  inn(lesson, b4 + 7.0);
+  cue("tick", b4 + 7.0);
   const approvedStatus = el("status approved", "approved ✓ by Ana", 526, 465);
-  fade(lesson.querySelector("#st"), 55.4, 0, 200);
-  inn(approvedStatus, 55.6, 300, "none");
+  fade(lesson.querySelector("#st"), b4 + 8.4, 0, 200);
+  inn(approvedStatus, b4 + 8.6, 300, "none");
+  cue("chime", b4 + 8.6);
   const next = el("card doc", '<div class="kind">Next ticket · DOC-61</div><div class="name">Draft v1</div><div class="lines"><i class="accent"></i><i></i></div>', 960, 470);
-  w4.push(wire(`M880 520 L960 520`, 56.8, 400, "good"));
-  inn(next, 57.1);
+  w4.push(wire(`M880 520 L960 520`, b4 + 9.8, 400, "good"));
+  inn(next, b4 + 10.1);
+  cue("tick", b4 + 10.1);
   const applied = el("chip good", "L-007 applied ✓", 985, 604);
-  pop(applied, 57.9);
-  hideAll([prd, v1, review, v2, pub, lesson, approvedStatus, next, applied], 60.4);
-  w4.forEach((path) => anim(path, [{ opacity: 1 }, { opacity: 0 }], s(60.4), 400));
+  pop(applied, b4 + 10.9);
+  hideAll([prd, v1, review, v2, pub, lesson, approvedStatus, next, applied], 64.4);
+  w4.forEach((path) => anim(path, [{ opacity: 1 }, { opacity: 0 }], s(64.4), 400));
 
-  // ---- 05 · Record (61–71s) ---------------------------------------------------------------
-  caption(5, "A record you can check", "Every step is on a hash-chained record", "Change one line and the chain breaks. Admins can pause everything at once.", 61, 70.4);
+  // ---- 05 · Record (65–76s) ---------------------------------------------------------------
+  caption(5, "A record you can check", "Every step is on a hash-chained record", "Change one line and verification fails. Any reply's run can be traced. Admins can pause everything at once.", 65, 75.4);
+  const b5 = 65;
   const BLOCKS = [["answer", "#1c07…"], ["tool: read", "#8a41…"], ["approval", "#3fd2…"], ["ran once", "#77b0…"], ["published", "#c95e…"]];
   const bx = (i) => 110 + i * 220;
-  const blocks = BLOCKS.map(([label, hash], i) => el("card block", `<div class="t">${label}</div><div class="h">prev ${hash}</div>`, bx(i), 250));
-  blocks.forEach((node, i) => inn(node, 61.5 + i * 0.25));
-  const links = BLOCKS.slice(1).map((_, i) => wire(`M${bx(i) + 150} 292 L${bx(i + 1)} 292`, 62.0 + i * 0.25, 300));
-  const tamper = el("card block bad", '<div class="t">ran once</div><div class="h">edited ✎</div>', bx(3), 250);
-  inn(tamper, 63.8, 250, "none");
-  shake(tamper, 63.9);
-  const broken = wire(`M${bx(3) + 150} 292 L${bx(4)} 292`, 64.1, 300, "bad");
-  const verdictBad = el("badge bad", "✗ verify: chain broken at line 4", 110, 380);
-  inn(verdictBad, 64.3);
-  out(tamper, 65.6, 300);
-  anim(broken, [{ opacity: 1 }, { opacity: 0 }], s(65.6), 300);
-  out(verdictBad, 65.6, 300);
-  const verdictOk = el("badge good", "✓ chain intact", 110, 380);
-  inn(verdictOk, 65.9);
-  const pill = el("card pause-pill", 'Admin · <span class="mono" style="font-size:13px">/teammate admin pause</span><span class="switch"><i></i></span>', 110, 470);
-  inn(pill, 66.6);
+  const blocks = BLOCKS.map(([label, hash], i) => el("card block", `<div class="t">${label}</div><div class="h">prev ${hash}</div>`, bx(i), 230));
+  blocks.forEach((node, i) => { inn(node, b5 + 0.5 + i * 0.25); cue("tick", b5 + 0.5 + i * 0.25); });
+  const links = BLOCKS.slice(1).map((_, i) => wire(`M${bx(i) + 150} 272 L${bx(i + 1)} 272`, b5 + 1.0 + i * 0.25, 300));
+  const tamper = el("card block bad", '<div class="t">ran once</div><div class="h">edited ✎</div>', bx(3), 230);
+  inn(tamper, b5 + 2.8, 250, "none");
+  shake(tamper, b5 + 2.9);
+  const broken = wire(`M${bx(3) + 150} 272 L${bx(4)} 272`, b5 + 3.1, 300, "bad");
+  const verifyBad = el("card term", '<span class="p">$</span> pnpm auditlog verify   <span class="no">✗ chain broken at line 4</span>', 110, 350);
+  inn(verifyBad, b5 + 3.3);
+  out(tamper, b5 + 4.6, 300);
+  anim(broken, [{ opacity: 1 }, { opacity: 0 }], s(b5 + 4.6), 300);
+  out(verifyBad, b5 + 4.6, 300);
+  const verifyOk = el("card term", '<span class="p">$</span> pnpm auditlog verify   <span class="ok">✓ chain intact</span>', 110, 350);
+  inn(verifyOk, b5 + 4.9);
+  cue("chime", b5 + 4.9);
+  const trace = el("card term", '<span class="p">$</span> pnpm trace r-7f2c   question → 2 reads → approval by Ben → ran once → reply', 110, 410);
+  inn(trace, b5 + 5.6);
+  cue("tick", b5 + 5.6);
+  const pill = el("card pause-pill", 'Admin · <span class="mono" style="font-size:13px">/teammate admin pause</span><span class="switch"><i></i></span>', 110, 490);
+  inn(pill, b5 + 7.2);
   const knob = pill.querySelector(".switch i");
   const track = pill.querySelector(".switch");
-  anim(knob, [{ transform: "none", background: token("--muted") }, { transform: "translateX(20px)", background: token("--warn") }], s(67.5), 250);
-  anim(track, [{ background: token("--switch-off") }, { background: token("--switch-on") }], s(67.5), 250);
-  const veil = el("veil", "⏸ Paused: nothing is answered or carried out", 90, 232, 1100, 124);
-  anim(veil, [{ opacity: 0 }, { opacity: 1 }], s(67.9), 400);
-  hideAll([...blocks, verdictOk, pill, veil], 70.4);
-  links.forEach((link) => anim(link, [{ opacity: 1 }, { opacity: 0 }], s(70.4), 300));
+  anim(knob, [{ transform: "none", background: token("--muted") }, { transform: "translateX(20px)", background: token("--warn") }], s(b5 + 8.1), 250);
+  anim(track, [{ background: token("--switch-off") }, { background: token("--switch-on") }], s(b5 + 8.1), 250);
+  cue("tick", b5 + 8.1);
+  const veil = el("veil", "⏸ Paused: nothing is answered or carried out", 90, 212, 1100, 250);
+  anim(veil, [{ opacity: 0 }, { opacity: 1 }], s(b5 + 8.5), 400);
+  cue("soft", b5 + 8.5);
+  hideAll([...blocks, verifyOk, trace, pill, veil], 75.4);
+  links.forEach((link) => anim(link, [{ opacity: 1 }, { opacity: 0 }], s(75.4), 300));
 
-  // ---- 06 · Proof and end (71–80s) --------------------------------------------------------
-  caption(6, "Proven, not promised", "Each guardrail is attacked on purpose", "Every rule has a test, and a deliberate sabotage of the rule that the test must catch.", 71, 75.6);
-  const st1 = el("card stat", '<div class="n">560+</div><div class="l">checks on every commit, no model needed</div>', 110, 230);
-  const st2 = el("card stat", '<div class="n">70+</div><div class="l">guardrails sabotaged on purpose, each one caught</div>', 475, 230);
+  // ---- 06 · Unattended (76–86s) -----------------------------------------------------------
+  caption(6, "Built to run unattended", "Safe to leave running", "During a deploy two revisions share one lease, and only its holder sends the digest. The image runs as non-root, with no secrets inside.", 76, 85.4);
+  const b6 = 76;
+  const rev41 = el("card inst", '<div class="kind">Cloud Run · revision 41</div><div class="name">old instance</div>', 110, 240);
+  const rev42 = el("card inst", '<div class="kind">Cloud Run · revision 42</div><div class="name">new instance</div>', 110, 400);
+  const lease = el("card inst", '<div class="kind">Lease · state volume</div><div class="name">holder: <span style="position:relative;display:inline-block"><span id="h41">revision 41</span><span id="h42" style="position:absolute;left:0;top:0;white-space:nowrap;opacity:0">revision 42</span></span></div><div class="who" style="margin-top:6px">renewed each tick · expires in 3 min</div>', 520, 318, 280);
+  const holds41 = el("chip good", "holds the lease", 130, 336);
+  const standby42 = el("chip", "standby", 130, 496);
+  inn(rev41, b6 + 0.5);
+  cue("tick", b6 + 0.5);
+  inn(rev42, b6 + 0.7);
+  cue("tick", b6 + 0.7);
+  inn(lease, b6 + 1.0);
+  const w6 = [wire("M410 280 C470 280 470 350 520 350", b6 + 1.3, 400, "good"), wire("M410 440 C470 440 470 380 520 380", b6 + 1.4, 400)];
+  pop(holds41, b6 + 1.6);
+  pop(standby42, b6 + 1.7, 450, null);
+  flash("approve", "09:00 · digest sent once", 250, 214, b6 + 2.4, 1500);
+  cue("chime", b6 + 2.4);
+  flash("hold", "not the holder · skips", 250, 374, b6 + 2.7, 1500);
+  fade(rev41, b6 + 4.4, 0.35, 400);
+  out(holds41, b6 + 4.4, 300);
+  flash("hold", "shutting down · lease released", 250, 214, b6 + 4.5, 1300);
+  anim(lease.querySelector("#h41"), [{ opacity: 1 }, { opacity: 0 }], s(b6 + 5.2), 250);
+  anim(lease.querySelector("#h42"), [{ opacity: 0 }, { opacity: 1 }], s(b6 + 5.3), 300);
+  // The lease line moves with the lease: the old revision's goes quiet, the new one's lights up.
+  anim(w6[0], [{ opacity: 1 }, { opacity: 0.2 }], s(b6 + 5.2), 300);
+  w6.push(wire("M410 440 C470 440 470 380 520 380", b6 + 5.3, 400, "good"));
+  out(standby42, b6 + 5.4, 200);
+  const holds42 = el("chip good", "holds the lease", 130, 496);
+  pop(holds42, b6 + 5.5, 450, "packetBack");
+  const image = el("card inst", '<div class="kind">Container image</div><div class="name">runs as node · uid 1000</div>', 880, 240);
+  inn(image, b6 + 6.2);
+  cue("tick", b6 + 6.2);
+  const IMAGE_FACTS = ["✓ no .env or key files inside", "✓ no state, audit log or memory", "✓ secrets only at runtime"];
+  const facts = IMAGE_FACTS.map((text, i) => el("chip good", text, 896, 326 + i * 40));
+  facts.forEach((node, i) => pop(node, b6 + 6.7 + i * 0.35));
+  const unattended = el("badge good", "A deploy never sends the digest twice, and pulling the image leaks nothing", 110, 580);
+  inn(unattended, b6 + 7.9);
+  hideAll([rev41, rev42, lease, holds42, image, ...facts, unattended], 85.4);
+  w6.forEach((path) => anim(path, [{ opacity: 1 }, { opacity: 0 }], s(85.4), 300));
+
+  // ---- 07 · Proof and end (86–96s) --------------------------------------------------------
+  // The numbers come from the project page (site/data.js), so the two never disagree.
+  const stat = (i, fallback) => window.SITE?.stats?.[i]?.value ?? fallback;
+  caption(7, "Proven, not promised", "Each guardrail is attacked on purpose", "Every rule has a test, and pnpm mutate sabotages the rule to prove the test catches it.", 86, 90.6);
+  const b7 = 86;
+  const st1 = el("card stat", `<div class="n">${stat(0, "570+")}</div><div class="l">checks on every commit, no model needed</div>`, 110, 230);
+  const st2 = el("card stat", `<div class="n">${stat(1, "99")}</div><div class="l">guardrails sabotaged on purpose, each one caught</div>`, 475, 230);
   const st3 = el("card stat", '<div class="n">0</div><div class="l">writes without a named approver</div>', 840, 230);
-  [st1, st2, st3].forEach((node, i) => inn(node, 71.5 + i * 0.3));
+  [st1, st2, st3].forEach((node, i) => { inn(node, b7 + 0.5 + i * 0.3); cue("tick", b7 + 0.5 + i * 0.3); });
   const bugs = Array.from({ length: 12 }, (_, i) => el("bug red", "✗", 110 + i * 48, 420));
   const fixed = Array.from({ length: 12 }, (_, i) => el("bug green", "✓", 110 + i * 48, 420));
-  bugs.forEach((node, i) => { pop(node, 72.6 + i * 0.07, 300); out(node, 73.6 + i * 0.1, 150); });
-  fixed.forEach((node, i) => pop(node, 73.6 + i * 0.1, 250));
+  bugs.forEach((node, i) => { pop(node, b7 + 1.6 + i * 0.07, 300, null); out(node, b7 + 2.6 + i * 0.1, 150); });
+  cue("deny", b7 + 1.6);
+  fixed.forEach((node, i) => pop(node, b7 + 2.6 + i * 0.1, 250, "tick"));
   const caught = el("badge good", "sabotage → test fails → caught", 700, 424);
-  inn(caught, 74.6);
-  hideAll([st1, st2, st3, ...bugs, ...fixed, caught], 75.6);
+  inn(caught, b7 + 3.6);
+  cue("chime", b7 + 3.6);
+  hideAll([st1, st2, st3, ...bugs, ...fixed, caught], 90.6);
 
   const endLogo = el("agent", SHIELD, 588, 170);
   const endName = el("end-title", "scriptorium", 440, 300, 400);
@@ -511,14 +630,19 @@
   endSub.style.textAlign = "center";
   const endUrl = el("end-url", "scriptorium-teammate.vercel.app · open source, MIT", 340, 450, 600);
   endUrl.style.textAlign = "center";
-  pop(endLogo, 76.2, 600);
-  inn(endName, 76.6, 600);
-  inn(endSub, 77.1, 600);
-  inn(endUrl, 77.6, 600);
-  chapters.push({ name: "End", t: s(76) });
+  pop(endLogo, 91.2, 600, "swell");
+  inn(endName, 91.6, 600);
+  inn(endSub, 92.1, 600);
+  inn(endUrl, 92.6, 600);
+  chapters.push({ name: "End", t: s(91) });
 
   // ---- timeline ---------------------------------------------------------------------------
-  const DURATION = s(80);
+  const DURATION = s(96);
+  // The poster frame (the cited answer, which says the most at a glance) and the two ranges
+  // cut into the 20-second highlight the project page plays: the answer with its struck
+  // citation, then the approval that is refused, given, and carried out once.
+  const POSTER_AT = s(14.9);
+  const HIGHLIGHT = [[s(11.5), s(18.0)], [s(33.0), s(46.9)]];
   let t = 0;
   function seek(ms) {
     t = Math.max(0, Math.min(DURATION, ms));
@@ -528,8 +652,16 @@
     const current = [...chapters].sort((a, b) => a.t - b.t).filter((chapter) => chapter.t <= t).at(-1);
     for (const button of chapterButtons) button.classList.toggle("on", button.dataset.name === current?.name);
   }
-  // Rendering to video drives this directly, one frame at a time.
-  window.__demo = { seek, duration: DURATION, ready: document.fonts ? document.fonts.ready : Promise.resolve() };
+  // Rendering to video drives this directly, one frame at a time, and builds the soundtrack
+  // from the cues.
+  window.__demo = {
+    seek,
+    duration: DURATION,
+    posterAt: POSTER_AT,
+    highlight: HIGHLIGHT,
+    cues: [...cues].sort((a, b) => a.t - b.t),
+    ready: document.fonts ? document.fonts.ready : Promise.resolve(),
+  };
 
   const fill = document.getElementById("fill");
   const timeLabel = document.getElementById("time");
@@ -541,7 +673,7 @@
     button.type = "button";
     button.textContent = chapter.name;
     button.dataset.name = chapter.name;
-    button.addEventListener("click", () => { seek(chapter.t); if (!playing) toggle(); });
+    button.addEventListener("click", () => { jump(chapter.t); if (!playing) toggle(); });
     chaptersBox.appendChild(button);
     return button;
   });
@@ -551,14 +683,40 @@
   new ResizeObserver(fit).observe(frame);
   fit();
 
+  // Sound is off until asked for. When on, the rendered video's own soundtrack plays and its
+  // clock drives the film, so the two can't drift apart.
+  const audio = document.getElementById("soundtrack");
+  audio.src = theme === "light" ? "demo-light.mp4" : "demo.mp4";
+  const soundButton = document.getElementById("sound");
+  let sound = false;
+  const audible = () => sound && playing;
+  function syncAudio() {
+    if (!audible()) { audio.pause(); return; }
+    if (Math.abs(audio.currentTime * 1000 - t) > 120) audio.currentTime = t / 1000;
+    audio.play().catch(() => setSound(false));
+  }
+  function setSound(on) {
+    sound = on;
+    soundButton.textContent = on ? "Sound on" : "Sound off";
+    soundButton.setAttribute("aria-pressed", String(on));
+    syncAudio();
+  }
+  soundButton.addEventListener("click", () => setSound(!sound));
+  /** A seek by the viewer: the picture and the sound move together. */
+  function jump(ms) {
+    seek(ms);
+    if (audible()) audio.currentTime = t / 1000;
+  }
+
   const render = params.has("render");
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   let playing = !render && !reduced;
   let last = 0;
   function tick(now) {
     if (playing) {
-      seek(t + (last ? now - last : 0));
-      if (t >= DURATION) seek(0);
+      if (audible() && !audio.paused && audio.readyState >= 2) seek(audio.currentTime * 1000);
+      else seek(t + (last ? now - last : 0));
+      if (t >= DURATION) jump(0);
     }
     last = now;
     requestAnimationFrame(tick);
@@ -567,12 +725,13 @@
     playing = !playing;
     last = 0;
     playButton.textContent = playing ? "Pause" : "Play";
+    syncAudio();
   }
   playButton.textContent = playing ? "Pause" : "Play";
   playButton.addEventListener("click", toggle);
-  document.getElementById("restart").addEventListener("click", () => { seek(0); if (!playing) toggle(); });
+  document.getElementById("restart").addEventListener("click", () => { jump(0); if (!playing) toggle(); });
   const bar = document.getElementById("bar");
-  bar.addEventListener("click", (event) => { const box = bar.getBoundingClientRect(); seek(((event.clientX - box.left) / box.width) * DURATION); });
+  bar.addEventListener("click", (event) => { const box = bar.getBoundingClientRect(); jump(((event.clientX - box.left) / box.width) * DURATION); });
   document.addEventListener("keydown", (event) => { if (event.code === "Space" && event.target === document.body) { event.preventDefault(); toggle(); } });
 
   if (render) {
@@ -584,8 +743,8 @@
     frame.style.cssText = "width:1280px;height:720px;border:0;border-radius:0";
     stage.style.transform = "none";
   }
-  // Reduced motion: start paused on the first chapter's full frame instead of moving.
-  seek(reduced && !render ? s(14) : 0);
+  // Reduced motion: start paused on the poster frame instead of moving.
+  seek(reduced && !render ? POSTER_AT : 0);
   requestAnimationFrame(tick);
 })();
 </script>

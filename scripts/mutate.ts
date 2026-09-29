@@ -548,6 +548,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-flow.test.ts"],
   },
   {
+    control: "docker build never copies .env into the image",
+    file: ".dockerignore",
+    find: "# Secrets. Every local env file, whatever it's called; the example is documentation.\n.env\n",
+    replace: "# Secrets. Every local env file, whatever it's called; the example is documentation.\n",
+    evals: ["evals/image.test.ts"],
+  },
+  {
+    control: "the container doesn't run as root",
+    file: "Dockerfile",
+    find: "USER node\n",
+    replace: "",
+    evals: ["evals/image.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

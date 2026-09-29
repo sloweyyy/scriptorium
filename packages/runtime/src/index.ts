@@ -6,3 +6,4 @@ export * from "./session";
 export * from "./agent";
 export * from "./memory";
 export * from "./budget";
+export * from "./lease";

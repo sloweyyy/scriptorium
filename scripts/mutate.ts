@@ -513,6 +513,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/approval-signing.test.ts"],
   },
   {
+    control: "only the lease holder runs scheduled work and the sweep",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "    if (!options.lease) return true;\n    const held = await options.lease.acquire().catch(() => false);",
+    replace: "    return true;\n    const held = await options.lease!.acquire().catch(() => false);",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "a live lease held by another instance is never taken",
+    file: "packages/runtime/src/lease.ts",
+    find: "    if (current && current.owner !== this.owner && Date.parse(current.until) > now) {",
+    replace: "    if (false) {",
+    evals: ["evals/lease.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

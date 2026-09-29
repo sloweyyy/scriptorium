@@ -126,6 +126,7 @@ clear every control.
   Unfinished work resumes on the next start from its durable state. A Slack question
   still being answered is not resumed: on the next start its "Looking into it…" becomes
   a notice asking the person to ask again.
+- **One instance runs the scheduled work.** That covers the digest, reminders, approval nudges, and closing answers a restart cut off. During a deploy, the old and new revisions overlap, and only the one holding `state/scheduler.lease` runs this work. The holder renews the lease every minute and releases it on shutdown; the other takes over once it expires, after at most 3 minutes. Answers are unaffected, since each Slack event reaches one instance. To force a handover, delete the lease file.
 - **Never share an Atlassian token between agents.** Two agents on one token are one
   identity, and the permission boundary between them is gone.
 

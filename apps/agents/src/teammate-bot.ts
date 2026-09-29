@@ -13,7 +13,7 @@ import {
 } from "@scriptorium/connectors";
 import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type CommentRestriction, type JiraClient } from "@scriptorium/jira";
 import { FileApprovalStore, PLAN_TOOL, effectiveStatus, executeApproved, mayApprove, planTool, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
-import { DailyBudget, FileEffectLedger, FileSeenIds, Gate, KeyedQueue, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, scopesFor, type AgentEvent } from "@scriptorium/runtime";
+import { DailyBudget, FileEffectLedger, FileSeenIds, Gate, Lease, KeyedQueue, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, scopesFor, type AgentEvent } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
 import { gapTicketOpener } from "./gap-ticket";
@@ -104,7 +104,7 @@ const SHORTCUT_TRIGGER = "shortcut";
  * to a reply, and from a click to a carried-out action, driven by any Slack client. Bolt
  * only binds events to it — which is what lets the wiring itself be tested end to end.
  */
-export async function createTeammate(config: AppConfig, vault: Vault, slack: SlackClient, selfUserId: string, jira?: TeammateJira): Promise<TeammateCore> {
+export async function createTeammate(config: AppConfig, vault: Vault, slack: SlackClient, selfUserId: string, jira?: TeammateJira, options: { lease?: Lease } = {}): Promise<TeammateCore> {
   const settings = config.teammate;
   const self = `slack:${selfUserId}`;
 
@@ -120,14 +120,33 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   // "Looking into it…" would stay forever. Each open placeholder is on the ledger; on boot,
   // any left open is closed with an honest notice instead.
   const turnOp = (channel: string, ts: string) => opKey("teammate.turn", channel, ts);
-  for (const record of await ledger.inProgress().catch(() => [])) {
-    const meta = record.meta as { kind?: string; channel?: string; ts?: string } | undefined;
-    if (meta?.kind !== "teammate.turn" || !meta.channel || !meta.ts) continue;
-    const closed = await slack.chat
-      .update({ channel: meta.channel, ts: meta.ts, text: "⚠️ I restarted before I finished this, so it wasn't answered and nothing was changed. Please ask again." })
-      .catch(() => undefined);
-    if (closed?.ok) await ledger.put({ ...record, status: "done", completedAt: new Date().toISOString() });
-  }
+  const sweepCutOffTurns = async (): Promise<void> => {
+    for (const record of await ledger.inProgress().catch(() => [])) {
+      const meta = record.meta as { kind?: string; channel?: string; ts?: string } | undefined;
+      if (meta?.kind !== "teammate.turn" || !meta.channel || !meta.ts) continue;
+      const closed = await slack.chat
+        .update({ channel: meta.channel, ts: meta.ts, text: "⚠️ I restarted before I finished this, so it wasn't answered and nothing was changed. Please ask again." })
+        .catch(() => undefined);
+      if (closed?.ok) await ledger.put({ ...record, status: "done", completedAt: new Date().toISOString() });
+    }
+  };
+  // One instance runs the scheduled work and the sweep (ADR-002). On a deploy the old and new
+  // revisions overlap: without the lease the new one's sweep closed the old one's LIVE
+  // placeholders, and both posted the digest and the reminders. The sweep runs whenever this
+  // instance newly holds the lease, which is exactly when a dead holder's leftovers need closing.
+  let heldSchedule = false;
+  const ownsSchedule = async (): Promise<boolean> => {
+    if (!options.lease) return true;
+    const held = await options.lease.acquire().catch(() => false);
+    if (held && !heldSchedule) {
+      heldSchedule = true;
+      await sweepCutOffTurns();
+    }
+    heldSchedule = held;
+    return held;
+  };
+  if (!options.lease) await sweepCutOffTurns();
+  else await ownsSchedule();
   const skills = await loadSkills(path.join(config.repoRoot, "skills"));
   const agentConfig = teammateConfig({ selfAccountIds: [self], approvers: (settings.approvers ?? []).map((id) => `slack:${id}`), people: settings.people });
   // Restrict to the connectors actually configured here: a tool the host can't provide is not offered.
@@ -598,6 +617,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     },
 
     async checkApprovals(now = new Date()) {
+      if (!(await ownsSchedule())) return;
       const nudgeMs = (settings.approvalNudgeHours ?? 24) * 3_600_000;
       // Paused means it posts nothing new, nudges included. Closing an expired card still
       // happens: it only makes the card stop claiming to be pending.
@@ -647,6 +667,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     },
 
     async checkReminders(now = new Date()) {
+      if (!(await ownsSchedule())) return;
       // Paused: reminders wait (and are dropped if a day overdue by the time it resumes).
       if ((await refreshControl()).paused) return;
       const { due, stale } = await dueReminders(reminders, now.getTime());
@@ -677,6 +698,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     },
 
     async checkDigest(now = new Date()) {
+      if (!(await ownsSchedule())) return;
       if ((await refreshControl()).paused) return;
       if (!digestChannel || !config.hasModelAccess) return;
       if (!digestDue(now, { weekday: settings.digestWeekday, hour: settings.digestHour })) return;
@@ -828,7 +850,9 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
         return undefined;
       });
   }
-  const core = await createTeammate(config, vault, app.client, String(identity.user_id), jira);
+  // The scheduled work is this instance's only while it holds the lease on the state volume.
+  const lease = new Lease(path.join(config.jira.stateDir, "scheduler.lease"));
+  const core = await createTeammate(config, vault, app.client, String(identity.user_id), jira, { lease });
 
   app.event("app_mention", async ({ event }) => core.onMention(event as SlackMention));
   app.message(async ({ message }) => core.onDirectMessage(message as SlackMention & { channel_type?: string; subtype?: string }));
@@ -885,6 +909,8 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
       clearInterval(digestTimer);
       clearInterval(reminderTimer);
       await core.drain(8_000);
+      // Let go, so the next revision takes the scheduled work at once instead of after the TTL.
+      await lease.release();
       await app.stop();
     },
   };

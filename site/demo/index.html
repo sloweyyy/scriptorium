@@ -642,7 +642,7 @@
   // cut into the 20-second highlight the project page plays: the answer with its struck
   // citation, then the approval that is refused, given, and carried out once.
   const POSTER_AT = s(14.9);
-  const HIGHLIGHT = [[s(11.5), s(18.0)], [s(33.0), s(46.9)]];
+  const HIGHLIGHT = [[s(10.6), s(18.0)], [s(33.0), s(45.6)]];
   let t = 0;
   function seek(ms) {
     t = Math.max(0, Math.min(DURATION, ms));
@@ -705,7 +705,10 @@
   /** A seek by the viewer: the picture and the sound move together. */
   function jump(ms) {
     seek(ms);
-    if (audible()) audio.currentTime = t / 1000;
+    if (!audible()) return;
+    audio.currentTime = t / 1000;
+    // After the soundtrack ends (it can outlast the film by a frame), play it again from here.
+    audio.play().catch(() => setSound(false));
   }
 
   const render = params.has("render");

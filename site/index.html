@@ -146,6 +146,7 @@
   .hero-video figcaption { margin-top: 10px; font-size: 14px; color: var(--muted); }
   .hero-video .player { position: relative; }
   .hero-video .sound { position: absolute; right: 12px; bottom: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border-radius: 999px; border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 86%, transparent); color: var(--muted); font: 600 13px/1 Inter, system-ui, sans-serif; cursor: pointer; backdrop-filter: blur(6px); }
+  .hero-video .sound[hidden] { display: none; }
   .hero-video .sound:hover { color: var(--ink); }
   .hero-video .sound[aria-pressed="true"] { color: var(--accent); }
   .hero-video .sound svg { width: 15px; height: 15px; }

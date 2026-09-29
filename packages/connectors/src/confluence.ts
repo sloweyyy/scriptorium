@@ -65,6 +65,7 @@ const AttachmentList = z.object({
       pageId: z.union([z.string(), z.number()]).transform(String).optional(),
     }),
   ),
+  _links: z.object({ next: z.string().optional() }).optional(),
 });
 /** Attachments whose bytes are text a model can read as-is. */
 const TEXT_TYPES = /^(text\/|application\/(json|xml|x-yaml|yaml|csv))/;
@@ -162,13 +163,14 @@ export class ConfluenceConnector {
   }
 
   /** A page's attachments, if the page is in an allowed space. */
-  async listAttachments(pageId: string): Promise<Array<{ id: string; title: string; mediaType: string; fileSize?: number; downloadLink?: string }>> {
+  async listAttachments(pageId: string): Promise<{ attachments: Array<{ id: string; title: string; mediaType: string; fileSize?: number; downloadLink?: string }>; more: boolean }> {
     if (!/^\d+$/.test(pageId)) throw new ConfluenceAccessError("A Confluence page id is digits only.");
     const allowed = await this.allowedSpaces();
     const page = await this.get(`/api/v2/pages/${pageId}`, PageSpace);
     if (!allowed.has(page.spaceId)) throw new ConfluenceAccessError(`Page ${pageId} is outside the Confluence spaces this agent may read.`);
-    const list = await this.get(`/api/v2/pages/${pageId}/attachments?limit=50`, AttachmentList);
-    return list.results.filter((attachment) => !attachment.pageId || attachment.pageId === pageId);
+    // 250 is the API's largest page; past it, the listing says it is partial.
+    const list = await this.get(`/api/v2/pages/${pageId}/attachments?limit=250`, AttachmentList);
+    return { attachments: list.results.filter((attachment) => !attachment.pageId || attachment.pageId === pageId), more: Boolean(list._links?.next) };
   }
 
   /**
@@ -176,8 +178,11 @@ export class ConfluenceConnector {
    * 200 KB. The first hop carries the credentials; the redirect to media storage does not.
    */
   async readAttachment(pageId: string, attachmentId: string): Promise<{ title: string; text: string; truncated: boolean }> {
-    const attachment = (await this.listAttachments(pageId)).find((candidate) => candidate.id === attachmentId);
-    if (!attachment?.downloadLink) throw new ConfluenceAccessError(`Page ${pageId} has no attachment ${attachmentId}.`);
+    const { attachments, more } = await this.listAttachments(pageId);
+    const attachment = attachments.find((candidate) => candidate.id === attachmentId);
+    if (!attachment?.downloadLink) {
+      throw new ConfluenceAccessError(more ? `Attachment ${attachmentId} is not among the first ${attachments.length} on page ${pageId}.` : `Page ${pageId} has no attachment ${attachmentId}.`);
+    }
     if (!TEXT_TYPES.test(attachment.mediaType)) throw new ConfluenceAccessError(`${attachment.title} is ${attachment.mediaType}; only text attachments can be read.`);
     const base = `${this.settings.baseUrl.replace(/\/$/, "")}/wiki`;
     let response = await fetch(`${base}${attachment.downloadLink}`, { headers: { Authorization: this.auth }, redirect: "manual" });
@@ -338,7 +343,13 @@ export class ConfluenceConnector {
         inputSchema: z.object({ id: z.string().describe("The page id.") }),
         run: async (input) => {
           const { id } = z.object({ id: z.string() }).parse(input);
-          return refusalOr(async () => JSON.stringify((await this.listAttachments(id)).map(({ id: attachmentId, title, mediaType, fileSize }) => ({ id: attachmentId, title, mediaType, fileSize }))));
+          return refusalOr(async () => {
+            const { attachments, more } = await this.listAttachments(id);
+            return JSON.stringify({
+              attachments: attachments.map(({ id: attachmentId, title, mediaType, fileSize }) => ({ id: attachmentId, title, mediaType, fileSize })),
+              ...(more ? { note: `Only the first ${attachments.length} attachments are listed; the page has more.` } : {}),
+            });
+          });
         },
       },
       {

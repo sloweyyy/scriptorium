@@ -70,10 +70,11 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
           if (!projects.length) throw new JiraAccessError("No Jira projects are allowed for this agent.");
           // `days` is validated as an integer, so it is safe to place in JQL; nothing else is.
           const jql = `project in (${projects.map(jqlString).join(",")}) AND updated >= -${days}d ORDER BY updated DESC`;
-          const issues = await settings.client.searchIssues(jql, 30);
-          return JSON.stringify(
-            issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
-          );
+          const issues = await settings.client.searchIssues(jql, RECENT_LIMIT);
+          return JSON.stringify([
+            ...issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
+            ...cutNote(issues.length, RECENT_LIMIT, "issues updated in that window"),
+          ]);
         }),
       records: citeRecords,
     },
@@ -86,10 +87,11 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
           const key = checkKey(z.object({ key: z.string() }).parse(input).key);
           // Only a validated, project-checked key reaches the JQL — nothing the model wrote.
           const jql = `project in (${projects.map(jqlString).join(",")}) AND parent = ${jqlString(key)} ORDER BY status ASC, updated DESC`;
-          const issues = await settings.client.searchIssues(jql, 50);
-          return JSON.stringify(
-            issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
-          );
+          const issues = await settings.client.searchIssues(jql, CHILDREN_LIMIT);
+          return JSON.stringify([
+            ...issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
+            ...cutNote(issues.length, CHILDREN_LIMIT, "child issues"),
+          ]);
         }),
       records: citeRecords,
     },
@@ -261,6 +263,18 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
   }
 
   return tools;
+}
+
+const RECENT_LIMIT = 30;
+const CHILDREN_LIMIT = 50;
+
+/**
+ * A list that filled its limit may be missing entries, and a summary built from it must say
+ * so instead of reading as the whole picture ("all 50 children are done"). The note carries
+ * no `cite`, so it is never a record.
+ */
+function cutNote(count: number, limit: number, what: string): Array<{ note: string }> {
+  return count >= limit ? [{ note: `Only the first ${limit} ${what} are listed; there may be more. Say the list is partial.` }] : [];
 }
 
 function citeRecords(_input: unknown, output: string): string[] {

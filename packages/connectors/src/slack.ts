@@ -59,7 +59,11 @@ export function slackTools(settings: SlackToolSettings): ToolSpec[] {
         refusalOr(async () => {
           const { channel, thread_ts } = z.object({ channel: z.string(), thread_ts: z.string() }).parse(input);
           const replies = await settings.client.conversations.replies({ channel: check(channel), ts: thread_ts, limit: 50 });
-          return (replies.messages ?? []).map((message) => `${message.user ?? message.bot_id ?? "someone"}: ${message.text ?? ""}`).join("\n");
+          const lines = (replies.messages ?? []).map((message) => `${message.user ?? message.bot_id ?? "someone"}: ${message.text ?? ""}`);
+          // These are the thread's OLDEST messages: without this line, the latest turn of a
+          // long thread was silently missing from a "where did we land?" summary.
+          if (replies.has_more) lines.push(`(Only the first ${lines.length} messages of this thread are shown; later ones are not. Say the summary is partial.)`);
+          return lines.join("\n");
         }),
     },
     {
@@ -74,11 +78,13 @@ export function slackTools(settings: SlackToolSettings): ToolSpec[] {
           const history = await settings.client.conversations.history({ channel: check(channel), oldest, limit: 200 });
           const messages = [...(history.messages ?? [])].filter((message) => message.ts && message.text).reverse();
           if (!messages.length) return `No messages in ${channel} in the last ${hours} hours.`;
+          // The newest 200: older messages inside the window are left out, and the reader is told.
+          const cut = history.has_more ? `\n(Only the latest ${messages.length} messages of the last ${hours} hours are shown; earlier ones are not. Say the catch-up is partial.)` : "";
           // One message per line, its id first, its text flattened: text is DATA, and a message
           // that contains a newline and "slack:C1/…" must not become a record it isn't.
           return messages
             .map((message) => `${slackRecord(channel, message.ts as string)} — ${message.bot_id ? "(bot) " : ""}<@${message.user ?? message.bot_id ?? "someone"}>: ${(message.text ?? "").replace(/\s+/g, " ").slice(0, 600)}`)
-            .join("\n");
+            .join("\n") + cut;
         }),
       records: (input, output) => {
         const channel = (input as { channel?: unknown } | undefined)?.channel;

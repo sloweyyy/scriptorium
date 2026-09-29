@@ -471,6 +471,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/ingress.test.ts"],
   },
   {
+    control: "a gap or handoff marker under a cited answer doesn't take it over",
+    file: "packages/curator/src/qa-contract.ts",
+    find: "  const where = cites ? (trimmed.split(\"\\n\")[0] ?? \"\") : trimmed;",
+    replace: "  const where = trimmed;",
+    evals: ["evals/grounding.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

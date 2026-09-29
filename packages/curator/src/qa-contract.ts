@@ -215,8 +215,14 @@ const NOTE_NOT_FOUND = "ERROR: note not found";
  */
 export function parseQaAnswer(text: string, question: string): QaAnswer {
   const trimmed = text.trim();
-  const gapMatch = trimmed.match(/^NOT_IN_KB:\s*(.*)$/m);
-  const handoffMatch = trimmed.match(/^NOT_MY_JOB:\s*(.*)$/m);
+  // A reply that cites something is an answer unless its FIRST line says otherwise: matched
+  // on any line, a stray "NOT_IN_KB:" under a cited answer turned the whole reply into a gap,
+  // and a "NOT_MY_JOB:" anywhere cancelled one. A reply that cites nothing is still read for
+  // a marker on any line, so a model that adds a preamble to its gap doesn't lose the gap.
+  const cites = extractWikilinks(trimmed).length > 0;
+  const where = cites ? (trimmed.split("\n")[0] ?? "") : trimmed;
+  const gapMatch = where.match(/^NOT_IN_KB:\s*(.*)$/m);
+  const handoffMatch = where.match(/^NOT_MY_JOB:\s*(.*)$/m);
   return {
     text: trimmed,
     citations: extractWikilinks(trimmed),

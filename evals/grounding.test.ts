@@ -154,6 +154,16 @@ describe("enforceGrounding", () => {
     }
   });
 
+  it("a marker under a cited answer doesn't turn it into a gap or a handoff; an uncited preamble keeps its gap", () => {
+    const cited = parseQaAnswer("Minor, Major or Critical [[docs/scheduled-maintenance]].\nNOT_IN_KB: severity colours", "q");
+    expect(cited.gap).toBeNull();
+    expect(parseQaAnswer("Minor or Major [[docs/scheduled-maintenance]].\nNOT_MY_JOB: rewrite it", "q").handoff).toBeNull();
+    // As the first line, it is what it says, cited or not.
+    expect(parseQaAnswer("NOT_IN_KB: severity colours", "q").gap).toBe("severity colours");
+    // A preamble before the marker, citing nothing: still the gap it is.
+    expect(parseQaAnswer("I searched three ways.\nNOT_IN_KB: severity colours", "q").gap).toBe("severity colours");
+  });
+
   it("leaves gaps and handoffs to their own branches", async () => {
     expect((await judge("NOT_IN_KB: nothing about SSO")).ungrounded).toBeUndefined();
     expect((await judge("NOT_MY_JOB: rewrite the maintenance doc")).ungrounded).toBeUndefined();

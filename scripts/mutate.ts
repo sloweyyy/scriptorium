@@ -457,6 +457,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-bot.test.ts"],
   },
   {
+    control: "a reply's run link never carries the viewer's global token",
+    file: "apps/agents/src/teammate-bot/messages.ts",
+    find: "?sig=${runLinkSignature(viewer.token, runId as string)}",
+    replace: "?token=${encodeURIComponent(viewer.token)}",
+    evals: ["evals/run-trace.test.ts"],
+  },
+  {
+    control: "a signed run link opens one whole run id, never a prefix",
+    file: "apps/agents/src/ingress.ts",
+    find: "bySignature ? all.filter((line) => line.run === prefix) : linesForRun(all, prefix)",
+    replace: "linesForRun(all, prefix)",
+    evals: ["evals/ingress.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

@@ -57,3 +57,14 @@ describe("run trace", () => {
     expect(text).toContain("run `3f2a9c1b`");
   });
 });
+
+describe("a reply's run link", () => {
+  it("opens only its own run: it carries a signature of that run, never the viewer's token", async () => {
+    const { runLinkSignature } = await import("@scriptorium/core");
+    const run = "3f2a9c1b-1111-2222-3333-444455556666";
+    const text = formatReply({ kind: "answer", text: "One email a day [[docs/digest]].", citations: ["docs/digest"] }, run, { baseUrl: "https://ingress.example", token: "operator-secret" });
+    expect(text).not.toContain("operator-secret");
+    expect(text).toContain(`https://ingress.example/runs/${run}?sig=${runLinkSignature("operator-secret", run)}|view run 3f2a9c1b`);
+    expect(runLinkSignature("operator-secret", run)).not.toBe(runLinkSignature("operator-secret", "3f2a9c1b-1111-2222-3333-444455556667"));
+  });
+});

@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { auditMetrics, docsRepoReady, jiraReady, linesForRun, parseAudit, repoSlugFromUrl, runPage, type AppConfig } from "@scriptorium/core";
+import { auditMetrics, docsRepoReady, jiraReady, linesForRun, parseAudit, repoSlugFromUrl, runLinkSignature, runPage, type AppConfig } from "@scriptorium/core";
 import type { CommentRestriction } from "@scriptorium/jira";
 import { z } from "zod";
 
@@ -300,14 +300,19 @@ export function startIngress({ config, hooks }: IngressOptions): Server {
 
       if (request.method === "GET" && route.startsWith("/runs/")) {
         const token = config.webhook.traceToken;
-        const provided = url.searchParams.get("token") ?? "";
-        // 404 whether the viewer is off or the token is wrong: nothing to learn by probing.
-        if (!token || !secretMatches(provided, token)) {
+        const prefix = decodeURIComponent(route.slice("/runs/".length)).replace(/[^0-9a-f-]/gi, "");
+        // Two keys: a reply's signed link opens exactly its own run; the operator's token
+        // (never posted anywhere) opens any run by prefix. 404 for anything else, whether
+        // the viewer is off or the key is wrong: nothing to learn by probing.
+        const sig = url.searchParams.get("sig") ?? "";
+        const bySignature = Boolean(token && sig && secretMatches(sig, runLinkSignature(token, prefix)));
+        const byToken = Boolean(token && secretMatches(url.searchParams.get("token") ?? "", token));
+        if (!bySignature && !byToken) {
           send(response, 404, { error: "not found" });
           return;
         }
-        const prefix = decodeURIComponent(route.slice("/runs/".length)).replace(/[^0-9a-f-]/gi, "");
-        const lines = linesForRun(parseAudit(await fs.readFile(config.auditFile, "utf8").catch(() => "")), prefix);
+        const all = parseAudit(await fs.readFile(config.auditFile, "utf8").catch(() => ""));
+        const lines = bySignature ? all.filter((line) => line.run === prefix) : linesForRun(all, prefix);
         const html = runPage(prefix, lines);
         response.writeHead(lines.length ? 200 : 404, {
           "Content-Type": "text/html; charset=utf-8",

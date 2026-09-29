@@ -1,4 +1,5 @@
 import type { SlackClient } from "@scriptorium/connectors";
+import { runLinkSignature } from "@scriptorium/core";
 import { keys, type AgentEvent } from "@scriptorium/runtime";
 import { toSlackMrkdwn } from "../slack-format";
 import type { TeammateReply } from "../teammate";
@@ -152,7 +153,7 @@ export function formatReply(reply: TeammateReply, runId?: string, viewer?: { bas
   // With a viewer configured, the run id is a link to everything the run did.
   const runLabel = run
     ? viewer?.baseUrl && viewer.token
-      ? ` · <${viewer.baseUrl.replace(/\/$/, "")}/runs/${run}?token=${encodeURIComponent(viewer.token)}|view run ${run}>`
+      ? ` · <${viewer.baseUrl.replace(/\/$/, "")}/runs/${runId}?sig=${runLinkSignature(viewer.token, runId as string)}|view run ${run}>`
       : ` · run \`${run}\``
     : "";
   return `${body}${ticket}\n_AI-generated — verify before acting${runLabel}_`;

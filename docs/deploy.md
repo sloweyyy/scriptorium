@@ -68,6 +68,13 @@ agent copies each key once per process to a 0600 path under `TMPDIR` and points 
 nothing to configure. It's worth knowing because the failure shows up as
 `Permission denied (publickey)`, which looks like a wrong key.
 
+**GitHub's host key is pinned.** A container starts with an empty `known_hosts`, so
+`StrictHostKeyChecking=accept-new` would trust whichever server answered first on every boot.
+A `github.com` remote is instead checked strictly against `apps/agents/ssh/github_known_hosts`
+(GitHub's published keys). If GitHub ever rotates them, refresh that file from
+`https://api.github.com/meta`. A remote on another host has nothing pinned: it keeps
+`accept-new`, and the log says so.
+
 ## Model providers
 
 The pipeline runs on the Anthropic API, Claude on Vertex AI, or Gemini on Vertex AI. Pick one

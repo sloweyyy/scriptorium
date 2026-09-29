@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { approvalVerified, docsRepoReady, parseMarkdown, vaultRepoReady, type AppConfig, type Frontmatter, type Vault } from "@scriptorium/core";
 import { GitHubError, docBranchName, docPullRequestBody, installationToken, openPullRequest, publishVault, type PublishToRepoResult } from "@scriptorium/publish";
@@ -109,18 +109,44 @@ async function privateKeyPath(keyPath: string): Promise<string> {
     usableKeys.set(keyPath, keyPath);
     return keyPath;
   }
-  const tag = createHash("sha256").update(keyPath).digest("hex").slice(0, 8);
-  const copy = path.join(os.tmpdir(), `scriptorium-deploy-key-${tag}`);
-  await fs.copyFile(keyPath, copy);
-  await fs.chmod(copy, 0o600);
+  // A fresh 0700 directory, and the file created 0600: never, even for a moment, a copy of
+  // the key that another user of the machine could read.
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "scriptorium-deploy-key-"));
+  const copy = path.join(dir, "key");
+  await fs.writeFile(copy, await fs.readFile(keyPath), { mode: 0o600, flag: "wx" });
   console.log(`[docs] copied the deploy key to ${copy} with 0600 — ssh rejects the 0444 secret mount`);
   usableKeys.set(keyPath, copy);
   return copy;
 }
 
+/** GitHub's host keys, pinned in the repo (from api.github.com/meta). */
+export const GITHUB_KNOWN_HOSTS = fileURLToPath(new URL("../ssh/github_known_hosts", import.meta.url));
+
+/** The host an SSH remote names: `git@github.com:o/r.git`, `ssh://git@github.com/o/r`. */
+function sshHost(url: string): string | undefined {
+  return url.match(/^ssh:\/\/(?:[^@/]+@)?([^/:]+)/)?.[1] ?? url.match(/^(?:[^@/]+@)?([^/:]+):(?!\/\/)/)?.[1];
+}
+
+const quote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
+
+/**
+ * The ssh command for one remote. A GitHub remote is checked against GitHub's pinned keys,
+ * strictly: `accept-new` on a container that is always new trusts whatever answers first,
+ * so one poisoned DNS answer would take the deploy key's pushes. Another host has nothing
+ * pinned here; it keeps `accept-new`, and says so.
+ */
+export async function sshCommandFor(url: string, sshKey: string): Promise<string> {
+  const key = `ssh -i ${quote(await privateKeyPath(sshKey))} -o IdentitiesOnly=yes`;
+  if (sshHost(url)?.toLowerCase() === "github.com") {
+    return `${key} -o UserKnownHostsFile=${quote(GITHUB_KNOWN_HOSTS)} -o StrictHostKeyChecking=yes`;
+  }
+  console.warn(`[docs] ${sshHost(url) ?? url} has no pinned host key; trusting the first one seen`);
+  return `${key} -o StrictHostKeyChecking=accept-new`;
+}
+
 async function sshCommand(target: RepoTarget): Promise<string | undefined> {
   if (!target.sshKey) return undefined;
-  return `ssh -i ${await privateKeyPath(target.sshKey)} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new`;
+  return sshCommandFor(target.url, target.sshKey);
 }
 
 /**

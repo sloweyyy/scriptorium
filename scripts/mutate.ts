@@ -723,6 +723,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/lifecycle.test.ts"],
   },
   {
+    control: "a GitHub remote's host key is pinned, never trusted on first sight",
+    file: "apps/agents/src/docs-repo.ts",
+    find: "  if (sshHost(url)?.toLowerCase() === \"github.com\") {",
+    replace: "  if (false) {",
+    evals: ["evals/deploy-key.test.ts"],
+  },
+  {
+    control: "the deploy key's copy is never readable by anyone else",
+    file: "apps/agents/src/docs-repo.ts",
+    find: "{ mode: 0o600, flag: \"wx\" }",
+    replace: "{ mode: 0o644, flag: \"wx\" }",
+    evals: ["evals/deploy-key.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

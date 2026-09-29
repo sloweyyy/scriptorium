@@ -1,4 +1,5 @@
 import type { SlackClient } from "@scriptorium/connectors";
+import { runLinkSignature } from "@scriptorium/core";
 import { keys, type AgentEvent } from "@scriptorium/runtime";
 import { toSlackMrkdwn } from "../slack-format";
 import type { TeammateReply } from "../teammate";
@@ -57,21 +58,35 @@ export async function threadContext(slack: SlackClient, channel: string, threadT
   type Reply = { ts?: string; user?: string; text?: string };
   let parent: Reply | undefined;
   let recent: Reply[] = [];
-  let cursor: string | undefined;
-  for (let page = 0; page < 20; page += 1) {
-    const replies = await slack.conversations.replies({ channel, ts: threadTs, limit: 200, ...(cursor ? { cursor } : {}) });
-    for (const message of (replies.messages ?? []) as Reply[]) {
-      if (message.ts === threadTs) parent = message;
-      else recent.push(message);
+  const read = async (window: { oldest?: string; latest?: string }): Promise<boolean> => {
+    let cursor: string | undefined;
+    for (let page = 0; page < 20; page += 1) {
+      const replies = await slack.conversations.replies({ channel, ts: threadTs, limit: 200, ...window, ...(window.latest ? { inclusive: true } : {}), ...(cursor ? { cursor } : {}) });
+      for (const message of (replies.messages ?? []) as Reply[]) {
+        if (message.ts === threadTs) parent = message;
+        else recent.push(message);
+      }
+      recent = recent.slice(-(limit + 1));
+      cursor = replies.response_metadata?.next_cursor || undefined;
+      if (!cursor) return true;
     }
-    recent = recent.slice(-(limit + 1));
-    cursor = replies.response_metadata?.next_cursor || undefined;
-    if (!cursor) break;
+    return false;
+  };
+  // Past the page cap the replies kept were somewhere around reply 4,000, not the ones just
+  // before the question. Read the hours before the trigger instead, and say what was skipped.
+  const complete = await read({});
+  let skipped = false;
+  if (!complete) {
+    const trigger = Number(triggerTs);
+    recent = [];
+    skipped = true;
+    if (Number.isFinite(trigger)) await read({ oldest: String(trigger - 6 * 3600), latest: triggerTs });
   }
   const usable = (message: Reply) => message.ts !== triggerTs && Boolean(message.text);
   const head = parent && usable(parent) ? [parent] : [];
   const lines = [...head, ...recent.filter(usable).slice(-(limit - head.length))]
     .map((message) => `${message.user ? `<@${message.user}>` : "bot"}: ${(message.text ?? "").slice(0, 1_000)}`);
+  if (skipped && lines.length) lines.splice(head.length, 0, "(… a very long thread: earlier replies not shown)");
   return lines.length ? lines.join("\n") : undefined;
 }
 
@@ -138,7 +153,7 @@ export function formatReply(reply: TeammateReply, runId?: string, viewer?: { bas
   // With a viewer configured, the run id is a link to everything the run did.
   const runLabel = run
     ? viewer?.baseUrl && viewer.token
-      ? ` · <${viewer.baseUrl.replace(/\/$/, "")}/runs/${run}?token=${encodeURIComponent(viewer.token)}|view run ${run}>`
+      ? ` · <${viewer.baseUrl.replace(/\/$/, "")}/runs/${runId}?sig=${runLinkSignature(viewer.token, runId as string)}|view run ${run}>`
       : ` · run \`${run}\``
     : "";
   return `${body}${ticket}\n_AI-generated — verify before acting${runLabel}_`;

@@ -287,6 +287,38 @@ describe("run viewer", () => {
   });
 });
 
+describe("run viewer: signed links", () => {
+  it("a signed link opens exactly its own run; it can't open another, or list runs by prefix", async () => {
+    const { runLinkSignature } = await import("@scriptorium/core");
+    const auditFile = path.join(tmpRoot, "audit.jsonl");
+    await fs.mkdir(path.dirname(auditFile), { recursive: true });
+    const A = "3f2a9c1b-aaaa-4000-8000-000000000001";
+    const B = "3f2a9c1b-aaaa-4000-8000-000000000002";
+    await fs.writeFile(auditFile, [
+      JSON.stringify({ ts: "2026-09-29T10:00:00Z", run: A, type: "teammate.answer", question: "run A question" }),
+      JSON.stringify({ ts: "2026-09-29T10:01:00Z", run: B, type: "teammate.answer", question: "run B question" }),
+    ].join("\n"));
+    const viewer = startIngress({ config: { ...config(), auditFile, webhook: { ...config().webhook, traceToken: "tok-123" } } as AppConfig, hooks: {} });
+    await new Promise<void>((resolve) => viewer.once("listening", resolve));
+    const at = `http://127.0.0.1:${(viewer.address() as AddressInfo).port}`;
+    try {
+      const own = await fetch(`${at}/runs/${A}?sig=${runLinkSignature("tok-123", A)}`);
+      expect(own.status).toBe(200);
+      const html = await own.text();
+      expect(html).toContain("run A question");
+      expect(html).not.toContain("run B question");
+      // A's signature doesn't open B, and a signed link is never a prefix search.
+      expect((await fetch(`${at}/runs/${B}?sig=${runLinkSignature("tok-123", A)}`)).status).toBe(404);
+      expect((await fetch(`${at}/runs/3f2a9c1b?sig=${runLinkSignature("tok-123", "3f2a9c1b")}`)).status).toBe(404);
+      expect((await fetch(`${at}/runs/${A}?sig=${runLinkSignature("wrong-secret", A)}`)).status).toBe(404);
+      // The operator's own token still opens any run.
+      expect((await fetch(`${at}/runs/${B}?token=tok-123`)).status).toBe(200);
+    } finally {
+      await new Promise<void>((resolve) => viewer.close(() => resolve()));
+    }
+  });
+});
+
 describe("metrics", () => {
   it("is closed without its bearer token, and exposes counts and tokens, never questions, channels or people", async () => {
     const auditFile = path.join(tmpRoot, "audit.jsonl");

@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 /**
  * Reading the audit log back, by run. Shared by `pnpm trace` and the run viewer, so the
  * terminal and the browser can never disagree about what a run did.
@@ -22,6 +23,15 @@ export function parseAudit(text: string): AuditLine[] {
         return [];
       }
     });
+}
+
+/**
+ * A link that opens ONE run. Replies used to carry the viewer's global token, so anyone who
+ * could read one reply in Slack held the key to every run: other people's questions, DMs,
+ * tool calls. A reply now carries this signature of its own run id, and nothing else opens.
+ */
+export function runLinkSignature(secret: string, runId: string): string {
+  return createHmac("sha256", secret).update(`scriptorium-run:${runId}`).digest("hex").slice(0, 32);
 }
 
 export function linesForRun(lines: readonly AuditLine[], prefix: string): AuditLine[] {

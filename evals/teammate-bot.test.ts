@@ -130,6 +130,30 @@ describe("thread context", () => {
   });
 });
 
+describe("a very long thread", () => {
+  it("past the page cap, it still reads the replies just before the question, and says it skipped some", async () => {
+    const { threadContext } = await import("@scriptorium/agents");
+    // 5,000 replies ten seconds apart: far past 20 pages of 200.
+    const base = 1_790_000_000;
+    const all = Array.from({ length: 5_001 }, (_, i) => ({ ts: `${base + i * 10}.000100`, user: "U1", text: `msg ${i}` }));
+    const client = {
+      conversations: {
+        replies: async ({ cursor, oldest, latest }: { cursor?: string; oldest?: string; latest?: string }) => {
+          // The parent always comes first, like Slack; then the window, oldest first, 200 a page.
+          const inWindow = all.slice(1).filter((m) => (!oldest || Number(m.ts) >= Number(oldest)) && (!latest || Number(m.ts) <= Number(latest)));
+          const start = Number(cursor ?? 0);
+          const page = inWindow.slice(start, start + 200);
+          return { messages: start === 0 ? [all[0], ...page] : page, response_metadata: { next_cursor: start + 200 < inWindow.length ? String(start + 200) : "" } };
+        },
+      },
+      chat: {},
+    } as unknown as SlackClient;
+    const trigger = all[5_000]!.ts;
+    const context = (await threadContext(client, "C1", all[0]!.ts, trigger, 5))!.split("\n");
+    expect(context).toEqual(["<@U1>: msg 0", "(… a very long thread: earlier replies not shown)", "<@U1>: msg 4996", "<@U1>: msg 4997", "<@U1>: msg 4998", "<@U1>: msg 4999"]);
+  });
+});
+
 describe("tools bound to the turn", () => {
   it("reads only the thread it was asked in, and scopes memories to here or the asker", async () => {
     const { bindToTurn } = await import("@scriptorium/agents");

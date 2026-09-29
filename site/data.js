@@ -2,14 +2,14 @@
 // the merged-PR count and new findings as they land. index.html only renders this.
 window.SITE = {
   // Reviewed pull requests merged so far (the "built in the open" line and the stats).
-  mergedPullRequests: 17,
+  mergedPullRequests: 20,
   updated: "29 September 2026",
 
   stats: [
     { value: "570+", label: "evals, deterministic, on every commit" },
-    { value: "81", label: "guardrails proven by mutation testing" },
+    { value: "89", label: "guardrails proven by mutation testing" },
     { value: "30+", label: "tools, every write approve-tier" },
-    { value: "17", label: "reviewed pull requests merged" },
+    { value: "20", label: "reviewed pull requests merged" },
   ],
 
   capabilities: [
@@ -45,12 +45,12 @@ window.SITE = {
 
 
   findings: [
+    { sev: "High", issue: "Every reply's \"view run\" link carried the viewer's global token, so anyone who could read one reply could open every run: other people's questions, DMs and tool calls.", fix: "A reply's link is signed for its own run and opens nothing else. The token is never posted; it stays with operators." },
     { sev: "High", issue: "A private memory could be read through retrieval by spelling its path another way, such as docs/../_memory/…, and then cited.", fix: "Every path check runs on the path as the filesystem resolves it, with case folded. Memory, gap and inbox notes are never evidence." },
     { sev: "High", issue: "If a revised draft's comment failed to post (a draft too long for Jira, say), approving the draft on the ticket published the unseen revision.", fix: "Publishing requires the saved draft to be exactly the one on the ticket. If it isn't, it's posted again and needs a new approval. Long drafts are shortened in the comment and attached in full." },
     { sev: "High", issue: "A question in an internal Jira comment got a public reply, visible to customers.", fix: "Replies copy the comment's visibility. A restriction it can't read gets no reply at all." },
     { sev: "High", issue: "A multi-step plan's card showed only the first 400 characters, so a later step's comment body could be approved unseen.", fix: "The card lists every step and every argument. A plan too long for one card is refused, never cut." },
     { sev: "High", issue: "A plan could schedule reminders in channels other than the one that asked.", fix: "The per-conversation checks are one function, applied to single calls and to every plan step alike." },
-    { sev: "High", issue: "An approved action whose connector failed was stuck for a week with no way to retry.", fix: "The failure is reported in the thread, with a Retry button for approvers." },
   ],
 
   packages: [

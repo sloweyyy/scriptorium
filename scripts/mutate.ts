@@ -737,6 +737,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/deploy-key.test.ts"],
   },
   {
+    control: "a push that doesn't name the docs repo never feeds the round trip",
+    file: "apps/agents/src/ingress.ts",
+    find: "const fromDocsRepo = Boolean(repo && docsSlug && repo.toLowerCase() === docsSlug.toLowerCase());",
+    replace: "const fromDocsRepo = !repo || !docsSlug || repo.toLowerCase() === docsSlug.toLowerCase();",
+    evals: ["evals/ingress.test.ts"],
+  },
+  {
+    control: "a push that doesn't name the base branch never feeds the round trip",
+    file: "apps/agents/src/ingress.ts",
+    find: "const onBase = fromDocsRepo && ref === `refs/heads/${config.docsRepo.base}`;",
+    replace: "const onBase = fromDocsRepo && (!ref || ref === `refs/heads/${config.docsRepo.base}`);",
+    evals: ["evals/ingress.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

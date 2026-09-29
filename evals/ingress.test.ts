@@ -174,6 +174,7 @@ describe("ingress", { timeout: 15_000, retry: 1 }, () => {
     const body = JSON.stringify({
       ref: "refs/heads/main",
       after: "abc123",
+      repository: { full_name: "o/r" },
       commits: [{ id: "abc123", url: "https://github.com/o/r/commit/abc123", modified: ["docs/a.md"], added: ["internal/_lessons/L-001.md"] }],
     });
     const response = await fetch(`${base}/github/webhook`, { method: "POST", headers: signed(body), body });
@@ -182,6 +183,15 @@ describe("ingress", { timeout: 15_000, retry: 1 }, () => {
     expect(docsChanges).toHaveLength(1);
     expect(docsChanges[0]?.paths.sort()).toEqual(["docs/a.md", "internal/_lessons/L-001.md"]);
     expect(docsChanges[0]?.commitUrl).toContain("abc123");
+  });
+
+  it("ignores a signed push that doesn't say which repo or branch it came from", async () => {
+    for (const payload of [{ ref: "refs/heads/main", commits: [{ modified: ["docs/a.md"] }] }, { repository: { full_name: "o/r" }, commits: [{ modified: ["docs/a.md"] }] }, { ref: "refs/heads/main", repository: { full_name: "o/other" }, commits: [{ modified: ["docs/a.md"] }] }]) {
+      const body = JSON.stringify(payload);
+      expect((await fetch(`${base}/github/webhook`, { method: "POST", headers: signed(body), body })).status).toBe(202);
+    }
+    await settle();
+    expect(docsChanges).toEqual([]);
   });
 
   it("ignores a push to any branch other than the base", async () => {
@@ -220,7 +230,7 @@ describe("ingress primitives", () => {
     const replay = await fetch(`${base}/jira/webhook/${JIRA_SECRET}`, { method: "POST", headers, body });
     expect(await replay.json()).toMatchObject({ accepted: false, reason: "duplicate delivery" });
 
-    const push = JSON.stringify({ ref: "refs/heads/main", commits: [{ modified: ["docs/a.md"] }], head_commit: { id: "abc", url: "https://x" } });
+    const push = JSON.stringify({ ref: "refs/heads/main", repository: { full_name: "o/r" }, commits: [{ modified: ["docs/a.md"] }], head_commit: { id: "abc", url: "https://x" } });
     const pushHeaders = { ...signed(push), "x-github-delivery": "gh-1" };
     await fetch(`${base}/github/webhook`, { method: "POST", headers: pushHeaders, body: push });
     await fetch(`${base}/github/webhook`, { method: "POST", headers: pushHeaders, body: push });

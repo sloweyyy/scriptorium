@@ -583,6 +583,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/policy.test.ts"],
   },
   {
+    control: "a publish writes a file in docs/ and nowhere else",
+    file: "packages/scribe/src/publish.ts",
+    find: "  if (!isSafeSlug(slug)) throw new Error(",
+    replace: "  if (false) throw new Error(",
+    evals: ["evals/publish-record.test.ts"],
+  },
+  {
+    control: "a crafted draft attachment name is not the agent's own draft",
+    file: "apps/agents/src/scribe-jira/source.ts",
+    find: "      return slug && isSafeSlug(slug) ? [{ attachment, slug }] : [];",
+    replace: "      return slug ? [{ attachment, slug }] : [];",
+    evals: ["evals/publish-record.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

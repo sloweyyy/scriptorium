@@ -751,6 +751,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/ingress.test.ts"],
   },
   {
+    control: "a push retry never sends a vault note edited after its approval",
+    file: "apps/agents/src/scribe-jira/publishing.ts",
+    find: "    if (known?.publishedBodyHash && (!current || hashDraft(current.body) !== known.publishedBodyHash)) {",
+    replace: "    if (false) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

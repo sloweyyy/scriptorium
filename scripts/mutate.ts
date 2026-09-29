@@ -758,6 +758,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "the doctor names a doc publish anyone may approve",
+    file: "apps/agents/src/doctor.ts",
+    find: "  if (jiraReady(config.jira) && !config.jira.approvers?.length) {",
+    replace: "  if (false) {",
+    evals: ["evals/doctor.test.ts"],
+  },
+  {
+    control: "the doctor names a git clone inside the state volume",
+    file: "apps/agents/src/doctor.ts",
+    find: "    if (dir && !underRepo(stateDir) && path.resolve(dir).startsWith(stateDir + path.sep)) {",
+    replace: "    if (false) {",
+    evals: ["evals/doctor.test.ts"],
+  },
+  {
+    control: "the doctor names state on a deployed container's disk",
+    file: "apps/agents/src/doctor.ts",
+    find: "  if (probes.deployed && underRepo(stateDir)) {",
+    replace: "  if (false) {",
+    evals: ["evals/doctor.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

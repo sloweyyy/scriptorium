@@ -13,7 +13,8 @@ function config(overrides: { teammate?: Partial<AppConfig["teammate"]>; docsRepo
     repoRoot: "/srv/app",
     auditFile: "/state/audit/log.jsonl",
     signingKey: "k",
-    jira: { stateDir: "/state", baseUrl: "https://x.atlassian.net", email: "s@x", apiToken: "t", projectKey: "DOC" },
+    jira: { stateDir: "/state", baseUrl: "https://x.atlassian.net", email: "s@x", apiToken: "t", projectKey: "DOC", approvers: ["acc-1"] },
+    webhook: { githubSecret: "gh", traceToken: "trace", metricsToken: "metrics" },
     docsRepo: { base: "main", internalBranch: "vault-live", workDir: "/tmp/docs-repo", commitName: "a", commitEmail: "a@x", ...overrides.docsRepo },
     teammate: { botToken: "xoxb", channels: ["C1"], approvers: ["UPM"], admins: ["UADMIN"], people: [["slack:UPM", "jira:acc-1"]], jiraProjects: [], confluenceSpaces: [], githubRepos: [], allowDms: false, digestWeekday: 1, digestHour: 9, dailyTokens: 1_000_000, ...overrides.teammate },
     ...overrides.top,
@@ -63,6 +64,23 @@ describe("pnpm doctor", () => {
     expect(levels(none, "publishing")).toEqual(["warn"]);
     const sharedKey = await runDoctor(config({ docsRepo: { url: "git@github.com:o/docs.git", vaultUrl: "git@github.com:o/vault.git", sshKey: "/keys/k", vaultSshKey: "/keys/k" } }), {});
     expect(levels(sharedKey, "publishing")).toEqual(["ok", "fail"]);
+  });
+
+  it("names state on the container disk, a git clone in the state volume, and shared or missing secrets", async () => {
+    const onDisk = await runDoctor(config({ top: { jira: { ...config().jira, stateDir: "/srv/app/.scriptorium-state" } } as Partial<AppConfig> }), { deployed: true });
+    expect(onDisk.find((check) => check.area === "state")?.detail).toMatch(/container's disk/);
+    const cloneInMount = await runDoctor(config({ docsRepo: { url: "git@github.com:o/docs.git", vaultUrl: "git@github.com:o/vault.git", workDir: "/state/docs-repo" } }), {});
+    expect(cloneInMount.find((check) => check.area === "state")).toMatchObject({ level: "fail", detail: expect.stringContaining("DOCS_REPO_WORKDIR") });
+    const loose = await runDoctor(
+      config({ top: { jira: { ...config().jira, approvers: [] }, webhook: { traceToken: "same", metricsToken: "same" } } as Partial<AppConfig>, docsRepo: { url: "https://gitlab.example/o/docs.git", vaultUrl: "git@github.com:o/vault.git", commitEmail: "agent@scriptorium.local" } }),
+      {},
+    );
+    const warned = loose.filter((check) => check.level === "warn").map((check) => check.detail).join("\n");
+    expect(warned).toContain("JIRA_APPROVERS is empty");
+    expect(warned).toContain("METRICS_TOKEN and TRACE_TOKEN are the same");
+    expect(warned).toContain("GITHUB_WEBHOOK_SECRET is unset");
+    expect(warned).toContain("isn't a GitHub repo");
+    expect(warned).toContain("agent@scriptorium.local");
   });
 
   it("checks each Confluence space and GitHub repo it is told to use", async () => {

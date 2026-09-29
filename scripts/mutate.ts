@@ -562,6 +562,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/image.test.ts"],
   },
   {
+    control: "an approval card shows every argument in full, never cut",
+    file: "packages/policy/src/card.ts",
+    find: "      const text = (typeof value === \"string\" ? value : JSON.stringify(value)) ?? \"\";",
+    replace: "      const text = ((typeof value === \"string\" ? value : JSON.stringify(value)) ?? \"\").slice(0, 400);",
+    evals: ["evals/policy.test.ts"],
+  },
+  {
+    control: "a change too long for one card is refused before a card is posted",
+    file: "packages/policy/src/guard.ts",
+    find: "  if (escapedLength(summary) > CARD_TEXT_CHARS) {",
+    replace: "  if (false) {",
+    evals: ["evals/policy.test.ts"],
+  },
+  {
+    control: "a long card is split into sections Slack accepts, nothing dropped",
+    file: "packages/connectors/src/slack.ts",
+    find: "export function cardSections(text: string, limit = 2_900): string[] {\n",
+    replace: "export function cardSections(text: string, limit = 2_900): string[] {\n  return [text];\n",
+    evals: ["evals/policy.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

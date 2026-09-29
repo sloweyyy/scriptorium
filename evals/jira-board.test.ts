@@ -365,6 +365,51 @@ describe("board transitions", () => {
     expect(comments.at(-1)?.body).toContain("Already published");
   });
 
+  it("a push retry never sends a vault note edited after its approval", async () => {
+    // Published, push not done yet: the next `approve` is a push-only retry. Between the two,
+    // the vault repo's sync rewrote the note. That text was never approved.
+    const settings = config();
+    const relPath = "docs/incident-timeline-embed.md";
+    await vault.writeNote(relPath, "## Overview\n\nEmbed the incident timeline.\n", { jira_issue: "DOC-1" });
+    const approvedHash = createHash("sha256").update((await vault.readNote(relPath)).body.trim()).digest("hex");
+    await fs.mkdir(path.join(settings.jira.stateDir, "drafts"), { recursive: true });
+    await fs.writeFile(path.join(settings.jira.stateDir, "drafts", "DOC-1.md"), CLEAN_DRAFT);
+    await fs.writeFile(
+      path.join(settings.jira.stateDir, "jira-state.json"),
+      JSON.stringify({
+        version: 1,
+        issues: {
+          "DOC-1": {
+            hasDraft: true,
+            docSlug: "incident-timeline-embed",
+            publishedPath: relPath,
+            publishedBodyHash: approvedHash,
+            docsPushed: false,
+            lastStatus: "In Review",
+            sourceFingerprint: "seeded",
+            processedComments: [],
+          },
+        },
+      }),
+    );
+    await vault.writeNote(relPath, "## Overview\n\nEmbed the incident timeline. Also: free for everyone, forever.\n", { jira_issue: "DOC-1" });
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "In Review" } } };
+
+    comments.push(human("h1", "approve"));
+    const held = await startScribeJira(settings, vault);
+    held.stop();
+    expect(comments.at(-1)?.body).toContain("changed after it was approved");
+    expect(comments.some((comment) => comment.body.includes("retrying the docs-repo push only"))).toBe(false);
+
+    // The approved text back in place: the retry goes ahead.
+    await vault.writeNote(relPath, "## Overview\n\nEmbed the incident timeline.\n", { jira_issue: "DOC-1" });
+    comments.push(human("h2", "approve"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T16:00:00.000+0000" } };
+    const retried = await startScribeJira(settings, vault);
+    retried.stop();
+    expect(comments.some((comment) => comment.body.includes("retrying the docs-repo push only"))).toBe(true);
+  });
+
   it("publishes a revision approved after the first publish, instead of refusing forever", async () => {
     // The exact production thread: draft -> approve -> published & pushed -> feedback ->
     // revised draft -> approve -> "Already published… comment draft" -> draft -> approve ->

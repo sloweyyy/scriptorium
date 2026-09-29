@@ -12,9 +12,16 @@ import { loadConfig } from "@scriptorium/core";
 import { installationToken } from "@scriptorium/publish";
 import { formatChecks, manifestBotScopes, runDoctor, type DoctorProbes } from "@scriptorium/agents";
 
-const config = loadConfig();
+let config: ReturnType<typeof loadConfig>;
+try {
+  config = loadConfig();
+} catch (error) {
+  // A setting that can't be read refuses to start; the doctor names it instead of a stack.
+  console.log(`✗ config: ${error instanceof Error ? error.message : error}\n\n✗ 1 to fix.`);
+  process.exit(1);
+}
 const teammate = config.teammate;
-const probes: DoctorProbes = { manifestScopes: () => manifestBotScopes(path.join(config.repoRoot, "slack-manifests/teammate.yaml")) };
+const probes: DoctorProbes = { deployed: Boolean(process.env.K_SERVICE), manifestScopes: () => manifestBotScopes(path.join(config.repoRoot, "slack-manifests/teammate.yaml")) };
 
 if (teammate.botToken) {
   const slack = new WebClient(teammate.botToken);

@@ -46,6 +46,20 @@ export async function runPublish(
   let relPath = known?.publishedPath;
 
   if (alreadyPublished && relPath) {
+    // A retry republishes the vault note as it is NOW, under the original approval. The
+    // vault takes edits from the vault repo between the failed push and this retry (the
+    // webhook sync, the boot restore), and none of them was approved: sending one to a
+    // public PR titled "approved by <them>" would put words in the approver's mouth.
+    const current = await ctx.vault.readNote(relPath).catch(() => undefined);
+    if (known?.publishedBodyHash && (!current || hashDraft(current.body) !== known.publishedBodyHash)) {
+      await audit(ctx.config.auditFile, { type: "docs.push.held", actor: "scribe", issue: key, relPath, reason: "vault-note-changed-since-approval" });
+      await say(
+        ctx,
+        key,
+        `The vault copy of \`${relPath}\` changed after it was approved, so I won't push it under that approval. Reply with feedback and I'll revise; approving the revision publishes it.`,
+      );
+      return;
+    }
     await say(ctx, key, `The vault copy of \`${relPath}\` is already published — retrying the docs-repo push only.`);
   } else {
     const draft = await ctx.state.readDraft(key);
@@ -79,9 +93,12 @@ export async function runPublish(
     jiraIssue: key,
   });
   await organizePublishedDoc(ctx.vault, relPath);
+  // Organizing touches only frontmatter (related links), so the body hashed here is the
+  // approved text, and stays so until something outside the approval edits it.
+  const publishedBodyHash = hashDraft((await ctx.vault.readNote(relPath)).body);
   // docsPushed resets here: a republished revision has NOT reached the repo yet, and a
   // stale true would let the next approve report success for a push that never happened.
-  await ctx.state.patch(key, { publishedPath: relPath, draftPublished: true, docsPushed: false, announcePending: true, lessonPending: true });
+  await ctx.state.patch(key, { publishedPath: relPath, publishedBodyHash, draftPublished: true, docsPushed: false, announcePending: true, lessonPending: true });
   // Approved and written, so the column says so before the egress — which may fail.
   await moveTo(ctx, key, ctx.config.jira.approvedStatus, issueStatus(issue));
 

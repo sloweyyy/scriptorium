@@ -164,6 +164,11 @@ The model is untrusted too. It proposes; the platform decides what runs.
 - **Set `SCRIPTORIUM_SIGNING_KEY`.** Without it, approvals are unsigned and the docs repo's
   internal branch is trusted. Rules approved before the key was set are unsigned and stop
   applying once it is set, so re-approve them.
+- Anyone who can push to the private vault repo can edit its content notes (`docs/`, `prd/`,
+  `_gaps/`), and those edits sync into the vault by design. Only the notes that change
+  behavior (`_lessons/`, `_memory/`) need a valid signature. An edited doc is never pushed
+  to the public docs repo under its earlier approval: a push retry sends only the body
+  that was approved (hashed at publish), and otherwise asks for a new approval.
 - Scribe's Atlassian writes still use one person's API token. The Teammate writes only
   under its own service account (`TEAMMATE_ATLASSIAN_EMAIL`/`_TOKEN`). Without one, its Jira
   and Confluence tools are read-only: it never borrows another agent's identity to write.

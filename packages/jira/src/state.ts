@@ -73,6 +73,8 @@ export interface IssueState {
    * draft than anyone has seen. Publishing requires the saved draft to hash to this.
    */
   postedDraftHash?: string;
+  /** The published vault note's body, hashed at publish: a push retry sends only that text. */
+  publishedBodyHash?: string;
   /** A first draft is saved and its comment hasn't posted yet (cleared once it has): the next tick posts it. */
   draftUnposted?: boolean;
   /**

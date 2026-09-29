@@ -429,8 +429,10 @@ export function startIngress({ config, hooks, surfaces }: IngressOptions): Serve
         // agent's own: syncing them back would stamp every note as human-edited and push it
         // again, forever.
         const docsSlug = config.docsRepo.slug ?? repoSlugFromUrl(config.docsRepo.url);
-        const fromDocsRepo = !repo || !docsSlug || repo.toLowerCase() === docsSlug.toLowerCase();
-        const onBase = fromDocsRepo && (!ref || ref === `refs/heads/${config.docsRepo.base}`);
+        // Both names must be known and equal: a push that doesn't say which repo or branch it
+        // came from is not the docs repo's base branch, however well it is signed.
+        const fromDocsRepo = Boolean(repo && docsSlug && repo.toLowerCase() === docsSlug.toLowerCase());
+        const onBase = fromDocsRepo && ref === `refs/heads/${config.docsRepo.base}`;
         send(response, 202, { accepted: onBase && paths.length > 0, paths: paths.length, ref });
         if (onBase && paths.length && hooks.docsChanged) {
           try {

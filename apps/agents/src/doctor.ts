@@ -30,6 +30,8 @@ export interface DoctorProbes {
   githubCanAccess?: (repo: string) => Promise<boolean>;
   /** The bot scopes the manifest asks for. */
   manifestScopes?: () => Promise<string[]>;
+  /** This is the deployed service (Cloud Run sets K_SERVICE), where the container disk is lost at every revision. */
+  deployed?: boolean;
 }
 
 export async function runDoctor(config: AppConfig, probes: DoctorProbes = {}): Promise<Check[]> {
@@ -53,6 +55,15 @@ export async function runDoctor(config: AppConfig, probes: DoctorProbes = {}): P
   const stateDir = path.resolve(config.jira.stateDir);
   const audit = path.resolve(config.auditFile);
   const underRepo = (file: string) => file.startsWith(path.resolve(config.repoRoot) + path.sep);
+  if (probes.deployed && underRepo(stateDir)) {
+    add("state", "fail", `state (${stateDir}) is on the container's disk: the approval ledger and processed-comment record are lost at every revision, so old comments are worked again`, "mount a persistent volume and set STATE_DIR to it");
+  }
+  // gcsfuse has no hardlinks and weak rename/lock semantics: `git clone` into it fails.
+  for (const [name, dir] of [["DOCS_REPO_WORKDIR", config.docsRepo.workDir], ["VAULT_REPO_WORKDIR", config.docsRepo.vaultWorkDir]] as const) {
+    if (dir && !underRepo(stateDir) && path.resolve(dir).startsWith(stateDir + path.sep)) {
+      add("state", "fail", `${name} (${dir}) is inside the state volume, where git can't clone`, `leave ${name} unset (the default is a scratch directory) or point it outside ${stateDir}`);
+    }
+  }
   if (!underRepo(stateDir) && underRepo(audit)) {
     add("audit", "warn", `the audit log (${audit}) is in the working directory while state is on ${stateDir}: it won't survive a new revision`, `set AUDIT_FILE=${path.join(stateDir, "audit", "log.jsonl")}`);
   } else {
@@ -66,6 +77,12 @@ export async function runDoctor(config: AppConfig, probes: DoctorProbes = {}): P
   const unlinked = (teammate.approvers ?? []).filter((id) => !linked.has(`slack:${id}`));
   if (teammate.approvers?.length && unlinked.length && (jiraReady(config.jira) || teammate.githubRepos.length)) {
     add("approvals", "warn", `approver(s) ${unlinked.join(", ")} aren't linked to their Jira/GitHub accounts, so asking on Jira and approving in Slack isn't caught`, "link each approver's accounts in TEAMMATE_PEOPLE (slack:U1=jira:<id>=github:<login>)");
+  }
+  if (jiraReady(config.jira) && !config.jira.approvers?.length) {
+    add("approvals", "warn", "JIRA_APPROVERS is empty, so anyone who can comment on a doc ticket can approve its publish", "list the Jira account ids who may approve docs");
+  }
+  if (config.webhook?.metricsToken && config.webhook.metricsToken === config.webhook.traceToken) {
+    add("controls", "warn", "METRICS_TOKEN and TRACE_TOKEN are the same, so whoever scrapes metrics can also read every run's trace", "give each its own token");
   }
   if (!teammate.admins?.length) add("controls", "warn", "TEAMMATE_ADMINS is empty, so nobody can pause it or switch a tool off without a redeploy", "list the Slack user ids who may run /teammate admin");
   else add("controls", "ok", `${teammate.admins.length} admin(s) can pause it`);
@@ -116,8 +133,19 @@ export async function runDoctor(config: AppConfig, probes: DoctorProbes = {}): P
 
   // Where docs are published
   const docs = config.docsRepo;
+  if ((docsRepoReady(docs) || teammate.githubRepos.length) && !config.webhook?.githubSecret) {
+    add("github", "warn", "GITHUB_WEBHOOK_SECRET is unset, so GitHub events are refused: no merge reaches the ticket and no PR is checked when it opens", "set GITHUB_WEBHOOK_SECRET and the same secret on the repos' webhooks");
+  }
   if (docsRepoReady(docs)) {
     const docsSlug = repoSlugFromUrl(docs.url)?.toLowerCase();
+    // Pull requests go to api.github.com and merges come back as GitHub webhooks, so another
+    // host gets its branches pushed and nothing more.
+    if (!docsSlug || !/(^|[@/.])github\.com[:/]/i.test(docs.url ?? "")) {
+      add("publishing", "warn", `DOCS_REPO_URL (${docs.url}) isn't a GitHub repo: branches are pushed, but no pull request is opened and no merge reaches the ticket`, "use git@github.com:<owner>/<name>.git, or merge the doc branches by hand");
+    }
+    if (docs.commitEmail === "agent@scriptorium.local") {
+      add("publishing", "warn", "publish commits use the placeholder email agent@scriptorium.local, so GitHub attributes them to nobody", "set DOCS_REPO_COMMIT_EMAIL (and DOCS_REPO_COMMIT_NAME) to the bot account's");
+    }
     const vaultSlug = repoSlugFromUrl(docs.vaultUrl)?.toLowerCase();
     if (!vaultRepoReady(docs)) {
       add("publishing", "warn", "no vault repo: internal notes (PRDs, gaps, house rules) are pushed nowhere and not restored on boot", "set VAULT_REPO_URL to a PRIVATE repo, with its own VAULT_REPO_SSH_KEY");

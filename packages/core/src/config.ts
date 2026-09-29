@@ -27,7 +27,8 @@ function envOptionalNumber(name: string, { min = 1, max = Number.MAX_SAFE_INTEGE
   if (raw === undefined) return undefined;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
-    throw new Error(`${name}=${JSON.stringify(raw)} is not a number from ${min} to ${max}; fix or unset it`);
+    const range = max === Number.MAX_SAFE_INTEGER ? `of at least ${min}` : `from ${min} to ${max}`;
+    throw new Error(`${name}=${JSON.stringify(raw)} is not a number ${range}; fix or unset it`);
   }
   return parsed;
 }

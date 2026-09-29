@@ -2,14 +2,14 @@
 // the merged-PR count and new findings as they land. index.html only renders this.
 window.SITE = {
   // Reviewed pull requests merged so far (the "built in the open" line and the stats).
-  mergedPullRequests: 20,
+  mergedPullRequests: 21,
   updated: "29 September 2026",
 
   stats: [
     { value: "570+", label: "evals, deterministic, on every commit" },
-    { value: "89", label: "guardrails proven by mutation testing" },
+    { value: "94", label: "guardrails proven by mutation testing" },
     { value: "30+", label: "tools, every write approve-tier" },
-    { value: "20", label: "reviewed pull requests merged" },
+    { value: "21", label: "reviewed pull requests merged" },
   ],
 
   capabilities: [

@@ -450,6 +450,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/injection.test.ts"],
   },
   {
+    control: "on a very long thread, the replies just before the question are read",
+    file: "apps/agents/src/teammate-bot/messages.ts",
+    find: "  if (!complete) {",
+    replace: "  if (false) {",
+    evals: ["evals/teammate-bot.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

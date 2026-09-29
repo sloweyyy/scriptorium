@@ -660,6 +660,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/config.test.ts"],
   },
   {
+    control: "an assignee is exactly the person the approver read, never a fuzzy match",
+    file: "packages/connectors/src/jira.ts",
+    find: "(user) => user.displayName.toLowerCase() === exact || user.emailAddress?.toLowerCase() === exact,",
+    replace: "(user) => Boolean(user),",
+    evals: ["evals/jira-connector.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

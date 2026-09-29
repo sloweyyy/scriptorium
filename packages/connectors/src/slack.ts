@@ -211,7 +211,7 @@ export function describeRequest(request: ApprovalRequest): string {
     case "jira_transition":
       return `Move ${text(args.key, 40)} to “${text(args.status, 60)}”`;
     case "jira_assign":
-      return `Assign ${text(args.key, 40)} to ${text(args.assignee, 80)}`;
+      return `Assign ${text(args.key, 40)} to the one Jira user whose name or email is exactly “${text(args.assignee, 120)}”`;
     case "jira_labels": {
       const add = Array.isArray(args.add) ? args.add.map((label) => `+${String(label)}`) : [];
       const remove = Array.isArray(args.remove) ? args.remove.map((label) => `-${String(label)}`) : [];

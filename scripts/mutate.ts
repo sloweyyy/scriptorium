@@ -611,6 +611,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/repo-split.test.ts"],
   },
   {
+    control: "a retry opens the PR a crash or a GitHub error left unopened",
+    file: "apps/agents/src/docs-repo.ts",
+    find: 'const externalOnBranch = external.push.status === "unchanged" || (',
+    replace: "const externalOnBranch = false || (",
+    evals: ["evals/repo-split.test.ts"],
+  },
+  {
+    control: "a doc nobody was asked to merge is not yet published",
+    file: "apps/agents/src/docs-repo.ts",
+    find: "    published: landed(external.push.status) && !pullRequestFailed && (",
+    replace: "    published: landed(external.push.status) && (",
+    evals: ["evals/repo-split.test.ts"],
+  },
+  {
+    control: "an already-merged doc branch is published, not retried forever",
+    file: "apps/agents/src/docs-repo.ts",
+    find: "error.status === 422 && /no commits between/i.test(error.message)",
+    replace: "false",
+    evals: ["evals/repo-split.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

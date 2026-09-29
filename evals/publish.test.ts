@@ -117,6 +117,17 @@ describe("publish link transform", () => {
     expect(await staged.exists("docs/csv-format.md")).toBe(true);
   });
 
+  it("stages only the doc being published, and its link to a published doc still works", async () => {
+    // Each docs PR is one ticket's change: staging the whole docs/** tree carried every
+    // other doc (approved or not) into that PR. Links resolve against all published docs.
+    const result = await stageVault({ vault, target: "external", destDir: stageDir, only: ["docs/widget-exports.md"] });
+    expect(result.files).toEqual(["docs/widget-exports.md"]);
+    expect(await stagedFiles(stageDir)).toEqual(["docs/widget-exports.md"]);
+    const doc = await new Vault(stageDir).readNote("docs/widget-exports.md");
+    expect(doc.body).toContain("[the CSV format](./csv-format.md)");
+    expect(result.droppedLinks).not.toContain("docs/csv-format");
+  });
+
   it("emits no link at all for a prd/** target the external allowlist excludes", async () => {
     const result = await stageVault({ vault, target: "external", destDir: stageDir });
     const doc = await new Vault(stageDir).readNote("docs/widget-exports.md");

@@ -239,6 +239,8 @@ async function publishApprovedDocLocked(
     remote: "origin",
     approvedBy: input.approvedBy,
     message: `docs: ${input.slug} (${input.issueKey}, approved by ${input.approvedBy})`,
+    // This ticket's doc, and nothing else: another approved doc waits for its own PR.
+    only: [input.relPath],
   });
   lines.push(describe(external.push, "External docs"));
 

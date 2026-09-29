@@ -597,6 +597,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/publish-record.test.ts"],
   },
   {
+    control: "a docs PR carries only the doc it was opened for",
+    file: "packages/publish/src/stage.ts",
+    find: "  const files = input.only ? publishable.filter((relPath) => input.only!.includes(relPath)) : publishable;",
+    replace: "  const files = publishable;",
+    evals: ["evals/publish.test.ts", "evals/repo-split.test.ts"],
+  },
+  {
+    control: "the docs PR is staged for this ticket's doc alone",
+    file: "apps/agents/src/docs-repo.ts",
+    find: "    only: [input.relPath],",
+    replace: "",
+    evals: ["evals/repo-split.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

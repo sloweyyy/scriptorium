@@ -134,6 +134,16 @@ describe("two repositories", () => {
     expect(vaultTree).toContain("internal/_lessons/L-001-utc.md");
   });
 
+  it("a doc's PR carries that doc alone, not every other doc in the vault", async () => {
+    // Another ticket's draft sits in docs/ too; it must not ride into this ticket's PR.
+    await vault.writeNote("docs/other-feature.md", "## Overview\n\nNot approved yet.\n", { title: "Other feature", slug: "other-feature", jira_issue: "DOC-9" });
+    const outcome = await publishApprovedDoc(config(), vault, approval);
+    expect(outcome.published).toBe(true);
+    const docsPaths = await everyPath(docsRemote);
+    expect(docsPaths).toContain("docs/incident-timeline-embed.md");
+    expect(docsPaths).not.toContain("docs/other-feature.md");
+  });
+
   it("never lets the public doc branch reach the vault repo", async () => {
     await publishApprovedDoc(config(), vault, approval);
     const vaultBranches = await git(vaultRemote, "for-each-ref", "--format=%(refname:short)", "refs/heads");

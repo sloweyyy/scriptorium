@@ -527,6 +527,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/lease.test.ts"],
   },
   {
+    control: "Scribe follows Confluence PRD links only on this Atlassian site",
+    file: "apps/agents/src/scribe-jira/source.ts",
+    find: "  const onThisSite = (url: string) => Boolean(site) && siteHost(url) === site;",
+    replace: "  const onThisSite = (_url: string) => true;",
+    evals: ["evals/jira-flow.test.ts"],
+  },
+  {
+    control: "Scribe reads a Confluence PRD only from an allowed space",
+    file: "apps/agents/src/scribe-jira/source.ts",
+    find: "      if (!page.spaceKey || !allowed.includes(page.spaceKey.toUpperCase())) {",
+    replace: "      if (false) {",
+    evals: ["evals/jira-flow.test.ts"],
+  },
+  {
+    control: "with no spaces allowed, no Confluence page is even fetched",
+    file: "apps/agents/src/scribe-jira/source.ts",
+    find: "  if (!allowed.length) {",
+    replace: "  if (false) {",
+    evals: ["evals/jira-flow.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

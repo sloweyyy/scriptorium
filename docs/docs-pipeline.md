@@ -43,7 +43,10 @@ other surface without anyone prompting it.
 1. **Create an issue** in your docs project and label it **`doc-request`**. Give it a PRD in
    whichever form is natural. Scribe checks them in this order:
    - a `.md` file attached to the ticket,
-   - a **Confluence page** linked to the ticket, or its URL in the description,
+   - a **Confluence page** linked to the ticket, or its URL in the description. The link must be
+     on your own Atlassian site, and the page in a space listed in `SCRIBE_CONFLUENCE_SPACES`
+     (falling back to `TEAMMATE_CONFLUENCE_SPACES`). With neither set, no Confluence page is
+     read, so a ticket can't make Scribe quote a page its author can't see,
    - the PRD written straight into the issue description.
 
    Wherever it lives, the PRD must state `feature`, `audience` and `user_goal`. Any of these

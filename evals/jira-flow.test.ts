@@ -30,6 +30,8 @@ let moves: string[];
 let board: string[];
 /** Storage XHTML served for any Confluence page fetch; undefined -> 403 (restricted). */
 let confluenceStorage: string | undefined;
+/** Confluence page reads, so "never even fetched" can be asserted. */
+let confluencePageReads = 0;
 /** Remote links on the issue, as Jira returns them. */
 let remoteLinks: Array<{ object: { url: string; title?: string } }>;
 
@@ -63,6 +65,7 @@ function config(): AppConfig {
       apiToken: "token",
       projectKey: "DOC",
       label: "doc-request",
+      prdSpaces: ["PROD"],
       issueType: "Task",
       inProgressStatus: "In Progress",
       inReviewStatus: "In Review",
@@ -94,9 +97,12 @@ function stubJira(): void {
       return json(posted);
     }
     if (url.includes("/remotelink")) return json(remoteLinks);
+    if (url.includes("/wiki/api/v2/spaces/")) return json({ key: url.includes("/spaces/77") ? "HR" : "PROD" });
     if (url.includes("/wiki/api/v2/pages/") || url.includes("/wiki/rest/api/content/")) {
+      confluencePageReads += 1;
       if (confluenceStorage === undefined) return new Response('{"message":"restricted"}', { status: 403 });
-      return json({ title: "Beacon PRD", body: { storage: { value: confluenceStorage } } });
+      // Page 55555 lives in a space Scribe may not read from.
+      return json({ title: url.includes("/55555") ? "Salaries 2026" : "Beacon PRD", spaceId: url.includes("/55555") ? 77 : 42, body: { storage: { value: confluenceStorage } } });
     }
     if (url.includes("/transitions") && method === "GET") {
       return json({ transitions: board.map((name, index) => ({ id: String(index + 1), name, to: { name } })) });
@@ -611,6 +617,37 @@ describe("prd in confluence", () => {
     // It asks only for what the page did not answer — feature was found as a bold label.
     expect(refusal).toContain("audience");
     expect(refusal).not.toContain("*feature* —");
+  });
+
+  it("follows only links on this site, reads only allowed spaces, and names nothing it refused", async () => {
+    // A link on another host, carrying a real page id of this site: never followed.
+    remoteLinks = [{ object: { url: "https://evil.example/wiki/spaces/PROD/pages/98311/x" } }];
+    confluenceStorage = "<h1>Beacon PRD</h1><p><strong>Feature:</strong> Incident timeline embed</p>";
+    issue = { ...issue, fields: { ...(issue.fields as object), description: "PRD: https://evil.example/wiki/pages/viewpage.action?pageId=98311" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.length).toBeGreaterThan(0);
+    expect(comments.map((comment) => comment.body).join("\n")).not.toContain("Beacon PRD");
+
+    // A page on this site, in a space Scribe may not read from: refused, and its title never echoed.
+    comments = [];
+    remoteLinks = [{ object: { url: "https://example.atlassian.net/wiki/spaces/HR/pages/55555/Salaries+2026" } }];
+    issue = { ...issue, fields: { ...(issue.fields as object), description: "", updated: new Date(Date.now() + 1000).toISOString() } };
+    await fs.rm(path.join(tmpRoot, "state"), { recursive: true, force: true });
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.length).toBeGreaterThan(0);
+    expect(comments.map((comment) => comment.body).join("\n")).not.toMatch(/Salaries|salar/i);
+
+    // No spaces allowed at all: no Confluence PRDs.
+    comments = [];
+    remoteLinks = [{ object: { url: "https://example.atlassian.net/wiki/spaces/PROD/pages/98311/Beacon+PRD" } }];
+    await fs.rm(path.join(tmpRoot, "state"), { recursive: true, force: true });
+    confluencePageReads = 0;
+    const none = config();
+    (await startScribeJira({ ...none, jira: { ...none.jira, prdSpaces: [] } }, vault)).stop();
+    expect(comments.length).toBeGreaterThan(0);
+    // Not read and discarded: never fetched at all.
+    expect(confluencePageReads).toBe(0);
+    expect(comments.map((comment) => comment.body).join("\n")).not.toContain("Beacon PRD");
   });
 
   it("drafts nothing and says why when the linked page is restricted", async () => {

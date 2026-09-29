@@ -109,7 +109,7 @@ export class JiraClient {
    * accepts the same basic auth, so reading a PRD out of Confluence costs no new
    * credential and no new configuration.
    */
-  async confluencePage(pageId: string): Promise<{ title: string; storage: string }> {
+  async confluencePage(pageId: string): Promise<{ title: string; storage: string; spaceKey?: string }> {
     // A page id is digits. Anything else is a URL fragment someone typed, not a page.
     if (!/^\d+$/.test(pageId)) throw new JiraError(400, "/wiki/api/v2/pages", `not a Confluence page id: ${pageId}`);
     // v2 first: the v1 content GET is gone from Atlassian's current spec. v1 stays as the
@@ -117,12 +117,16 @@ export class JiraClient {
     const v2 = `/wiki/api/v2/pages/${pageId}?body-format=storage`;
     const response = await this.call(v2);
     if (response.status !== 404 && response.status !== 410) {
-      const page = await this.readJson<{ title?: string; body?: { storage?: { value?: string } } }>(response, v2);
-      return { title: page.title ?? `Confluence page ${pageId}`, storage: page.body?.storage?.value ?? "" };
+      const page = await this.readJson<{ title?: string; spaceId?: string | number; body?: { storage?: { value?: string } } }>(response, v2);
+      // The space is what a caller authorises on; v2 names it by id, so look up its key.
+      const spaceKey = page.spaceId !== undefined
+        ? await this.get<{ key?: string }>(`/wiki/api/v2/spaces/${encodeURIComponent(String(page.spaceId))}`).then((space) => space.key).catch(() => undefined)
+        : undefined;
+      return { title: page.title ?? `Confluence page ${pageId}`, storage: page.body?.storage?.value ?? "", ...(spaceKey ? { spaceKey } : {}) };
     }
-    const v1 = `/wiki/rest/api/content/${pageId}?expand=body.storage`;
-    const page = await this.get<{ title?: string; body?: { storage?: { value?: string } } }>(v1);
-    return { title: page.title ?? `Confluence page ${pageId}`, storage: page.body?.storage?.value ?? "" };
+    const v1 = `/wiki/rest/api/content/${pageId}?expand=body.storage,space`;
+    const page = await this.get<{ title?: string; space?: { key?: string }; body?: { storage?: { value?: string } } }>(v1);
+    return { title: page.title ?? `Confluence page ${pageId}`, storage: page.body?.storage?.value ?? "", ...(page.space?.key ? { spaceKey: page.space.key } : {}) };
   }
 
   /**

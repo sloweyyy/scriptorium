@@ -178,6 +178,30 @@ describe("teammate, end to end", () => {
     expect(answers()).toBe(1);
   });
 
+  it("on a deploy overlap, the new instance leaves the old one's live answer alone, and closes a dead one's once its lease expires", async () => {
+    const { Lease } = await import("@scriptorium/runtime");
+    const leaseFile = path.join(tmpRoot, "state", "scheduler.lease");
+    // The old revision holds the lease (a short TTL here) and is mid-answer.
+    const old = await createTeammate(config(), vault, slack as never, "UBOT", undefined, { lease: new Lease(leaseFile, 300, "old", 0) });
+    script = { calls: [], reply: "never", hang: true };
+    await old.onMention({ channel: "C1", ts: "1.0", user: "U1", text: "<@UBOT> when are digests sent?" });
+    expect(await old.drain(50)).toBe(false);
+    expect(posted[0]?.text).toContain("Looking into it");
+
+    // The new revision boots alongside it: the old answer is still live, so it is left alone.
+    const fresh = await createTeammate(config(), vault, slack as never, "UBOT", undefined, { lease: new Lease(leaseFile, 300, "new", 0) });
+    expect(posted[0]?.text).toContain("Looking into it");
+    // Nor does it run the scheduled work while the old one holds it.
+    await fresh.checkApprovals();
+    expect(posted[0]?.text).toContain("Looking into it");
+
+    // The old one dies and stops renewing; once its lease expires, the new one takes over and
+    // closes what it left behind.
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    await fresh.checkApprovals();
+    expect(posted[0]?.text).toContain("I restarted before I finished this");
+  });
+
   it("a turn cut off by a restart is closed with a notice on the next boot, not left 'Looking into it…'", async () => {
     const before = await createTeammate(config(), vault, slack as never, "UBOT");
     script = { calls: [], reply: "never", hang: true };

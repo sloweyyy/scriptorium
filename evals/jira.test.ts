@@ -372,15 +372,18 @@ describe("reading a PRD out of Confluence", () => {
       const url = String(input);
       hits.push(url.replace("https://example.atlassian.net", ""));
       if (url.includes("/api/v2/pages/") && !v2Exists) return new Response("", { status: 404 });
-      return new Response(JSON.stringify({ title: "PRD", body: { storage: { value: "<p>x</p>" } } }), { status: 200 });
+      if (url.includes("/api/v2/spaces/42")) return new Response(JSON.stringify({ key: "DOCS" }), { status: 200 });
+      if (url.includes("/rest/api/content/")) return new Response(JSON.stringify({ title: "PRD", space: { key: "DOCS" }, body: { storage: { value: "<p>x</p>" } } }), { status: 200 });
+      return new Response(JSON.stringify({ title: "PRD", spaceId: 42, body: { storage: { value: "<p>x</p>" } } }), { status: 200 });
     });
     const client = new JiraClient({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", projectKey: "DOC" });
-    expect(await client.confluencePage("123")).toEqual({ title: "PRD", storage: "<p>x</p>" });
-    expect(hits).toEqual(["/wiki/api/v2/pages/123?body-format=storage"]);
+    // The space comes back too: it is what a caller authorises on.
+    expect(await client.confluencePage("123")).toEqual({ title: "PRD", storage: "<p>x</p>", spaceKey: "DOCS" });
+    expect(hits).toEqual(["/wiki/api/v2/pages/123?body-format=storage", "/wiki/api/v2/spaces/42"]);
     v2Exists = false;
     hits.length = 0;
-    await client.confluencePage("123");
-    expect(hits).toEqual(["/wiki/api/v2/pages/123?body-format=storage", "/wiki/rest/api/content/123?expand=body.storage"]);
+    expect((await client.confluencePage("123")).spaceKey).toBe("DOCS");
+    expect(hits).toEqual(["/wiki/api/v2/pages/123?body-format=storage", "/wiki/rest/api/content/123?expand=body.storage,space"]);
     await expect(client.confluencePage("../admin")).rejects.toThrow(/not a Confluence page id/);
     vi.unstubAllGlobals();
   });

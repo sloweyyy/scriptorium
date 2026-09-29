@@ -252,11 +252,17 @@ async function loadConfluencePrd(
   issue: JiraIssue,
 ): Promise<{ markdown: string; origin: string } | null | undefined> {
   const candidates: string[] = [];
+  // Only this site's pages, only in allowed spaces. The page id was taken from ANY URL, so a
+  // link to anything.example?pageId=123 read page 123 here; and the service account may see
+  // spaces the ticket's author can't, whose content would then be quoted onto the ticket.
+  const site = siteHost(ctx.config.jira.baseUrl);
+  const allowed = ctx.config.jira.prdSpaces ?? [];
+  const onThisSite = (url: string) => Boolean(site) && siteHost(url) === site;
 
   try {
     for (const link of await ctx.client.remoteLinks(issue.key)) {
       const url = link.object?.url;
-      if (!url) continue;
+      if (!url || !onThisSite(url)) continue;
       const id = confluencePageIdFromUrl(url);
       if (id && !candidates.includes(id)) candidates.push(id);
     }
@@ -265,14 +271,24 @@ async function loadConfluencePrd(
     console.warn(`[scribe] ${issue.key}: remote links unreadable: ${errorMessage(error)}`);
   }
 
-  for (const id of confluencePageIdsIn(issue.fields.description ?? "")) {
-    if (!candidates.includes(id)) candidates.push(id);
+  for (const match of (issue.fields.description ?? "").matchAll(/https?:\/\/[^\s|\]")>]+/g)) {
+    if (!onThisSite(match[0])) continue;
+    for (const id of confluencePageIdsIn(match[0])) if (!candidates.includes(id)) candidates.push(id);
   }
   if (!candidates.length) return undefined;
+  if (!allowed.length) {
+    console.warn(`[scribe] ${issue.key}: a Confluence PRD is linked, but no spaces are allowed (SCRIBE_CONFLUENCE_SPACES); not reading it`);
+    return null;
+  }
 
   for (const id of candidates) {
     try {
       const page = await ctx.client.confluencePage(id);
+      // Nothing about a refused page (not even its title) reaches the ticket.
+      if (!page.spaceKey || !allowed.includes(page.spaceKey.toUpperCase())) {
+        console.warn(`[scribe] ${issue.key}: Confluence page ${id} is outside the allowed spaces; not reading it`);
+        continue;
+      }
       const markdown = confluenceStorageToMarkdown(page.storage);
       if (markdown.trim()) {
         return { markdown, origin: `the linked Confluence page “${page.title}”` };
@@ -282,6 +298,15 @@ async function loadConfluencePrd(
     }
   }
   return null;
+}
+
+/** An Atlassian site's host, for comparing a link against the configured site. */
+function siteHost(url: string | undefined): string | undefined {
+  try {
+    return url ? new URL(url).host.toLowerCase() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

@@ -40,6 +40,12 @@ export interface JiraSettings {
    * An unlabelled ticket is mention-only: adopted quietly, silent until a human asks.
    */
   label: string;
+  /**
+   * Confluence spaces Scribe may read a linked PRD from (SCRIBE_CONFLUENCE_SPACES, falling
+   * back to the Teammate's). Empty: no Confluence PRDs at all. A ticket author must not be
+   * able to make Scribe read, and quote onto the ticket, a page in a space they can't see.
+   */
+  prdSpaces?: string[];
   issueType: string;
   /**
    * The board is the state machine, so the agent drives it: In Progress while it works,
@@ -334,6 +340,7 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       projectKey: env("JIRA_PROJECT_KEY"),
       jql: env("JIRA_JQL"),
       label: env("JIRA_LABEL") ?? "doc-request",
+      prdSpaces: list(env("SCRIBE_CONFLUENCE_SPACES") ?? env("TEAMMATE_CONFLUENCE_SPACES")).map((key) => key.toUpperCase()),
       issueType: env("JIRA_ISSUE_TYPE") ?? "Task",
       inProgressStatus: env("JIRA_IN_PROGRESS_STATUS") ?? "In Progress",
       inReviewStatus: env("JIRA_IN_REVIEW_STATUS") ?? "In Review",

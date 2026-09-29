@@ -1,4 +1,4 @@
-import { audit, commitVault, parseMarkdown, slugify, sourceHash, type Vault } from "@scriptorium/core";
+import { audit, commitVault, isSafeSlug, parseMarkdown, slugify, sourceHash, type Vault } from "@scriptorium/core";
 
 async function prdHash(vault: Vault, sourcePrd: string | undefined): Promise<string | undefined> {
   if (!sourcePrd) return undefined;
@@ -33,6 +33,9 @@ export async function publishDoc(input: PublishInput): Promise<string> {
   const { body } = parseMarkdown(input.markdown);
   const title = body.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "untitled";
   const slug = input.slug ?? slugify(title);
+  // The last line of defence: whatever the slug came from (a ticket's attachment name, state
+  // rebuilt after a restart), a publish writes a file in docs/ and nowhere else.
+  if (!isSafeSlug(slug)) throw new Error(`refusing to publish under an unsafe name: ${JSON.stringify(slug)}`);
   const relPath = `docs/${slug}.md`;
 
   await input.vault.writeNote(relPath, body, {

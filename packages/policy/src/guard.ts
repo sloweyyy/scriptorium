@@ -1,3 +1,4 @@
+import { CARD_TEXT_CHARS, escapedLength, summarizeArgs } from "./card";
 import { PLAN_TOOL, summarizePlan } from "./plan";
 import { audit, type ToolSpec } from "@scriptorium/core";
 import { consumeApproval, effectiveStatus, requestApproval, restoreApproval, type ApprovalRequest, type ApprovalStore } from "./approvals";
@@ -26,22 +27,7 @@ export interface GuardDeps {
   approvalId?: string;
 }
 
-/**
- * What an approver reads on the card: one line per argument, each capped. Raw JSON buried a
- * page body's first line under escapes, and a long one pushed the card past Slack's block
- * limit — a card that cannot be posted cannot be approved. The cap never changes what runs:
- * the approval is bound to the full arguments by hash, and the card shows that hash.
- */
-export function summarizeArgs(input: unknown, perField = 400, total = 2_400): string {
-  const entries = input && typeof input === "object" && !Array.isArray(input) ? Object.entries(input as Record<string, unknown>) : [["input", input] as const];
-  const lines = entries.map(([key, value]) => {
-    const text = typeof value === "string" ? value : JSON.stringify(value);
-    const oneLine = (text ?? "").replace(/\s+/g, " ").trim();
-    return `• ${key}: ${oneLine.length > perField ? `${oneLine.slice(0, perField)}… (+${oneLine.length - perField} chars)` : oneLine}`;
-  });
-  const joined = lines.join("\n");
-  return joined.length > total ? `${joined.slice(0, total)}…` : joined;
-}
+export { CARD_TEXT_CHARS, escapedLength, summarizeArgs } from "./card";
 
 export type Outcome =
   | { kind: "ran"; result: string; approval?: ApprovalRequest }
@@ -93,11 +79,18 @@ export async function runUnderPolicy(envelope: Envelope, tool: ToolSpec, input: 
     return { kind: "unavailable", reason: `approval ${deps.approvalId} can't be used: it expired or was already carried out` };
   }
 
+  const summary = deps.summarize?.(tool.name, input) ?? (tool.name === PLAN_TOOL ? summarizePlan(input) : summarizeArgs(input));
+  // Shown in full, or not at all: a change too long for one card is refused, never cut.
+  if (escapedLength(summary) > CARD_TEXT_CHARS) {
+    const reason = `this change is too long to show in full on an approval card (${escapedLength(summary).toLocaleString("en-US")} characters; the most is ${CARD_TEXT_CHARS.toLocaleString("en-US")}). Split it into smaller changes.`;
+    await audit(deps.auditFile, { type: "policy.approval.too_long", ...base, length: escapedLength(summary) });
+    return { kind: "unavailable", reason };
+  }
   const { request, created } = await requestApproval(deps.store, {
     agent: envelope.agent,
     tool: tool.name,
     args: input,
-    summary: deps.summarize?.(tool.name, input) ?? (tool.name === PLAN_TOOL ? summarizePlan(input) : summarizeArgs(input)),
+    summary,
     key: deps.key,
     requestedBy: deps.requestedBy,
     rule: verdict.rule ?? { tier: "approve" },

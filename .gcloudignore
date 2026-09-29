@@ -12,8 +12,12 @@ out
 # HAS to ship: without it the deployed Curator holds only the notes the agents wrote and
 # answers NOT_IN_KB to every question about the product the corpus documents.
 vault/reference
+# What a local run remembered about people never ships.
+vault/_memory
 samples/wireframes/*.png
 .env
+.env.*
+!.env.example
 *.log
 .DS_Store
 # This file replaces .gitignore for the source upload, so anything ignored only there

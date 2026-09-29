@@ -7,7 +7,7 @@ window.SITE = {
 
   stats: [
     { value: "570+", label: "evals, deterministic, on every commit" },
-    { value: "99", label: "guardrails proven by mutation testing" },
+    { value: "115", label: "guardrails proven by mutation testing" },
     { value: "30+", label: "tools, every write approve-tier" },
     { value: "21", label: "reviewed pull requests merged" },
   ],
@@ -45,12 +45,12 @@ window.SITE = {
 
 
   findings: [
+    { sev: "High", issue: "Approval cards cut each argument at 400 characters while saying \"Approves exactly these arguments\", so the rest of a page body or comment was approved unseen.", fix: "Every argument is shown in full, across as many card sections as it takes. A change too long for one card is refused before it's posted, never cut." },
     { sev: "High", issue: "A Confluence link on a ticket, on any site, made the docs agent read that page id on your own site, in any space its account could see, and quote it onto the ticket.", fix: "Only links on your own site are followed, and only pages in allowed spaces are read. With none allowed, no page is fetched, and nothing about a refused page is echoed." },
     { sev: "High", issue: "Every reply's \"view run\" link carried the viewer's global token, so anyone who could read one reply could open every run: other people's questions, DMs and tool calls.", fix: "A reply's link is signed for its own run and opens nothing else. The token is never posted; it stays with operators." },
     { sev: "High", issue: "A private memory could be read through retrieval by spelling its path another way, such as docs/../_memory/…, and then cited.", fix: "Every path check runs on the path as the filesystem resolves it, with case folded. Memory, gap and inbox notes are never evidence." },
     { sev: "High", issue: "If a revised draft's comment failed to post (a draft too long for Jira, say), approving the draft on the ticket published the unseen revision.", fix: "Publishing requires the saved draft to be exactly the one on the ticket. If it isn't, it's posted again and needs a new approval. Long drafts are shortened in the comment and attached in full." },
     { sev: "High", issue: "A question in an internal Jira comment got a public reply, visible to customers.", fix: "Replies copy the comment's visibility. A restriction it can't read gets no reply at all." },
-    { sev: "High", issue: "A multi-step plan's card showed only the first 400 characters, so a later step's comment body could be approved unseen.", fix: "The card lists every step and every argument. A plan too long for one card is refused, never cut." },
   ],
 
   packages: [

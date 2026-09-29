@@ -1,0 +1,41 @@
+# `docker build .` copies the working directory into the image. Everything here stays out:
+# secrets come from the runtime environment, and state, audit and the vault are restored or
+# mounted at run time, never baked in. Keep this in step with .gcloudignore (the
+# `gcloud run deploy --source` path).
+
+# Secrets. Every local env file, whatever it's called; the example is documentation.
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+*.pem
+*.key
+id_*
+
+# State and records: per deployment, never shipped. The tracked vault seed ships (as with
+# .gcloudignore); what a local run added about people, and derived pages, do not.
+.scriptorium-state
+audit
+out
+vault/_memory
+vault/reference
+vault/.obsidian
+*.log
+
+# Local working context, not runtime input.
+NOTES.local.md
+scratchpad
+docs/demo.gif
+samples/wireframes/*.png
+
+# Installed inside the image, never copied from the host.
+node_modules
+**/node_modules
+
+# Tooling and history.
+.git
+.gitignore
+.claude
+.github
+.DS_Store

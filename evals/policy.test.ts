@@ -225,16 +225,30 @@ describe("carrying out an approval", () => {
 });
 
 describe("what the approver reads", () => {
-  it("one readable, capped line per argument — the full arguments still bind the approval", async () => {
+  it("every argument in full, a long body keeping its lines, on as many card sections as it takes", async () => {
     const { summarizeArgs } = await import("@scriptorium/policy");
-    const body = `# Digest\n\n${"x".repeat(5_000)}`;
+    const { approvalBlocks } = await import("@scriptorium/connectors");
+    const body = `# Digest\n\n${"The digest lists every update. ".repeat(160)}\n\nTHE LAST LINE`;
     const summary = summarizeArgs({ space: "BEACON", title: "Digest emails", markdown: body });
     expect(summary).toContain("• space: BEACON");
     expect(summary).toContain("• title: Digest emails");
-    expect(summary).toMatch(/• markdown: # Digest x+… \(\+\d+ chars\)/);
-    expect(summary.length).toBeLessThan(2_500);
-    // Truncation is display only: a different body is a different action.
+    expect(summary).toContain(body.trimEnd());
+    const blocks = approvalBlocks({ id: "r1", agent: "Teammate", tool: "confluence_update_page", argsHash: "h", key: "k", requestedAt: "", expiresAt: new Date(Date.now() + 3_600_000).toISOString(), status: "pending", summary } as never) as Array<{ type: string; text?: { text: string } }>;
+    const fenced = blocks.filter((block) => block.type === "section" && block.text?.text.startsWith("```"));
+    expect(fenced.length).toBeGreaterThan(1);
+    for (const section of fenced) expect(section.text!.text.length).toBeLessThanOrEqual(3_000);
+    expect(fenced.map((section) => section.text!.text.replace(/```/g, "")).join("\n")).toContain("THE LAST LINE");
+    // A different body is a different action.
     expect(argsHash({ markdown: body })).not.toBe(argsHash({ markdown: `${body}y` }));
+  });
+
+  it("a change too long to show in full on one card is refused, never cut, and files nothing", async () => {
+    const store = new MemoryApprovalStore();
+    const huge = { title: "t", body: "x".repeat(30_000) };
+    const outcome = await runUnderPolicy(envelope, publish, huge, deps(store));
+    expect(outcome).toMatchObject({ kind: "unavailable", reason: expect.stringMatching(/too long to show in full/) });
+    expect(await store.all()).toHaveLength(0);
+    expect(runs).toHaveLength(0);
   });
 });
 

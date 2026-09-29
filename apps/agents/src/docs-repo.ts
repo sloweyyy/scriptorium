@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { approvalVerified, docsRepoReady, parseMarkdown, vaultRepoReady, type AppConfig, type Frontmatter, type Vault } from "@scriptorium/core";
-import { docBranchName, docPullRequestBody, installationToken, openPullRequest, publishVault, type PublishToRepoResult } from "@scriptorium/publish";
+import { GitHubError, docBranchName, docPullRequestBody, installationToken, openPullRequest, publishVault, type PublishToRepoResult } from "@scriptorium/publish";
 
 const exec = promisify(execFile);
 
@@ -239,6 +239,8 @@ async function publishApprovedDocLocked(
     remote: "origin",
     approvedBy: input.approvedBy,
     message: `docs: ${input.slug} (${input.issueKey}, approved by ${input.approvedBy})`,
+    // This ticket's doc, and nothing else: another approved doc waits for its own PR.
+    only: [input.relPath],
   });
   lines.push(describe(external.push, "External docs"));
 
@@ -281,9 +283,13 @@ async function publishApprovedDocLocked(
   }
 
   let pullRequestUrl: string | undefined;
-  const externalPublished = external.push.status === "published" && external.push.pushed;
+  // `unchanged` counts: a retry after a crash between the push and the PR, or after a PR
+  // that failed to open, finds the branch already holding the doc — and must still open
+  // the PR, or the doc waits on a branch nobody was asked to merge.
+  const externalOnBranch = external.push.status === "unchanged" || (external.push.status === "published" && external.push.pushed);
+  let pullRequestFailed = false;
 
-  if (externalPublished && config.docsRepo.slug) {
+  if (externalOnBranch && config.docsRepo.slug) {
     try {
       // App credentials first: one repo, two permissions, hour-lived tokens, and the PR
       // shows as the app's own [bot] identity — the same split the Jira service account
@@ -311,8 +317,15 @@ async function publishApprovedDocLocked(
         lines.push(`- No GitHub App or token configured, so no PR was opened — merge \`${branch}\` into \`${config.docsRepo.base}\` to publish`);
       }
     } catch (error) {
-      // A missing PR is not a failed publish: the branch is pushed and mergeable by hand.
-      lines.push(`- Pull request could not be opened (${error instanceof Error ? error.message : String(error)}); the branch is pushed and can be merged manually`);
+      if (error instanceof GitHubError && error.status === 422 && /no commits between/i.test(error.message)) {
+        // The branch holds nothing the base lacks: it was merged already.
+        lines.push(`- \`${branch}\` is already merged into \`${config.docsRepo.base}\`; no pull request needed`);
+      } else {
+        // The doc is on the branch, but nobody has been asked to merge it: keep this
+        // retryable, so the next \`approve\` opens the PR instead of saying "already published".
+        pullRequestFailed = true;
+        lines.push(`- Pull request could not be opened (${error instanceof Error ? error.message : String(error)}); the branch is pushed — comment \`approve\` again to retry, or merge \`${branch}\` by hand`);
+      }
     }
   }
   if (internal?.push.status === "published") {
@@ -348,7 +361,7 @@ async function publishApprovedDocLocked(
     // re-ran the whole push and the terminal "already published" reply was unreachable.
     // A configured vault repo that could not be reached keeps this retryable; an
     // unconfigured one is reported, not retried — there is nowhere to retry to.
-    published: landed(external.push.status) && (internal ? landed(internal.push.status) : internalError === undefined),
+    published: landed(external.push.status) && !pullRequestFailed && (internal ? landed(internal.push.status) : internalError === undefined),
     pullRequestUrl,
   };
 }

@@ -36,9 +36,20 @@ gcloud run deploy scriptorium \
   --min-instances=1 --max-instances=1 --no-cpu-throttling \
   --set-env-vars "VERTEX_PROJECT_ID=$PROJECT,VERTEX_REGION=global,MODEL=claude-opus-5,JIRA_BASE_URL=https://your-site.atlassian.net,JIRA_EMAIL=you@example.com,JIRA_PROJECT_KEY=DOC,STATE_DIR=/state,AUDIT_FILE=/state/audit/log.jsonl,DOCS_REPO_URL=git@github.com:you/your-docs.git,VAULT_REPO_URL=git@github.com:you/your-vault.git,DOCS_REPO_WORKDIR=/tmp/docs-repo,VAULT_REPO_WORKDIR=/tmp/vault-repo" \
   --set-secrets "JIRA_API_TOKEN=jira-api-token:latest,SCRIPTORIUM_SIGNING_KEY=signing-key:latest,/keys/docs=docs-deploy-key:latest,/keys/vault=vault-deploy-key:latest,TEAMMATE_SLACK_BOT_TOKEN=teammate-slack-bot-token:latest,TEAMMATE_SLACK_APP_TOKEN=teammate-slack-app-token:latest" \
-  --add-volume=name=state,type=cloud-storage,bucket=$PROJECT-state \
+  --add-volume=name=state,type=cloud-storage,bucket=$PROJECT-state,mount-options="uid=1000;gid=1000" \
   --add-volume-mount=volume=state,mount-path=/state
 ```
+
+**The container runs as the `node` user (uid 1000), not root.** A process holding API tokens
+and deploy keys shouldn't come with the container's root. That's why the state volume above
+is mounted with `uid=1000;gid=1000`; without it, the mount is root-owned and every state
+write fails. Upgrading from an image that ran as root? Add the mount options on the same
+deploy.
+
+**Build images from a clean context.** `.dockerignore` keeps `.env`, local state, the audit
+log, `vault/_memory` and your notes out of `docker build .`, and `.gcloudignore` does the same
+for `gcloud run deploy --source`. Secrets belong in the runtime environment
+(`--set-secrets`, `--env-file`), never in the image.
 
 **The GCS volume keeps state across restarts.** It holds the ledgers, approvals,
 reminders, controls and the audit log. Without it, every ticket looks new again, and the

@@ -15,6 +15,13 @@ export interface StageInput {
   target: PublishTarget;
   /** Directory the resolved include-list is staged into. Created if missing. */
   destDir: string;
+  /**
+   * Stage only these vault paths (still subject to the include-list). A doc's PR carries
+   * that doc alone: staging every published note let doc B, approved but awaiting its own
+   * PR, ride into ticket A's PR and reach the base when A's was merged. Links still resolve
+   * against every publishable note, so the doc's links to other pages keep working.
+   */
+  only?: readonly string[];
 }
 
 export interface StageResult {
@@ -62,8 +69,11 @@ async function walkFiles(root: string, prefix = ""): Promise<string[]> {
 export async function stageVault(input: StageInput): Promise<StageResult> {
   const { vault, target, destDir } = input;
 
-  const files = (await vault.listNotes()).filter((relPath) => isIncluded(relPath, target)).sort();
-  const included = new Set(files);
+  const publishable = (await vault.listNotes()).filter((relPath) => isIncluded(relPath, target)).sort();
+  // Links resolve against everything publishable; only `only` (when given) is written.
+  const included = new Set(publishable);
+  const files = input.only ? publishable.filter((relPath) => input.only!.includes(relPath)) : publishable;
+  const stagedSet = new Set(files);
 
   await fs.mkdir(destDir, { recursive: true });
   const staging = new Vault(destDir);
@@ -88,7 +98,7 @@ export async function stageVault(input: StageInput): Promise<StageResult> {
 
   const staged = await walkFiles(destDir);
 
-  const strays = staged.filter((relPath) => !included.has(relPath));
+  const strays = staged.filter((relPath) => !stagedSet.has(relPath));
   if (strays.length) {
     throw new Error(
       `publish gate 1: ${strays.length} staged file(s) outside the ${target} include-list ` +

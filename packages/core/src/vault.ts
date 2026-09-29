@@ -35,6 +35,14 @@ export function slugify(input: string): string {
  * boundary. A gap-note question used verbatim as a ticket summary ("Doc request: Users can
  * export …") must not become an 80-character path cut off mid-word.
  */
+/**
+ * A slug that is only a file name: lowercase letters, digits and hyphens. Anything else
+ * (a slash, "..", a dot) could turn `docs/${slug}.md` into a path elsewhere in the vault.
+ */
+export function isSafeSlug(slug: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,99}$/.test(slug);
+}
+
 export function docSlug(input: string, maxWords = 8, maxLength = 60): string {
   const words = slugify(input.replace(/^\s*doc request\s*:\s*/i, "")).split("-").filter(Boolean);
   let slug = "";

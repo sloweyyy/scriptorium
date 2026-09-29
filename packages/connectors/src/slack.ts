@@ -246,6 +246,27 @@ function requesterMention(request: ApprovalRequest): string {
   return request.requestedBy?.startsWith("slack:") ? `<@${request.requestedBy.slice("slack:".length)}>` : escapeMrkdwn(request.requestedBy ?? "someone");
 }
 
+/** Escaped card text cut into pieces Slack accepts, at line breaks where it can. */
+export function cardSections(text: string, limit = 2_900): string[] {
+  const sections: string[] = [];
+  let current = "";
+  for (const line of text.split("\n")) {
+    // A single line longer than a section is split hard; nothing is dropped.
+    for (let start = 0; start < Math.max(line.length, 1); start += limit) {
+      const piece = line.slice(start, start + limit);
+      const next = current ? `${current}\n${piece}` : piece;
+      if (next.length > limit && current) {
+        sections.push(current);
+        current = piece;
+      } else {
+        current = next;
+      }
+    }
+  }
+  if (current || !sections.length) sections.push(current);
+  return sections;
+}
+
 export function approvalBlocks(request: ApprovalRequest): unknown[] {
   // Fenced as well as escaped: inside a code block nothing is formatted, linked or mentioned,
   // so what the approver reads is exactly the text that will run.
@@ -263,8 +284,9 @@ export function approvalBlocks(request: ApprovalRequest): unknown[] {
         text: `*Approval needed:* ${headline}\nRequested by ${requesterMention(request)} · *Approve*: done now, as ${escapeMrkdwn(request.agent)} · *Reject*: nothing happens`,
       },
     },
-    // Fenced, in its own section: its own 3,000-character budget.
-    { type: "section", text: { type: "mrkdwn", text: `\`\`\`${shown}\`\`\`` } },
+    // Fenced, in as many sections as it takes (each has its own 3,000-character budget), so
+    // every argument is shown in full. The policy refuses a change too long for one card.
+    ...cardSections(shown).map((chunk) => ({ type: "section", text: { type: "mrkdwn", text: `\`\`\`${chunk}\`\`\`` } })),
     {
       type: "actions",
       elements: [

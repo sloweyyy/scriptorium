@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { parseMarkdown, type ImageInput } from "@scriptorium/core";
+import { isSafeSlug, parseMarkdown, type ImageInput } from "@scriptorium/core";
 import {
   confluencePageIdFromUrl,
   confluencePageIdsIn,
@@ -58,7 +58,9 @@ export function lastDraftAttachment(issue: JiraIssue): { attachment: JiraAttachm
   return (issue.fields.attachment ?? [])
     .flatMap((attachment) => {
       const slug = attachment.filename.match(DRAFT_ATTACHMENT)?.[1];
-      return slug ? [{ attachment, slug }] : [];
+      // Only a name we could have written: "draft-../_lessons/L-001.md" is not our draft,
+      // and its "slug" would have become the path the doc is published to.
+      return slug && isSafeSlug(slug) ? [{ attachment, slug }] : [];
     })
     .sort((a, b) => (b.attachment.created ?? "").localeCompare(a.attachment.created ?? ""))[0];
 }

@@ -1,6 +1,6 @@
 import type { ToolRunContext, ToolSpec } from "@scriptorium/core";
 import { z } from "zod";
-import { summarizeArgs } from "./guard";
+import { CARD_TEXT_CHARS, escapedLength, summarizeArgs } from "./card";
 import type { Envelope, ToolRule } from "./policy";
 
 /**
@@ -39,16 +39,12 @@ export function summarizePlan(input: unknown): string {
   const parsed = Plan.safeParse(input);
   if (!parsed.success) return summarizeArgs(input);
   return parsed.data.steps
-    .map((step, index) => `Step ${index + 1} · ${step.tool}\n${summarizeArgs(step.args, 400, Number.POSITIVE_INFINITY)}`)
+    .map((step, index) => `Step ${index + 1} · ${step.tool}\n${summarizeArgs(step.args)}`)
     .join("\n");
 }
 
-/** Room the card has for the plan's text, as Slack counts it (after `&<>` are escaped). */
-export const PLAN_CARD_CHARS = 2_800;
-
-function escapedLength(text: string): number {
-  return text.length + (text.match(/&/g)?.length ?? 0) * 4 + (text.match(/[<>]/g)?.length ?? 0) * 3;
-}
+/** Room the card has for the plan's text: the same card, the same limit, every step in full. */
+export const PLAN_CARD_CHARS = CARD_TEXT_CHARS;
 
 /**
  * A step failed after earlier ones landed. The approval is given back, and a retry resumes

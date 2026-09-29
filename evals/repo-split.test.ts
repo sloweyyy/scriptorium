@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Vault, type AppConfig } from "@scriptorium/core";
 import { hydrateVaultFromDocsRepo, publishApprovedDoc, pushInternalPlane } from "@scriptorium/agents";
 
@@ -134,6 +134,16 @@ describe("two repositories", () => {
     expect(vaultTree).toContain("internal/_lessons/L-001-utc.md");
   });
 
+  it("a doc's PR carries that doc alone, not every other doc in the vault", async () => {
+    // Another ticket's draft sits in docs/ too; it must not ride into this ticket's PR.
+    await vault.writeNote("docs/other-feature.md", "## Overview\n\nNot approved yet.\n", { title: "Other feature", slug: "other-feature", jira_issue: "DOC-9" });
+    const outcome = await publishApprovedDoc(config(), vault, approval);
+    expect(outcome.published).toBe(true);
+    const docsPaths = await everyPath(docsRemote);
+    expect(docsPaths).toContain("docs/incident-timeline-embed.md");
+    expect(docsPaths).not.toContain("docs/other-feature.md");
+  });
+
   it("never lets the public doc branch reach the vault repo", async () => {
     await publishApprovedDoc(config(), vault, approval);
     const vaultBranches = await git(vaultRemote, "for-each-ref", "--format=%(refname:short)", "refs/heads");
@@ -182,5 +192,44 @@ describe("no vault repo configured", () => {
 
     expect(pushed).toBe(false);
     expect((await everyPath(docsRemote)).filter((p) => p.startsWith("internal/"))).toEqual([]);
+  });
+});
+
+describe("the pull request is part of the publish", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const github = (status: number, body: unknown) => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      calls.push(`${method} ${url}`);
+      // Only the create answers with `status`; the open-PR lookup finds none.
+      const [code, json] = method === "POST" ? [status, body] : [200, []];
+      return new Response(JSON.stringify(json), { status: code, headers: { "Content-Type": "application/json" } });
+    });
+    return calls;
+  };
+
+  it("a PR that failed to open stays retryable, and the retry opens it on the unchanged branch", async () => {
+    const withGitHub = config({ vaultUrl: undefined, slug: "o/docs", token: "t" });
+    github(502, { message: "Bad gateway" });
+    const first = await publishApprovedDoc(withGitHub, vault, approval);
+    // The branch is pushed, but nobody was asked to merge it: not done yet.
+    expect(first.published).toBe(false);
+    expect(first.comment).toContain("Pull request could not be opened");
+
+    const calls = github(201, { number: 7, html_url: "https://github.com/o/docs/pull/7", state: "open" });
+    const retry = await publishApprovedDoc(withGitHub, vault, approval);
+    expect(calls.some((call) => call.startsWith("POST ") && call.endsWith("/repos/o/docs/pulls"))).toBe(true);
+    expect(retry.pullRequestUrl).toBe("https://github.com/o/docs/pull/7");
+    expect(retry.published).toBe(true);
+  });
+
+  it("a branch that is already merged needs no PR, and is published", async () => {
+    const withGitHub = config({ vaultUrl: undefined, slug: "o/docs", token: "t" });
+    github(422, { message: "Validation Failed", errors: [{ message: "No commits between main and docs/doc-3" }] });
+    const outcome = await publishApprovedDoc(withGitHub, vault, approval);
+    expect(outcome.published).toBe(true);
+    expect(outcome.comment).toContain("already merged");
   });
 });

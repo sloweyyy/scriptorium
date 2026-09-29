@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { ToolRunContext, ToolSpec } from "@scriptorium/core";
-import { MemoryApprovalStore, PLAN_TOOL, checkPlan, decideApproval, executeApproved, planTool, runUnderPolicy, type ApprovalRequest, type Envelope } from "@scriptorium/policy";
+import { MemoryApprovalStore, PLAN_TOOL, checkPlan, summarizePlan, decideApproval, executeApproved, planTool, runUnderPolicy, type ApprovalRequest, type Envelope } from "@scriptorium/policy";
 import { MemoryEffectLedger, once, opKey } from "@scriptorium/runtime";
 
 /**
@@ -70,8 +70,15 @@ describe("a plan's card", () => {
     expect(summary).toContain("HIDDEN-PAYLOAD <https://evil.example|docs>");
   });
 
+  it("every step's arguments show in full, not cut at 400 characters", () => {
+    const comment = `${"Context for the reviewer. ".repeat(60)}HIDDEN-AT-THE-END`;
+    const summary = summarizePlan({ title: "t", steps: [{ tool: "jira_comment", args: { key: "DOC-1", body: comment } }] });
+    expect(summary).toContain("HIDDEN-AT-THE-END");
+    expect(summary).not.toContain("chars)");
+  });
+
   it("a plan too long for one card is refused, never cut", () => {
-    const long = { title: "t", steps: Array.from({ length: 10 }, (_, i) => ({ tool: "jira_create_issue", args: { summary: `${"&".repeat(300)} ${i}` } })) };
+    const long = { title: "t", steps: Array.from({ length: 10 }, (_, i) => ({ tool: "jira_create_issue", args: { summary: `${"&".repeat(600)} ${i}` } })) };
     expect(checkPlan(envelope, tools, long)).toMatch(/too long to show on one approval card/);
   });
 });

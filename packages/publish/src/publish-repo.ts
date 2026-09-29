@@ -318,6 +318,8 @@ export async function publishToRepo(input: PublishToRepoInput): Promise<PublishT
 
 export interface PublishVaultInput extends Omit<PublishToRepoInput, "stagedDir" | "files"> {
   vault: Vault;
+  /** Publish only these vault paths (see StageInput.only). */
+  only?: readonly string[];
 }
 
 export interface PublishVaultResult {
@@ -329,7 +331,7 @@ export interface PublishVaultResult {
 export async function publishVault(input: PublishVaultInput): Promise<PublishVaultResult> {
   const destDir = await fs.mkdtemp(path.join(os.tmpdir(), `scriptorium-publish-${input.target}-`));
   try {
-    const stage = await stageVault({ vault: input.vault, target: input.target, destDir });
+    const stage = await stageVault({ vault: input.vault, target: input.target, destDir, ...(input.only ? { only: input.only } : {}) });
     const push = await publishToRepo({ ...input, stagedDir: destDir, files: stage.files });
     return { stage, push };
   } finally {

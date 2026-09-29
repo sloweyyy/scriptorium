@@ -34,11 +34,11 @@
     "@scriptorium/runtime": "workspace:*",
     "@scriptorium/scribe": "workspace:*",
     "@slack/web-api": "^8.1.1",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.6.2",
     "sharp": "^0.35.4",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10",
+    "vitest": "^4.1.11",
     "zod": "^4.6.5"
   },
   "packageManager": "pnpm@10.32.1"

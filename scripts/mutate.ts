@@ -361,7 +361,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a citation that failed the check no longer reads as a source",
     file: "packages/curator/src/qa-contract.ts",
-    find: "  const text = dropped.length ? withoutLinks(answer.text, dropped) : answer.text;",
+    find: "  const text = dropped.length ? withoutLinks(withoutUnsupported(answer.text, dropped, citations), dropped) : answer.text;",
     replace: "  const text = answer.text;",
     evals: ["evals/grounding.test.ts"],
   },
@@ -777,6 +777,20 @@ export const MUTANTS: Mutant[] = [
     find: "  if (probes.deployed && underRepo(stateDir)) {",
     replace: "  if (false) {",
     evals: ["evals/doctor.test.ts"],
+  },
+  {
+    control: "a note listed by the overview is not a note that was read",
+    file: "packages/curator/src/qa-contract.ts",
+    find: "      records: () => [],\n",
+    replace: "      records: (_input, output) => ((JSON.parse(output) as { notes?: string[] }).notes ?? []),\n",
+    evals: ["evals/grounding.test.ts"],
+  },
+  {
+    control: "a sentence whose only citation was dropped is dropped too",
+    file: "packages/curator/src/qa-contract.ts",
+    find: "withoutLinks(withoutUnsupported(answer.text, dropped, citations), dropped)",
+    replace: "withoutLinks(answer.text, dropped)",
+    evals: ["evals/grounding.test.ts"],
   },
   {
     control: "a delegation ends by itself",

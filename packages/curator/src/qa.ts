@@ -1,5 +1,5 @@
 import type { ToolSpec, Vault } from "@scriptorium/core";
-import { runSession, SessionError } from "@scriptorium/runtime";
+import { runSession, SessionError, type SessionUsage } from "@scriptorium/runtime";
 import { buildRetrievalIndex } from "./hybrid";
 import { QA_MAX_TOKENS, QA_SYSTEM_PROMPT, enforceGrounding, parseQaAnswer, qaTools, type QaAnswer } from "./qa-contract";
 
@@ -19,6 +19,8 @@ export interface AnswerOptions {
    * get it for free, and a throwing observer cannot break a retrieval.
    */
   onTool?: (name: string) => void;
+  /** What the model spent on this answer, for a surface's budget. */
+  onUsage?: (usage: SessionUsage) => void;
 }
 
 export async function answerQuestion(vault: Vault, question: string, options: AnswerOptions = {}): Promise<QaAnswer> {
@@ -28,7 +30,7 @@ export async function answerQuestion(vault: Vault, question: string, options: An
   const records = new Set<string>();
   const tools = record(observe(qaTools(vault, await buildRetrievalIndex(vault)), options.onTool), used, retrieved, records);
   try {
-    const text = await runSession({ system: QA_SYSTEM_PROMPT, prompt: question, tools, maxTokens: QA_MAX_TOKENS });
+    const text = await runSession({ system: QA_SYSTEM_PROMPT, prompt: question, tools, maxTokens: QA_MAX_TOKENS, onUsage: options.onUsage });
     return await enforceGrounding(vault, parseQaAnswer(text, question), { usedOverview: used.has("vault_overview"), retrieved, records });
   } catch (error) {
     // A retrieval loop that exhausts its round cap has searched hard and concluded

@@ -1297,6 +1297,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/trace-cli.test.ts"],
   },
   {
+    control: "Curator never answers another app's mention",
+    file: "apps/agents/src/curator-bot.ts",
+    find: "  if (event.bot_id || event.subtype === \"bot_message\") return { ok: false };\n",
+    replace: "",
+    evals: ["evals/curator-slack.test.ts"],
+  },
+  {
+    control: "Curator answers only in its listed channels",
+    file: "apps/agents/src/curator-bot.ts",
+    find: "  if (channels.includes(event.channel)) return { ok: true };",
+    replace: "  return { ok: true };",
+    evals: ["evals/curator-slack.test.ts"],
+  },
+  {
+    control: "the doctor names a Curator that answers nowhere",
+    file: "apps/agents/src/doctor.ts",
+    find: "    if (!config.curator.channels?.length) add(",
+    replace: "    if (false) add(",
+    evals: ["evals/curator-slack.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

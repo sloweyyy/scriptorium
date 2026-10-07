@@ -7,6 +7,8 @@ import { citationLinks, resolveCitations } from "./citations";
 import { answerBlocks, contextBlocks, progressLine, toSlackMrkdwn } from "./slack-format";
 import { stripMentions } from "./util";
 import { escapeMrkdwn } from "@scriptorium/connectors";
+import { DailyBudget, FileSeenIds } from "@scriptorium/runtime";
+import path from "node:path";
 
 /**
  * Curator in Slack.
@@ -143,6 +145,26 @@ export function handoffLines(handoff: string, config: Pick<AppConfig, "jira">): 
   ];
 }
 
+/**
+ * Whether Curator works a mention, the same rules the Teammate's Gate applies:
+ * - another app's message is never a question (a bot posting `@Curator …`, or a Scribe card
+ *   whose PRD feature named Curator, was answered and could file a gap and open a ticket);
+ * - only in its allow-listed channels, and nowhere when none are listed: it can quote the
+ *   internal plane (PRDs, house rules), and an invitation to a channel isn't permission.
+ * A refusal in a channel it doesn't serve says where to ask instead.
+ */
+export function curatorAdmits(
+  event: { channel: string; bot_id?: string; subtype?: string },
+  channels: readonly string[] = [],
+): { ok: true } | { ok: false; reply?: string } {
+  if (event.bot_id || event.subtype === "bot_message") return { ok: false };
+  if (channels.includes(event.channel)) return { ok: true };
+  return {
+    ok: false,
+    reply: channels.length ? `I don't answer in this conversation. Ask me in ${channels.map((id) => `<#${id}>`).join(", ")}.` : "I'm not set up to answer in any channel yet (CURATOR_SLACK_CHANNELS).",
+  };
+}
+
 export async function startCuratorBot(config: AppConfig, vault: Vault): Promise<void> {
   const app = new App({
     token: config.curator.botToken,
@@ -154,8 +176,23 @@ export async function startCuratorBot(config: AppConfig, vault: Vault): Promise<
   // to Agent A. This is the seam where Slack's dead end becomes Jira's ticket.
   const openTicket = gapTicketOpener(config);
   const reactions = { enabled: true };
+  // A Slack retry (or a redelivery to a restarted instance) is the same question: one answer, one gap.
+  const seen = new FileSeenIds(path.join(config.jira.stateDir, "curator-seen.json"));
+  const budget = new DailyBudget(config.curator.dailyTokens);
 
   app.event("app_mention", async ({ event, say }) => {
+    const admitted = curatorAdmits(event as { channel: string; bot_id?: string; subtype?: string }, config.curator.channels);
+    if (!admitted.ok) {
+      if (admitted.reply) await say({ thread_ts: event.thread_ts ?? event.ts, text: admitted.reply });
+      return;
+    }
+    const delivery = `${event.channel}/${event.ts}`;
+    if (seen.has(delivery)) return;
+    seen.add(delivery);
+    if (budget.exhausted(event.channel)) {
+      await say({ thread_ts: event.thread_ts ?? event.ts, text: "I've used today's answer budget for this channel. Ask again tomorrow, or ask an admin to raise CURATOR_DAILY_TOKENS." });
+      return;
+    }
     const threadTs = event.thread_ts ?? event.ts;
     const question = stripMentions(event.text);
     const react = reactor(app, event.channel, event.ts, reactions);
@@ -179,7 +216,10 @@ export async function startCuratorBot(config: AppConfig, vault: Vault): Promise<
     const progress = new Progress(app, event.channel, threadTs);
 
     try {
-      const answer = await answerQuestion(vault, question, { onTool: (name) => progress.observe(name) });
+      const answer = await answerQuestion(vault, question, {
+        onTool: (name) => progress.observe(name),
+        onUsage: (usage) => budget.add(event.channel, usage.input + usage.output),
+      });
       await progress.finish();
 
       if (answer.handoff) {

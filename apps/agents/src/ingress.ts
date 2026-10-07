@@ -174,6 +174,15 @@ function readBody(request: IncomingMessage, limitBytes = 1_000_000): Promise<Buf
   });
 }
 
+/** A path segment decoded, or "" when it isn't valid percent-encoding. */
+function safeDecode(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return "";
+  }
+}
+
 function send(response: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   response.writeHead(status, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) });
@@ -268,6 +277,8 @@ export function startIngress({ config, hooks, surfaces }: IngressOptions): Serve
   const githubSecret = config.webhook.githubSecret;
 
   const server = createServer((request, response) => {
+    // Every failure ends this request, never the process: an unhandled rejection here
+    // exited Node, so one unauthenticated `GET /runs/%E0` took down the poller and the bots.
     void (async () => {
       const url = new URL(request.url ?? "/", "http://localhost");
       const route = url.pathname.replace(/\/+$/, "") || "/";
@@ -306,7 +317,7 @@ export function startIngress({ config, hooks, surfaces }: IngressOptions): Serve
 
       if (request.method === "GET" && route.startsWith("/runs/")) {
         const token = config.webhook.traceToken;
-        const prefix = decodeURIComponent(route.slice("/runs/".length)).replace(/[^0-9a-f-]/gi, "");
+        const prefix = safeDecode(route.slice("/runs/".length)).replace(/[^0-9a-f-]/gi, "");
         // Two keys: a reply's signed link opens exactly its own run; the operator's token
         // (never posted anywhere) opens any run by prefix. 404 for anything else, whether
         // the viewer is off or the key is wrong: nothing to learn by probing.
@@ -446,7 +457,12 @@ export function startIngress({ config, hooks, surfaces }: IngressOptions): Serve
       }
 
       send(response, 404, { error: "not found" });
-    })();
+    })().catch((error: unknown) => {
+      const malformed = error instanceof URIError || (error instanceof TypeError && /Invalid URL/i.test(error.message));
+      if (!malformed) console.warn(`[ingress] ${request.method} request failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (!response.headersSent) send(response, malformed ? 400 : 500, { error: malformed ? "bad request" : "internal error" });
+      else response.destroy();
+    });
   });
 
   server.listen(config.port, () => {

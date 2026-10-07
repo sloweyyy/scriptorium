@@ -57,15 +57,16 @@ export function knownAccounts(source: readonly string[] | (() => Promise<string[
 export async function withIssueLock<T>(ctx: Ctx, key: string, work: () => Promise<T>): Promise<T> {
   const previous = ctx.locks.get(key) ?? Promise.resolve();
   const run = previous.then(work, work);
-  // Keep a non-rejecting tail in the map so one failure cannot poison the queue.
-  ctx.locks.set(
-    key,
-    run.catch(() => undefined),
-  );
+  // Keep a non-rejecting tail in the map so one failure cannot poison the queue. The entry
+  // is removed only if it is still this call's tail: comparing against `run` (never what
+  // the map held) and awaiting the map's entry let a caller delete a later caller's tail,
+  // and the next one then started alongside it: two runs on one ticket.
+  const tail = run.catch(() => undefined);
+  ctx.locks.set(key, tail);
   try {
     return await run;
   } finally {
-    if (ctx.locks.get(key) === run || (await ctx.locks.get(key)) === undefined) ctx.locks.delete(key);
+    if (ctx.locks.get(key) === tail) ctx.locks.delete(key);
   }
 }
 

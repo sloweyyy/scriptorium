@@ -538,10 +538,20 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         const result = await forgetMemory(vault, forget[1] as string, { accountId: `slack:${user}`, mayCurate: (settings.admins ?? []).includes(user) });
         if (!result.ok) return `Nothing forgotten: ${result.reason}.`;
         // The request that saved it carries its text too (shown in App Home's "What you asked
-        // for"): emptied, as an erasure empties it. Who approved it stays.
+        // for"): emptied, as an erasure empties it. Who approved it stays. So is any other this
+        // person made for the same words: one still waiting saved it again once approved.
+        // Someone else's request for the same words is theirs, and the text must match: the
+        // note's `approval` field isn't signed.
         for (const request of await store.all()) {
-          if (request.tool !== "memory_save" || !result.memory.approvals.includes(request.id)) continue;
-          await store.update(request.id, (current) => ({ ...current, args: undefined, summary: "(forgotten on request)" }));
+          const args = request.args as { text?: unknown } | undefined;
+          if (request.tool !== "memory_save" || typeof args?.text !== "string" || args.text.trim() !== result.memory.text) continue;
+          if (!result.memory.approvals.includes(request.id) && request.requestedBy !== `slack:${user}`) continue;
+          await store.update(request.id, (current) => ({
+            ...current,
+            args: undefined,
+            summary: "(forgotten on request)",
+            ...(current.status === "pending" || current.status === "approved" ? { status: "expired" as const, expiresAt: new Date().toISOString() } : {}),
+          }));
         }
         await audit(config.auditFile, { type: "memory.forgotten", actor: `slack:${user}`, memory: result.memory.id, scope: result.memory.scope }).catch(() => undefined);
         return `Forgotten: \`${result.memory.id}\`. It no longer applies anywhere. (It remains in the vault's git history.)`;

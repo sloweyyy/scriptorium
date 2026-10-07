@@ -73,6 +73,12 @@ describe("runtime controls", () => {
     expect(mayApprove(linked, linked.tools.jira_create_issue!, { accountId: "slack:UALT" }, "jira:pm-1").ok).toBe(false);
     // One way: the person away may still approve what their stand-in asked.
     expect(mayApprove(delegated, rule, { accountId: "slack:UPM" }, "slack:UALT").ok).toBe(true);
+    // Where the stand-in was an approver already, or anyone may approve, the delegation gave
+    // them nothing, so it takes nothing: they may still approve the person away's requests.
+    const shared: Envelope = { ...envelope, tools: { both: { tier: "approve", approvers: ["slack:UPM", "slack:UALT"], separateDuties: true }, anyone: { tier: "approve", approvers: ["*"], separateDuties: true } } };
+    const sharedDelegated = withDelegations(shared, control);
+    expect(mayApprove(sharedDelegated, sharedDelegated.tools.both!, { accountId: "slack:UALT" }, "slack:UPM").ok).toBe(true);
+    expect(mayApprove(sharedDelegated, sharedDelegated.tools.anyone!, { accountId: "slack:UALT" }, "slack:UPM").ok).toBe(true);
     // Past its end date it's gone.
     expect(withDelegations(envelope, control, Date.now() + 2 * 86_400_000).tools.jira_create_issue?.approvers).toEqual(["slack:UPM"]);
   });

@@ -556,6 +556,8 @@ describe("forgetting leaves no copy", () => {
     await store.save(request("R-mem", "slack:U1"));
     // Someone else asked to remember the same words about themselves: theirs is not U1's to empty.
     await store.save(request("R-other", "slack:U2"));
+    // U1 asked twice, in another thread: still waiting, it would save it again once approved.
+    await store.save({ ...request("R-again", "slack:U1"), status: "pending" });
 
     expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: "forget M-0000dddd", commandId: "f1" })).toMatch(/^Forgotten/);
     expect(await vault.listNotes("_memory")).toEqual([]);
@@ -564,6 +566,9 @@ describe("forgetting leaves no copy", () => {
     expect(saved?.args).toBeUndefined();
     expect(saved?.summary).not.toContain("medical leave");
     expect(requests.find((entry) => entry.id === "R-other")?.args).toEqual({ text, scope: "person:slack:U2" });
+    const again = requests.find((entry) => entry.id === "R-again");
+    expect(again?.args).toBeUndefined();
+    expect(again?.status).toBe("expired");
   });
 });
 

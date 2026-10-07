@@ -170,8 +170,20 @@ export function confluenceStorageToMarkdown(storage: string): string {
       /<ac:structured-macro[^>]*ac:name="(?:info|note|warning|tip|panel)"[^>]*>([\s\S]*?)<\/ac:structured-macro>/gi,
       (_match, body: string) => protect(`> ${inline(body).replace(/\n+/g, "\n> ")}`),
     )
-    // Any other macro (TOC, Jira issue embeds, page properties…) is chrome, not content.
-    .replace(/<ac:structured-macro[\s\S]*?<\/ac:structured-macro>/gi, "")
+    // Any other macro, innermost first: its rich-text body is content (an `expand`, a page
+    // properties `details` table), everything else about it (parameters, an issue embed)
+    // is chrome. A match never spans another macro's start, so a self-closing `toc` can't
+    // pair with a later macro's closing tag: that pairing deleted a PRD's whole Requirements
+    // section, and deleting whole macros dropped "Must NOT email users on import." too.
+    .replace(/[\s\S]*/, (whole) => {
+      const innermost = /<ac:structured-macro\b[^>]*>((?:(?!<ac:structured-macro\b)[\s\S])*?)<\/ac:structured-macro>/gi;
+      let text = whole;
+      for (let previous = ""; previous !== text; ) {
+        previous = text;
+        text = text.replace(innermost, (_match, inner: string) => inner.match(/<ac:rich-text-body>([\s\S]*?)<\/ac:rich-text-body>/i)?.[1] ?? "");
+      }
+      return text;
+    })
     .replace(/<ac:image[\s\S]*?(?:\/>|<\/ac:image>)/gi, "")
     .replace(/<table[^>]*>([\s\S]*?)<\/table>/gi, (_match, table: string) => {
       const rows = [...table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)].map((row) => tableRow(row[1] ?? ""));

@@ -97,3 +97,26 @@ describe("storage XHTML to markdown", () => {
     expect(result.frontmatter.audience).toBe("workspace admins");
   });
 });
+
+describe("Confluence macros and the content inside them", () => {
+  it("a self-closing macro deletes nothing, and a container macro's body is kept", () => {
+    const storage = [
+      '<ac:structured-macro ac:name="toc" ac:schema-version="1" />',
+      "<h2>Requirements</h2><p>Admins must confirm before deleting.</p>",
+      '<ac:structured-macro ac:name="status"><ac:parameter ac:name="title">DRAFT</ac:parameter></ac:structured-macro>',
+      "<h2>Import</h2>",
+      '<ac:structured-macro ac:name="expand"><ac:parameter ac:name="title">Details</ac:parameter><ac:rich-text-body><p>Must NOT email users on import.</p></ac:rich-text-body></ac:structured-macro>',
+      '<ac:structured-macro ac:name="details"><ac:rich-text-body><table><tr><th>Owner</th><td>Ana</td></tr></table></ac:rich-text-body></ac:structured-macro>',
+      "<h2>Out of scope</h2><p>Mobile.</p>",
+    ].join("");
+    const markdown = confluenceStorageToMarkdown(storage);
+    expect(markdown).toContain("## Requirements");
+    expect(markdown).toContain("Admins must confirm before deleting.");
+    expect(markdown).toContain("Must NOT email users on import.");
+    expect(markdown).toContain("Owner");
+    expect(markdown).toContain("## Out of scope");
+    // Parameters are chrome, not content.
+    expect(markdown).not.toContain("DRAFT");
+  });
+});
+

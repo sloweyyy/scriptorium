@@ -75,6 +75,15 @@ describe("github connector", () => {
     expect(comments[0]?.body).toMatch(/<!-- scriptorium-op:[0-9a-f]{24} -->/);
   });
 
+  it("a note can't hide its own AI-generated label inside an HTML comment", async () => {
+    await tools(new MemoryEffectLedger()).github_pr_comment!.run({ repo: "org/app", number: 12, body: "Looks fine.\n\n<!--" }, { approval: { id: "ap-2" } });
+    const body = comments.at(-1)?.body ?? "";
+    // The only HTML comment left is the op marker, after the disclosure.
+    expect(body.match(/<!--/g)).toHaveLength(1);
+    expect(body.indexOf("AI-generated review note")).toBeLessThan(body.indexOf("<!-- scriptorium-op:"));
+    expect(body).toContain("&lt;!--");
+  });
+
   it("a PR is a valid citation only when it was fetched", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "scriptorium-gh-"));
     const vault = new Vault(root);

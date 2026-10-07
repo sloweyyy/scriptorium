@@ -28,6 +28,12 @@ export interface ErasurePlan {
   memories: string[];
   pendingCancelled: string[];
   requestsPseudonymized: number;
+  /** Requests whose arguments or card text named them: emptied, the approver record kept. */
+  requestsScrubbed: number;
+  /** Reminders they asked for, or whose text names them: cancelled if not yet sent, text removed. */
+  reminders: number;
+  /** Doc-ticket feedback held for the next lesson that names them: dropped. */
+  feedback: number;
   delegations: number;
   /** Vault notes that mention them and aren't removed by this (docs, house rules): review by hand. */
   mentions: string[];
@@ -71,10 +77,32 @@ export async function eraseSubject(
     if (typeof scope === "string" && scope.startsWith("person:") && matches(scope.slice("person:".length))) memories.push(relPath);
   }
 
-  // Their requests: pending ones cancelled, the requester replaced on all of them.
+  const pattern = new RegExp(`(^|[^A-Za-z0-9_-])(${ids.map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})($|[^A-Za-z0-9_-])`, "i");
+  const names = (value: unknown): boolean => pattern.test(typeof value === "string" ? value : JSON.stringify(value ?? ""));
+
+  // Their requests: pending ones cancelled, the requester replaced on all of them. Requests
+  // that name them in their arguments or card (a memory saved about them, a reminder with
+  // their words) are emptied too: the pseudonym alone left their text in approvals.json.
   const store = new FileApprovalStore(path.join(config.jira.stateDir, "approvals.json"));
-  const theirs = (await store.all()).filter((request) => matches(request.requestedBy));
-  const pendingCancelled = theirs.filter((request) => request.status === "pending").map((request) => request.id);
+  const all = await store.all();
+  const theirs = all.filter((request) => matches(request.requestedBy));
+  const scrubbed = all.filter((request) => names(request.args) || names(request.summary) || theirs.includes(request));
+  // Not yet carried out: cancelled, approved or not. An approved request of theirs would
+  // still run their words after the erasure.
+  const pendingCancelled = theirs.filter((request) => request.status === "pending" || request.status === "approved").map((request) => request.id);
+
+  // Reminders: one they asked for has their request's id; one that names them, in its text.
+  const remindersFile = path.join(config.jira.stateDir, "reminders.json");
+  const reminderRecords = await readJson<Record<string, { status?: string; meta?: { id?: string; text?: string } }>>(remindersFile);
+  const requestIds = new Set(theirs.map((request) => request.id));
+  const reminderOps = Object.entries(reminderRecords ?? {})
+    .filter(([, record]) => (record.meta?.id && requestIds.has(record.meta.id)) || names(record.meta?.text))
+    .map(([op]) => op);
+
+  // Doc-ticket feedback waiting to be distilled into a lesson: the items that name them.
+  const jiraStateFile = path.join(config.jira.stateDir, "jira-state.json");
+  const jiraState = await readJson<{ issues?: Record<string, { feedback?: string[] }> }>(jiraStateFile);
+  const feedback = Object.values(jiraState?.issues ?? {}).reduce((count, issue) => count + (issue.feedback ?? []).filter((item) => names(item)).length, 0);
 
   // Delegations to or from them end. The control file is signed, so it is rewritten through writeControl.
   const controlFile = path.join(config.jira.stateDir, "control.json");
@@ -83,7 +111,6 @@ export async function eraseSubject(
   const delegations = (control.delegations ?? []).length - keptDelegations.length;
 
   // Everything else in the vault that names them: reported, not edited (published docs and house rules are reviewed work).
-  const pattern = new RegExp(`(^|[^A-Za-z0-9_-])(${ids.map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})($|[^A-Za-z0-9_-])`, "i");
   const mentions: string[] = [];
   for (const relPath of await vault.listNotes().catch(() => [] as string[])) {
     if (memories.includes(relPath)) continue;
@@ -99,6 +126,9 @@ export async function eraseSubject(
     memories,
     pendingCancelled,
     requestsPseudonymized: theirs.length,
+    requestsScrubbed: scrubbed.length,
+    reminders: reminderOps.length,
+    feedback,
     delegations,
     mentions,
     outside: OUTSIDE,
@@ -129,15 +159,49 @@ export async function eraseSubject(
     await fs.rename(tmp, auditFile);
   });
   for (const relPath of memories) await vault.deleteFile(relPath);
-  for (const request of theirs) {
+  for (const request of scrubbed) {
+    const mine = theirs.includes(request);
     await store.update(request.id, (current) => ({
       ...current,
-      requestedBy: pseudonym,
-      ...(current.status === "pending" ? { status: "expired" as const, expiresAt: now.toISOString() } : {}),
+      ...(mine ? { requestedBy: pseudonym } : {}),
+      // Who decided stays (an approval record); what was asked goes. The hash still names the action.
+      args: undefined,
+      summary: "(erased on request)",
+      ...(mine && (current.status === "pending" || current.status === "approved") ? { status: "expired" as const, expiresAt: now.toISOString() } : {}),
     }));
+  }
+  if (reminderRecords && reminderOps.length) {
+    for (const op of reminderOps) {
+      const record = reminderRecords[op]!;
+      reminderRecords[op] = {
+        ...record,
+        ...(record.status === "in-progress" ? { status: "done", completedAt: now.toISOString(), result: "erased" } : {}),
+        meta: { ...record.meta, text: "(erased on request)" },
+      };
+    }
+    await writeJson(remindersFile, reminderRecords);
+  }
+  if (jiraState?.issues && feedback) {
+    for (const issue of Object.values(jiraState.issues)) if (issue.feedback) issue.feedback = issue.feedback.filter((item) => !names(item));
+    await writeJson(jiraStateFile, jiraState);
   }
   if (delegations) await writeControl(controlFile, { ...control, delegations: keptDelegations }, config.signingKey);
   return plan;
+}
+
+async function readJson<T>(file: string): Promise<T | undefined> {
+  try {
+    return JSON.parse(await fs.readFile(file, "utf8")) as T;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw new Error(`${path.basename(file)} is unreadable, so nothing was erased: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function writeJson(file: string, value: unknown): Promise<void> {
+  const tmp = `${file}.${process.pid}.erase.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(value, null, 2));
+  await fs.rename(tmp, file);
 }
 
 export function formatErasure(plan: ErasurePlan, dryRun: boolean): string {
@@ -146,7 +210,10 @@ export function formatErasure(plan: ErasurePlan, dryRun: boolean): string {
     `${dryRun ? "(dry run) " : ""}Erasing ${plan.ids.join(", ")} (recorded as ${plan.pseudonym}):`,
     `- audit: ${verb} erase ${plan.auditLines} line(s); ${plan.approvalsKept} kept where they are only the approver of a write`,
     `- memories about them: ${verb} delete ${plan.memories.length}${plan.memories.length ? ` (${plan.memories.join(", ")})` : ""}`,
-    `- their requests: ${verb} cancel ${plan.pendingCancelled.length} pending, and replace the requester on ${plan.requestsPseudonymized}`,
+    `- their requests: ${verb} cancel ${plan.pendingCancelled.length} not yet carried out, and replace the requester on ${plan.requestsPseudonymized}`,
+    `- requests naming them: ${verb} empty the arguments and card text of ${plan.requestsScrubbed} (who approved stays)`,
+    `- reminders they asked for or that name them: ${verb} cancel or empty ${plan.reminders}`,
+    `- doc-ticket feedback waiting for a lesson that names them: ${verb} drop ${plan.feedback} (feedback is held without its author, so read jira-state.json for anything else they wrote)`,
     `- delegations to or from them: ${verb} end ${plan.delegations}`,
     ...(plan.mentions.length ? [`- review by hand, not changed: ${plan.mentions.join(", ")}`] : []),
     "",

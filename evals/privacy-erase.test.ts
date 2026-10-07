@@ -142,6 +142,39 @@ describe("privacy erase: the whole deployment", () => {
     expect(JSON.stringify(record)).not.toContain("UALICE");
   });
 
+  it("reaches their words wherever the deployment keeps them: request arguments, reminders, held feedback", async () => {
+    const store = new FileApprovalStore(path.join(root, "state", "approvals.json"));
+    const request = (id: string, status: ApprovalRequest["status"], requestedBy: string, args: unknown, summary: string): ApprovalRequest => ({
+      id, agent: "teammate", tool: "schedule_reminder", args, argsHash: "h", summary, key: "k", requestedBy, requestedAt: "2026-09-28T00:00:00Z", expiresAt: "2026-10-05T00:00:00Z", status,
+    });
+    await store.save(request("A1", "approved", "slack:UALICE", { channel: "C1", text: "Alice's review is due Friday" }, "Post a reminder: Alice's review is due Friday"));
+    await store.save(request("B1", "consumed", "slack:UBOB", { scope: "person:slack:UALICE", text: "UALICE is out in October" }, "Remember: UALICE is out in October"));
+    await store.save(request("B2", "consumed", "slack:UBOB", { text: "ship it" }, "Remember: ship it"));
+    await fs.writeFile(path.join(root, "state", "reminders.json"), JSON.stringify({
+      "reminder:A1": { op: "reminder:A1", status: "in-progress", startedAt: "t", meta: { kind: "teammate.reminder", id: "A1", channel: "C1", at: "2026-10-09T09:00:00Z", text: "Alice's review is due Friday" } },
+      "reminder:B9": { op: "reminder:B9", status: "done", startedAt: "t", result: "sent", meta: { kind: "teammate.reminder", id: "B9", channel: "C1", at: "2026-10-01T09:00:00Z", text: "ping <@UALICE> about the demo" } },
+      "reminder:C1": { op: "reminder:C1", status: "in-progress", startedAt: "t", meta: { kind: "teammate.reminder", id: "C1", channel: "C1", at: "2026-10-09T09:00:00Z", text: "stand-up" } },
+    }));
+    await fs.writeFile(path.join(root, "state", "jira-state.json"), JSON.stringify({ version: 1, issues: { "DOC-1": { feedback: ["say UALICE owns this", "state the timezone"] } } }));
+
+    const plan = await eraseSubject(config(), vault, "slack:UALICE", { by: "ops" });
+    expect(plan).toMatchObject({ pendingCancelled: ["A1"], requestsScrubbed: 2, reminders: 2, feedback: 1 });
+    const requests = Object.fromEntries((await store.all()).map((entry) => [entry.id, entry]));
+    // Approved but not carried out: it would still run her words. Cancelled, emptied.
+    expect(requests.A1).toMatchObject({ status: "expired", requestedBy: plan.pseudonym, summary: "(erased on request)" });
+    expect(requests.A1?.args).toBeUndefined();
+    // Bob asked, about her: Bob stays the requester, her words go.
+    expect(requests.B1).toMatchObject({ status: "consumed", requestedBy: "slack:UBOB", summary: "(erased on request)" });
+    expect(requests.B2).toMatchObject({ summary: "Remember: ship it" });
+    const reminders = JSON.parse(await fs.readFile(path.join(root, "state", "reminders.json"), "utf8"));
+    expect(reminders["reminder:A1"]).toMatchObject({ status: "done", result: "erased", meta: { text: "(erased on request)" } });
+    expect(reminders["reminder:B9"].meta.text).toBe("(erased on request)");
+    expect(reminders["reminder:C1"]).toMatchObject({ status: "in-progress", meta: { text: "stand-up" } });
+    const jiraState = JSON.parse(await fs.readFile(path.join(root, "state", "jira-state.json"), "utf8"));
+    expect(jiraState.issues["DOC-1"].feedback).toEqual(["state the timezone"]);
+    expect(JSON.stringify([await fs.readFile(path.join(root, "state", "approvals.json"), "utf8"), reminders, jiraState])).not.toMatch(/UALICE|Alice's review/);
+  });
+
   it("stops without writing if the log grows while it runs", async () => {
     const config_ = config();
     const growing = { ...config_, jira: { stateDir: path.join(root, "state") } } as AppConfig;

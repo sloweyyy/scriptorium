@@ -147,11 +147,20 @@ pnpm privacy:erase U0123ABC --by <you>
   Jira and GitHub ids.
 - **Audit lines.** Each line about them becomes a tombstone. It keeps the type, the time, the
   run, the structural fields that don't name them, and the hash of the original line, so
-  `pnpm auditlog verify` still holds. Everyone else's lines stay byte-for-byte the same. A
-  `privacy.erased` record says who ran it and how much it erased; it doesn't name the person.
-- **What else goes.** Memories about them are deleted. Their pending requests are cancelled,
-  their requester id on past requests becomes a pseudonym, and delegations to or from them
-  end.
+  `pnpm auditlog verify` still holds. Everyone else's lines stay byte-for-byte the same.
+- **The record.** A `privacy.erased` record says who ran it, how much it erased, and the
+  digest of each tombstone, so a tombstone edited later is found. It doesn't name the
+  person, and it lands in the same write as the tombstones.
+- **What else goes:**
+  - Memories about them are deleted.
+  - Their requests not yet carried out (pending or approved) are cancelled, and their
+    requester id on past requests becomes a pseudonym.
+  - Any request whose arguments or card name them has its text emptied; who approved it stays.
+  - Reminders they asked for, or that name them, are cancelled or emptied.
+  - Doc-ticket feedback waiting to be distilled into a lesson is dropped where it names them.
+  - Delegations to or from them end.
+- **Feedback isn't stored with its author.** Feedback that doesn't name them stays, so
+  review `jira-state.json` for anything else they wrote.
 - **What stays, on purpose: who approved a write.** Erasing an approver would erase the
   record that separation of duties depends on. Vault notes that mention them (docs, house
   rules) are listed for review, not edited.

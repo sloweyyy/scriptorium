@@ -60,7 +60,7 @@ export interface TeammateCore {
   /** `restriction`: who may see the comment; the reply carries the same. Omitted: public. */
   onJiraComment(input: { issueKey: string; commentId: string; body: string; authorId?: string; restriction?: CommentRestriction }): Promise<void>;
   /** A Jira issue assigned to the Teammate: it checks readiness and replies on the ticket. */
-  onJiraAssigned(input: { issueKey: string; assigneeId: string; changeId: string }): Promise<void>;
+  onJiraAssigned(input: { issueKey: string; assigneeId: string; changeId: string; assignedBy?: string }): Promise<void>;
   /** A new Jira issue: triaged (readiness + likely duplicates) in projects that opted in. */
   onJiraCreated(input: { issueKey: string; reporterId?: string }): Promise<void>;
   /** `/teammate <question>`. Returns a message for the invoker only (ephemeral), if any. */
@@ -761,7 +761,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       queue.push(event);
     },
 
-    async onJiraAssigned({ issueKey, assigneeId, changeId }) {
+    async onJiraAssigned({ issueKey, assigneeId, changeId, assignedBy }) {
       if (!jira || assigneeId !== jira.accountId) return;
       const projects = (settings.jiraProjects.length ? settings.jiraProjects : [config.jira.projectKey ?? ""]).map((project) => project.toUpperCase());
       if (!projects.includes(issueKey.split("-")[0]?.toUpperCase() ?? "")) return;
@@ -770,7 +770,9 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         source: "jira",
         key: keys.jiraIssue(issueKey),
         kind: "jira.mention",
-        actor: { id: "jira:assignment" },
+        // Whoever assigned it asked for this turn: a write it proposes is theirs, and they may
+        // not approve it. "jira:assignment" matched nobody, so the assigner could approve.
+        actor: { id: `jira:${assignedBy ?? "unknown"}` },
         // Answered like a mention, keyed on the change so a redelivery is one reply.
         payload: { issueKey, commentId: `assigned-${changeId}`, question: `You were assigned jira:${issueKey}. Check whether it is ready to be worked on, and reply with the verdict and what is missing.` },
         receivedAt: new Date().toISOString(),

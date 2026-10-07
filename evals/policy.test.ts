@@ -286,6 +286,23 @@ describe("who may approve when no list is given", () => {
   });
 });
 
+describe("a requester nobody can identify", () => {
+  it("can't have their request approved where the asker may not approve: whether it's the approver is unknowable", async () => {
+    const { mayApprove } = await import("@scriptorium/policy");
+    const env: Envelope = { agent: "teammate", selfAccountIds: ["bot"], tools: {}, people: [["slack:UPM", "jira:acc-pm"]] } as Envelope;
+    const rule = { tier: "approve" as const, approvers: ["slack:UPM"], separateDuties: true };
+    expect(mayApprove(env, rule, { accountId: "slack:UPM" }, "jira:unknown")).toMatchObject({ ok: false, reason: expect.stringContaining("couldn't be identified") });
+    // The assigner, once known, is checked like anyone: their own linked account can't approve.
+    expect(mayApprove(env, rule, { accountId: "slack:UPM" }, "jira:acc-pm").ok).toBe(false);
+    expect(mayApprove(env, rule, { accountId: "slack:UPM" }, "jira:acc-other").ok).toBe(true);
+  });
+
+  it("a Jira assignment names who assigned it", async () => {
+    const { jiraAssignmentFrom } = await import("@scriptorium/agents");
+    expect(jiraAssignmentFrom({ webhookEvent: "jira:issue_updated", user: { accountId: "acc-pm" }, issue: { key: "DOC-9" }, changelog: { id: "1", items: [{ field: "assignee", to: "tm-1" }] } })?.assignedBy).toBe("acc-pm");
+  });
+});
+
 describe("approvals and failures", () => {
   it("an action that fails gives its approval back, so a retry needs no second click", async () => {
     const store = new MemoryApprovalStore();

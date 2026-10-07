@@ -90,17 +90,15 @@ function commandHead(text: string): string {
     .trim();
 }
 
-/** Words after the first line other than courtesy, emoji and punctuation. */
+/**
+ * Does what follows the first line hold the approval back? A hedge ("wait", "but", "not yet",
+ * "until legal…", a question) makes it a question. Anything else (praise, a sign-off, a cc,
+ * a screenshot) is just the rest of a friendly approval: treating every extra word as doubt
+ * turned "Approved\n\nGreat job, team!" into a question nobody meant to ask.
+ */
 function saysMore(text: string): boolean {
-  return text
-    .split("\n")
-    .slice(1)
-    .join(" ")
-    .toLowerCase()
-    .replace(/\p{Extended_Pictographic}|\uFE0F/gu, "")
-    .replace(/\b(thanks|thank you|thx|ty|cheers|please|pls|great work|nice work|good job)\b/g, "")
-    .replace(/[\s.,;:!?—–*_()-]+/g, "")
-    .length > 0;
+  const rest = text.split("\n").slice(1).join(" ").toLowerCase();
+  return /\?|\b(wait|but|not yet|until|once|don'?t|do not|hold|holding|before|unless|except|however|actually|instead|stop|pending|blocked|no)\b/.test(rest);
 }
 
 /** Starts the way an approval does. Not a match — a reason to ask instead of acting. */

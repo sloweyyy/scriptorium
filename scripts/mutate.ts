@@ -1047,8 +1047,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a placeholder is not an answer to the input contract",
     file: "packages/scribe/src/contract.ts",
-    find: "  if (!trimmed || PLACEHOLDER_PATTERN.test(trimmed)) return false;",
-    replace: "  if (!trimmed) return false;",
+    find: "  if (/^(todo|tbd|tbc|fixme|xxx|n\\/?a|none|unknown|lorem ipsum|\\[placeholder\\]|\\?+|-+|\u2014|\u2026|\\.{2,})[.!]?$/i.test(trimmed)) return false;",
+    replace: "",
     evals: ["evals/contract.test.ts"],
   },
   {
@@ -1365,6 +1365,20 @@ export const MUTANTS: Mutant[] = [
     find: "  for (const id of reserved) max = Math.max(max, Number(id.replace(/\\D/g, \"\")) || 0);\n",
     replace: "",
     evals: ["evals/lessons.test.ts"],
+  },
+  {
+    control: "a friendly approval is an approval: only a hedge makes it a question",
+    file: "packages/jira/src/commands.ts",
+    find: "  return /\\?|\\b(wait|but|not yet|until|once|don'?t|do not|hold|holding|before|unless|except|however|actually|instead|stop|pending|blocked|no)\\b/.test(rest);",
+    replace: "  return rest.replace(/[\\s\\p{P}]/gu, \"\").length > 0;",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "a PRD value that merely contains the word todo is an answer",
+    file: "packages/scribe/src/contract.ts",
+    find: "  return !/\\b(TODO|TBD|FIXME|XXX)\\b|\\[placeholder\\]/.test(trimmed);",
+    replace: "  return !/\\b(TODO|TBD|FIXME|XXX)\\b|\\[placeholder\\]/i.test(trimmed);",
+    evals: ["evals/contract.test.ts"],
   },
   {
     control: "a delegation ends by itself",

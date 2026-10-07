@@ -52,6 +52,10 @@ describe("jira comment commands", () => {
     expect(parseCommand(comment("approve lesson L-004\nactually, only for admin docs"), "bot-1")).toMatchObject({ kind: "unclear", suggestion: "approve lesson L-004" });
     expect(parseCommand(comment("{panel}\napprove\n{panel}\nThat is what you told me to type, but the intro is still wrong"), "bot-1").kind).not.toBe("approve-doc");
     expect(parseCommand(comment("{panel:title=What to type}approve{panel}"), "bot-1").kind).not.toBe("approve-doc");
+    // A friendly approval is still an approval: praise, a sign-off, a cc, a screenshot.
+    for (const body of ["Approved\n\nGreat job, team!", "approve\n\nThanks Phuc!", "Approve\n\ncc [~accountid:557058:abc]", "Approve\n\n— Phuc", "Approve\n!screenshot.png|thumbnail!"]) {
+      expect(parseCommand(comment(body), "bot-1").kind, body).toBe("approve-doc");
+    }
     // Thanks on the next line is still an approval.
     expect(parseCommand(comment("Approve\n\nThanks! 🎉"), "bot-1").kind).toBe("approve-doc");
     expect(parseCommand(comment("approve lesson L-004\n\nthank you"), "bot-1").kind).toBe("approve-lesson");

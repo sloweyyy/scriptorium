@@ -69,6 +69,7 @@ Secrets go in Secret Manager (`--set-secrets`), never in `--set-env-vars`.
 | The Home tab is empty or missing | the app's manifest | the app was installed before the Home tab was added: reinstall it from `slack-manifests/teammate.yaml` |
 | Slow replies at busy times | nothing, usually | Jira, Confluence or GitHub rate-limited us (429). Calls wait what the service asks, up to 30s over 3 tries, then fail closed as before |
 | The same Jira comment twice | shouldn't happen: writes are op-keyed | check whether two instances are running (see below) |
+| A Confluence page update fails on **Retry** with a validation error about `baseVersion` | the request's age | it was approved before updates named the page version they were proposed against. It can't run: let it expire, and ask again so the update is proposed on the page as it is now |
 
 ## The audit log
 

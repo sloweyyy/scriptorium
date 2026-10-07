@@ -68,6 +68,11 @@ describe("runtime controls", () => {
     // Nor what the person they stand in for asked: a delegation to one's own second account
     // must not let it approve one's own requests.
     expect(mayApprove(delegated, rule, { accountId: "slack:UALT" }, "slack:UPM").ok).toBe(false);
+    // From any of that person's accounts.
+    const linked = withDelegations({ ...envelope, people: [["slack:UPM", "jira:pm-1"]] }, control);
+    expect(mayApprove(linked, linked.tools.jira_create_issue!, { accountId: "slack:UALT" }, "jira:pm-1").ok).toBe(false);
+    // One way: the person away may still approve what their stand-in asked.
+    expect(mayApprove(delegated, rule, { accountId: "slack:UPM" }, "slack:UALT").ok).toBe(true);
     // Past its end date it's gone.
     expect(withDelegations(envelope, control, Date.now() + 2 * 86_400_000).tools.jira_create_issue?.approvers).toEqual(["slack:UPM"]);
   });

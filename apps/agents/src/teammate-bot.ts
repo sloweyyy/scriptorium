@@ -540,8 +540,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         // The request that saved it carries its text too (shown in App Home's "What you asked
         // for"): emptied, as an erasure empties it. Who approved it stays.
         for (const request of await store.all()) {
-          const args = request.args as { text?: unknown } | undefined;
-          if (request.tool !== "memory_save" || typeof args?.text !== "string" || args.text.trim() !== result.memory.text) continue;
+          if (request.tool !== "memory_save" || !result.memory.approvals.includes(request.id)) continue;
           await store.update(request.id, (current) => ({ ...current, args: undefined, summary: "(forgotten on request)" }));
         }
         await audit(config.auditFile, { type: "memory.forgotten", actor: `slack:${user}`, memory: result.memory.id, scope: result.memory.scope }).catch(() => undefined);

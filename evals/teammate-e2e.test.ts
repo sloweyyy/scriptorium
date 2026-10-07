@@ -546,19 +546,24 @@ describe("your memories", () => {
 });
 
 describe("forgetting leaves no copy", () => {
-  it("a copy under another folder goes too, and so does the text in the request that saved it", async () => {
+  it("a copy under another folder goes too, and so does the text in the request that saved it, and only that request", async () => {
     const core = await createTeammate(config(), vault, slack as never, "UBOT");
     const text = "I'm on medical leave until 2026-11-30.";
-    await vault.writeNote("_memory/M-0000dddd.md", text, { id: "M-0000dddd", scope: "person:slack:U1", status: "approved", approved_by: "Priya" });
-    await vault.writeNote("_memory/imported/M-0000dddd.md", text, { id: "M-0000dddd", scope: "person:slack:U1", status: "approved", approved_by: "Priya" });
+    await vault.writeNote("_memory/M-0000dddd.md", text, { id: "M-0000dddd", scope: "person:slack:U1", status: "approved", approved_by: "Priya", approval: "R-mem" });
+    await vault.writeNote("_memory/imported/M-0000dddd.md", text, { id: "M-0000dddd", scope: "person:slack:U1", status: "approved", approved_by: "Priya", approval: "R-mem" });
     const store = new FileApprovalStore(path.join(tmpRoot, "state", "approvals.json"));
-    await store.save({ id: "R-mem", agent: "Teammate", tool: "memory_save", args: { text, scope: "person:slack:U1" }, argsHash: "h", summary: `Remember: ${text}`, key: "k", requestedBy: "slack:U1", requestedAt: "2026-10-01T00:00:00Z", expiresAt: "2026-10-08T00:00:00Z", status: "consumed" });
+    const request = (id: string, requestedBy: string) => ({ id, agent: "Teammate", tool: "memory_save", args: { text, scope: `person:${requestedBy}` }, argsHash: "h", summary: `Remember: ${text}`, key: "k", requestedBy, requestedAt: "2026-10-01T00:00:00Z", expiresAt: "2026-10-08T00:00:00Z", status: "consumed" as const });
+    await store.save(request("R-mem", "slack:U1"));
+    // Someone else asked to remember the same words about themselves: theirs is not U1's to empty.
+    await store.save(request("R-other", "slack:U2"));
 
     expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: "forget M-0000dddd", commandId: "f1" })).toMatch(/^Forgotten/);
     expect(await vault.listNotes("_memory")).toEqual([]);
-    const request = (await store.all()).find((entry) => entry.id === "R-mem");
-    expect(request?.args).toBeUndefined();
-    expect(request?.summary).not.toContain("medical leave");
+    const requests = await store.all();
+    const saved = requests.find((entry) => entry.id === "R-mem");
+    expect(saved?.args).toBeUndefined();
+    expect(saved?.summary).not.toContain("medical leave");
+    expect(requests.find((entry) => entry.id === "R-other")?.args).toEqual({ text, scope: "person:slack:U2" });
   });
 });
 

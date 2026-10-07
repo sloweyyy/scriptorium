@@ -326,7 +326,10 @@ export function startIngress({ config, hooks, surfaces }: IngressOptions): Serve
         // the viewer is off or the key is wrong: nothing to learn by probing.
         const sig = url.searchParams.get("sig") ?? "";
         const bySignature = Boolean(token && sig && secretMatches(sig, runLinkSignature(token, prefix)));
-        const byToken = Boolean(token && secretMatches(url.searchParams.get("token") ?? "", token));
+        // The operator's key only in a header, as /metrics takes it: in the query string it was
+        // written to the request log, browser history and any proxy's log with every request.
+        const bearer = (headerValue(request.headers.authorization) ?? "").replace(/^Bearer\s+/i, "");
+        const byToken = Boolean(token && bearer && secretMatches(bearer, token));
         if (!bySignature && !byToken) {
           send(response, 404, { error: "not found" });
           return;

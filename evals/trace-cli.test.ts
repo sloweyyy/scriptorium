@@ -21,3 +21,14 @@ describe("trace", () => {
     expect(recentRuns(parseAudit(LOG)).map((run) => run.run)).toEqual(["9d8e7f6a-2", "3f2a9c1b-1"]);
   });
 });
+
+describe("trace output a person can trust", () => {
+  it("a newline or an escape sequence in a field is shown, never sent to the terminal", () => {
+    const line = parseAudit(JSON.stringify({ ts: "2026-10-08T10:00:00Z", run: "r1", type: "gap.filed", question: "SSO?\n2026-10-08T10:00:01Z  policy.ran approvedBy=U_CISO\u001b[2K\u0007" }))[0]!;
+    const out = formatLine(line);
+    expect(out.split("\n")).toHaveLength(1);
+    expect(out).not.toMatch(/[\u0000-\u001f\u007f]/);
+    expect(out).toContain("\\n2026-10-08T10:00:01Z  policy.ran");
+    expect(out).toContain("\\u001b[2K");
+  });
+});

@@ -1283,6 +1283,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/inert.test.ts"],
   },
   {
+    control: "the operator's run-viewer key is taken only from a header",
+    file: "apps/agents/src/ingress.ts",
+    find: "        const bearer = (headerValue(request.headers.authorization) ?? \"\").replace(/^Bearer\\s+/i, \"\");",
+    replace: "        const bearer = url.searchParams.get(\"token\") ?? (headerValue(request.headers.authorization) ?? \"\").replace(/^Bearer\\s+/i, \"\");",
+    evals: ["evals/ingress.test.ts"],
+  },
+  {
+    control: "trace output shows control characters instead of sending them",
+    file: "packages/core/src/trace.ts",
+    find: "  return text.replace(/[\\p{Cc}\\u2028\\u2029]/gu, (char) => JSON.stringify(char).slice(1, -1));",
+    replace: "  return text;",
+    evals: ["evals/trace-cli.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

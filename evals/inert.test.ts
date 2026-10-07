@@ -66,6 +66,42 @@ describe("inert markdown", () => {
     expect(inertMarkdown('[x](javascript:alert(1) "javascript:")')).toBe('[x](#unsafe-link-removed "javascript:")');
   });
 
+  it("a leading byte-order mark doesn't shift where a link target is read from", () => {
+    // micromark counts from after the mark: the target was read from its `(`, with no scheme.
+    expect(inertMarkdown("﻿See [x](javascript:alert(1)).")).toBe("﻿See [x](#unsafe-link-removed).");
+    expect(unsafeMarkup("﻿[x](javascript:alert(1))").links).toEqual(["javascript:"]);
+  });
+
+  it("what Quartz would write back out as HTML is broken where it starts, and nothing else changes", () => {
+    const Z = "​";
+    const fence = "```";
+    const cases: Array<[string, string]> = [
+      // ==…== is written into a <span> from the decoded text: the &lt; inert wrote was a tag again.
+      ["==<script>alert(1)</script>==", `=${Z}=&lt;script>alert(1)&lt;/script>==`],
+      // A transclusion's alias goes into an attribute.
+      ['![[docs/x|"><script>alert(1)</script>]]', `![${Z}[docs/x|">&lt;script>alert(1)&lt;/script>]]`],
+      // %%…%% is cut from the raw text, code included, before parsing.
+      ["<%%x%%img src=x onerror=alert(1)>", `<%${Z}%x%${Z}%img src=x onerror=alert(1)>`],
+      [`%%\n${fence}\n%%<img src=x onerror=alert(1)>\n${fence}`, `%${Z}%\n${fence}\n%${Z}%<img src=x onerror=alert(1)>\n${fence}`],
+      // An external wikilink is rewritten into markdown before parsing; this one, a video embed.
+      ['![[https://x.example/"onerror="alert(1)//.mp4|a]]', `![${Z}[https://x.example/"onerror="alert(1)//.mp4|a]]`],
+      ["[[https://x.example/page|a]]", `[${Z}[https://x.example/page|a]]`],
+      // A video's URL goes into src="…".
+      ['![v](https://x.example/a"onerror="alert(1).mp4)', "![v](#unsafe-link-removed)"],
+      // In a table, the wikilink's | is escaped first, which joins two cells and moves a code span.
+      ["| a | b |\n|---|---|\n| `x [[n|m]] | <img src=x onerror=alert(1)> ` | y |", "| a | b |\n|---|---|\n| `x [[n\\|m]] | &lt;img src=x onerror=alert(1)> ` | y |"],
+      // Mermaid runs loose: a click can follow javascript:. It is shown as code instead.
+      [`${fence}mermaid\ngraph TD\nclick A href "javascript:alert(1)"\n${fence}`, `${fence}text\ngraph TD\nclick A href "javascript:alert(1)"\n${fence}`],
+    ];
+    for (const [hostile, expected] of cases) {
+      expect(inertMarkdown(hostile), hostile).toBe(expected);
+      expect(inertMarkdown(expected), hostile).toBe(expected);
+    }
+    for (const kept of ["==important== and a < b", "[[docs/x|The X page]] and ![[docs/y]]", "100%% sure", `${fence}js\nif (a == b && c<d) {}\n${fence}`, `${fence}mermaid\ngraph TD\nA-->B\n${fence}`]) {
+      expect(inertMarkdown(kept), kept).toBe(kept);
+    }
+  });
+
   it("runs again until nothing is left, and a second run changes nothing", () => {
     // Escaped, an HTML block is a paragraph, and its link is live. A backtick inside an
     // escaped tag pairs with the one that kept a tag inside code.

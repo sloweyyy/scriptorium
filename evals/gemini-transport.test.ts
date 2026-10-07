@@ -90,4 +90,16 @@ describe("gemini tool loop transport", () => {
     const alpha = { name: "alpha", description: "a", inputSchema: z.object({}), run: async () => "nothing" };
     await expect(runGeminiToolLoop({ system: "s", prompt: "p", tools: [alpha], maxRounds: 3, accessToken })).rejects.toThrow(/3-round cap/);
   });
+
+  it("reports each round's tokens, cached and thinking tokens included", async () => {
+    vi.stubGlobal("fetch", async () =>
+      new Response(
+        JSON.stringify({ candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 300, cachedContentTokenCount: 100, candidatesTokenCount: 40, thoughtsTokenCount: 15 } }),
+        { status: 200 },
+      ),
+    );
+    const rounds: unknown[] = [];
+    expect(await runGeminiToolLoop({ system: "s", prompt: "p", tools: [], accessToken, onRound: (usage) => rounds.push(usage) })).toBe("ok");
+    expect(rounds).toEqual([{ input_tokens: 200, cache_read_input_tokens: 100, output_tokens: 55 }]);
+  });
 });

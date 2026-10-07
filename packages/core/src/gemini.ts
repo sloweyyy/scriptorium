@@ -62,7 +62,16 @@ interface GeminiResponse {
     content?: { parts?: GeminiPart[] };
     finishReason?: string;
   }>;
+  /** What the round cost. `promptTokenCount` includes the cached part. */
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number; thoughtsTokenCount?: number };
   error?: { message?: string; status?: string };
+}
+
+/** One round's tokens, in the Anthropic usage shape the budget already counts. */
+export interface GeminiRoundUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
 }
 
 /**
@@ -179,6 +188,8 @@ export interface GeminiToolLoopOptions {
    */
   maxRounds?: number;
   maxTokens?: number;
+  /** Called after every round with what it cost, including rounds of a loop that then fails. */
+  onRound?: (usage: GeminiRoundUsage) => void;
   /** Bearer token to use instead of Application Default Credentials. See `callGemini`. */
   accessToken?: string;
 }
@@ -197,6 +208,7 @@ export async function runGeminiToolLoop({
   maxRounds = 12,
   maxTokens = 4_096,
   accessToken,
+  onRound,
 }: GeminiToolLoopOptions): Promise<string> {
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   const contents: GeminiContent[] = [{ role: "user", parts: [{ text: prompt }] }];
@@ -211,6 +223,13 @@ export async function runGeminiToolLoop({
       },
       accessToken,
     );
+    const usage = data.usageMetadata;
+    const cached = usage?.cachedContentTokenCount ?? 0;
+    onRound?.({
+      input_tokens: Math.max(0, (usage?.promptTokenCount ?? 0) - cached),
+      cache_read_input_tokens: cached,
+      output_tokens: (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0),
+    });
 
     const candidate = data.candidates?.[0];
     assertUsableCandidate(candidate?.finishReason);

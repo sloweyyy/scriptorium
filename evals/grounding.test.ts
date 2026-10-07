@@ -196,6 +196,37 @@ describe("answerQuestion applies it", () => {
   });
 });
 
+describe("a listing is not a read", () => {
+  it("a note cited from the overview alone, never opened, grounds nothing", async () => {
+    // The overview lists every path; none of them was read. A claim cited to one is invented.
+    modelCalls = ["vault_overview"];
+    modelReply = "Beacon supports SAML single sign-on through Okta [[docs/scheduled-maintenance]].";
+    const answer = await answerQuestion(vault, "Do you support SSO?");
+    expect(answer.ungrounded).toBe(true);
+    expect(answer.citations).toEqual([]);
+  });
+});
+
+describe("a sentence goes with its only citation", () => {
+  const judge = (text: string) =>
+    enforceGrounding(vault, parseQaAnswer(text, "q"), { usedOverview: false, retrieved: ["docs/scheduled-maintenance: Severity is Minor, Major or Critical."] });
+
+  it("drops a claim whose only support was an invented note, and keeps the sourced one", async () => {
+    const answer = await judge("Severity is Minor, Major or Critical [[docs/scheduled-maintenance]]. Windows can be scheduled 90 days ahead [[docs/made-up]].");
+    expect(answer.citations).toEqual(["docs/scheduled-maintenance"]);
+    expect(answer.text).not.toContain("90 days");
+    expect(answer.text.split("\n")[0]).toBe("Severity is Minor, Major or Critical [[docs/scheduled-maintenance]].");
+    expect(answer.text).toContain("couldn't be verified");
+  });
+
+  it("a bullet cited only to an invented note goes; the other lines stay", async () => {
+    const answer = await judge("Severities:\n- Minor, Major or Critical [[docs/scheduled-maintenance]]\n- Emergency, paged 24/7 [[docs/made-up]]");
+    expect(answer.text).not.toContain("Emergency");
+    expect(answer.text).toContain("Severities:");
+    expect(answer.text).toContain("- Minor, Major or Critical [[docs/scheduled-maintenance]]");
+  });
+});
+
 describe("refusals are not evidence", () => {
   it("a tool's NOT_ALLOWED echo of an id never grounds a citation to it", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "scriptorium-refusal-"));

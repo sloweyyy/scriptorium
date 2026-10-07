@@ -669,9 +669,16 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     async checkReminders(now = new Date()) {
       if (!(await ownsSchedule())) return;
       // Paused: reminders wait (and are dropped if a day overdue by the time it resumes).
-      if ((await refreshControl()).paused) return;
+      const control = await refreshControl();
+      if (control.paused) return;
+      // Switched off (or read-only), or its channel no longer one it may post in: the same
+      // wait. The click path already refused to carry the tool out after it was switched off;
+      // a reminder approved before then posted anyway, and could not even be cancelled.
+      const remindersOn = "schedule_reminder" in narrowTools(envelope.tools, control);
+      const mayPostIn = (channel: string) => settings.channels.includes(channel) || (settings.allowDms && channel.startsWith("D"));
       const { due, stale } = await dueReminders(reminders, now.getTime());
       for (const reminder of due) {
+        if (!remindersOn || !mayPostIn(reminder.channel)) continue;
         // Probed, not just op-keyed: a post that landed before a crash or a timeout is found
         // by its metadata on the retry, instead of being posted again.
         await once(

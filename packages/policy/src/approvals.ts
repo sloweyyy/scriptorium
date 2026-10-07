@@ -37,6 +37,8 @@ export interface ApprovalRequest {
   status: ApprovalStatus;
   decidedBy?: Approver;
   decidedAt?: string;
+  /** Spent, then handed back because the action failed: only an approver's Retry spends it again. */
+  restored?: boolean;
 }
 
 /** Stable across key order, so `{a, b}` and `{b, a}` are the same action. */
@@ -236,7 +238,7 @@ export async function decideApproval(
  */
 export async function consumeApproval(
   store: ApprovalStore,
-  input: { agent: string; tool: string; args: unknown; requestId?: string },
+  input: { agent: string; tool: string; args: unknown; requestId?: string; key?: string; requestedBy?: string },
   now = new Date(),
 ): Promise<ApprovalRequest | undefined> {
   const hash = argsHash(input.args);
@@ -249,7 +251,13 @@ export async function consumeApproval(
         request.argsHash === hash &&
         request.status === "approved" &&
         // Carrying out a specific approval spends THAT one, not another with equal args.
-        (!input.requestId || request.id === input.requestId),
+        (input.requestId
+          ? request.id === input.requestId
+          : // Without one, the model is asking again: only the asker, in the conversation the
+            // approval was given for, and never one a failure handed back. Otherwise an
+            // approval for one person's request ran for anyone who asked for the same args
+            // anywhere, and a failed action re-ran without the approver's Retry.
+            request.key === input.key && request.requestedBy === input.requestedBy && !request.restored),
     );
   for (const candidate of candidates) {
     // Spent atomically: of two runs racing for one approval, exactly one gets it.
@@ -267,5 +275,5 @@ export async function consumeApproval(
  * would make the human click again for a failure that was not theirs.
  */
 export async function restoreApproval(store: ApprovalStore, id: string): Promise<void> {
-  await store.update(id, (current) => (current.status === "consumed" ? { ...current, status: "approved" } : undefined));
+  await store.update(id, (current) => (current.status === "consumed" ? { ...current, status: "approved", restored: true } : undefined));
 }

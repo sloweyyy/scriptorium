@@ -122,16 +122,21 @@ async function runOnClaude(options: SessionOptions, maxRounds: number, model: st
 
   // Iterated, not just awaited, so every round's usage is counted — the final message
   // carries only the last round's.
+  // Reported even when the loop throws: rounds already spent are spent, and a fallback that
+  // reruns the turn must not make the first attempt free.
   const usages: Array<UsageLike | undefined> = [];
   let finalMessage: Awaited<typeof runner>;
-  if (typeof (runner as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function") {
-    for await (const message of runner) usages.push((message as { usage?: UsageLike }).usage);
-    finalMessage = await runner.done();
-  } else {
-    finalMessage = await runner;
-    usages.push((finalMessage as { usage?: UsageLike }).usage);
+  try {
+    if (typeof (runner as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function") {
+      for await (const message of runner) usages.push((message as { usage?: UsageLike }).usage);
+      finalMessage = await runner.done();
+    } else {
+      finalMessage = await runner;
+      usages.push((finalMessage as { usage?: UsageLike }).usage);
+    }
+  } finally {
+    options.onUsage?.(sumUsage(provider, usages));
   }
-  options.onUsage?.(sumUsage(provider, usages));
 
   // Judge the stop reason BEFORE the text: a truncated or capped turn can still carry text.
   switch (finalMessage.stop_reason) {
@@ -154,13 +159,18 @@ async function runOnClaude(options: SessionOptions, maxRounds: number, model: st
 }
 
 async function runOnGemini(options: SessionOptions, maxRounds: number): Promise<string> {
+  // Counted like Claude's: without it a Gemini deployment's token caps never moved, and
+  // no `llm.usage` line was written to seed them after a restart.
+  const usages: UsageLike[] = [];
   try {
-    const text = await runGeminiToolLoop({ system: options.system, prompt: options.prompt, tools: options.tools, maxTokens: options.maxTokens, maxRounds });
+    const text = await runGeminiToolLoop({ system: options.system, prompt: options.prompt, tools: options.tools, maxTokens: options.maxTokens, maxRounds, onRound: (usage) => usages.push(usage) });
     if (!text.trim()) throw new SessionError("empty", "The model produced no text.");
     return text;
   } catch (error) {
     if (error instanceof SessionError) throw error;
     if (error instanceof Error && /round cap/.test(error.message)) throw new SessionError("round-cap", error.message);
     throw error;
+  } finally {
+    options.onUsage?.(sumUsage("gemini", usages));
   }
 }

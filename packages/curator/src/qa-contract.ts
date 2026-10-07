@@ -166,10 +166,10 @@ export function qaTools(vault: Vault, index: VaultIndex): ToolSpec[] {
             : {}),
         });
       },
-      records: (_input, output) => {
-        const overview = ownJson(output) as { notes?: unknown } | undefined;
-        return Array.isArray(overview?.notes) ? overview.notes.filter((note): note is string => typeof note === "string") : [];
-      },
+      // No records: the overview lists paths, and a path is not a read. Counting each listed
+      // note as fetched let a model call the overview alone, cite any of 120 notes it never
+      // opened, and pass a claim as grounded. It grounds coverage statements (`usedOverview`).
+      records: () => [],
     }),
     tool({
       name: "search_vault",
@@ -288,7 +288,7 @@ export async function enforceGrounding(vault: Vault, answer: QaAnswer, evidence:
   // showed in Slack like a verified source. Its link comes out of the text, and the reader
   // is told a source was left out.
   const dropped = answer.citations.filter((citation) => !citations.includes(citation));
-  const text = dropped.length ? withoutLinks(answer.text, dropped) : answer.text;
+  const text = dropped.length ? withoutLinks(withoutUnsupported(answer.text, dropped, citations), dropped) : answer.text;
   // The overview grounds statements about the vault's coverage, never product claims: with
   // it as an exemption for anything, a model could call the overview and then state an
   // invented fact with no citation, and it passed as grounded.
@@ -318,6 +318,26 @@ export function coverageOnly(text: string): boolean {
 
 /** Said when a named source couldn't be verified and was taken out of the answer. */
 export const UNVERIFIED_SOURCE_NOTE = "_A source this answer named couldn't be verified, so it was left out._";
+
+const linkPattern = (target: string): RegExp => new RegExp(`\\[\\[\\s*${target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*(?:[|#][^\\]]*)?\\]\\]`);
+
+/**
+ * A sentence whose only support was a dropped citation goes with it. Unlinking alone left
+ * "Windows can be scheduled 90 days ahead." in the answer, a claim with no source, posted
+ * beside a real one that made the answer as a whole look grounded.
+ */
+function withoutUnsupported(text: string, dropped: readonly string[], kept: readonly string[]): string {
+  const cites = (sentence: string, targets: readonly string[]) => targets.some((target) => linkPattern(target).test(sentence));
+  return text
+    .split("\n")
+    .flatMap((line) => {
+      if (!cites(line, dropped)) return [line];
+      const sentences = line.split(/(?<=[.!?])\s+(?=\S)/).filter((sentence) => !cites(sentence, dropped) || cites(sentence, kept));
+      const rebuilt = sentences.join(" ");
+      return rebuilt.trim() ? [rebuilt] : [];
+    })
+    .join("\n");
+}
 
 function withoutLinks(text: string, targets: readonly string[]): string {
   let out = text;

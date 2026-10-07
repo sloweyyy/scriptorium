@@ -342,12 +342,12 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[], 
     return;
   }
 
-  // The saved draft may be a revision whose comment never landed (a failure after the save):
-  // the feedback it was revised with is in it already. Retried alone, that revision is
-  // posted, not revised again; retried with feedback that came since, only the new feedback
-  // is applied to it. Matched on the whole set, a new comment made the old one apply twice.
+  // The saved draft may be a revision whose feedback is still not marked done: the run failed
+  // after the save, before the post or after it. That feedback is in the draft already.
+  // Retried alone, the revision is posted if it never was, and not revised again; retried
+  // with feedback that came since, only the new feedback is applied to it.
   const known0 = ctx.state.get(key);
-  const applied = known0?.revisedWith && known0.postedDraftHash !== hashDraft(draft) ? known0.revisedWith : [];
+  const applied = known0?.revision?.draftHash === hashDraft(draft) ? known0.revision.feedback : [];
   const fresh = feedback.filter((item) => !applied.includes(item));
   const recorded = known0?.feedback ?? [];
   const recordFeedback = async (): Promise<void> => {
@@ -356,8 +356,7 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[], 
   };
   if (applied.length && !fresh.length) {
     await recordFeedback();
-    await repostDraft(ctx, key, draft);
-    await ctx.state.patch(key, { revisedWith: undefined });
+    if (known0?.postedDraftHash !== hashDraft(draft)) await repostDraft(ctx, key, draft);
     await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
     await handBack(ctx, key, issue);
     return;
@@ -372,9 +371,10 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[], 
   const pointsAtDesign = fresh.some((item) => REFERS_TO_DESIGN.test(item));
   const designs = pointsAtDesign ? await loadDesignImages(ctx, issue) : { images: [], names: [] };
   const result = await reviseDoc(ctx.vault, draft, fresh, designs.images, { withdrawn: await withdrawnLessons(ctx.config.jira.stateDir) });
+  await ctx.state.patch(key, { revision: { feedback: [...applied, ...fresh], draftHash: hashDraft(result.markdown) } });
   await ctx.state.saveDraft(key, result.markdown);
   // The vault copy is now stale relative to this draft: the next approve republishes.
-  await ctx.state.patch(key, { draftPublished: false, revisedWith: [...applied, ...fresh] });
+  await ctx.state.patch(key, { draftPublished: false });
   await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
   await handBack(ctx, key, issue);
   await recordFeedback();
@@ -400,6 +400,7 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[], 
       attachment: `draft-${slug}.md`,
     }),
   );
-  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(result.markdown), revisedWith: undefined });
+  // Shown: nothing is owed to the ticket, a first draft that never landed included.
+  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(result.markdown), draftUnposted: false });
   await audit(ctx.config.auditFile, { type: "jira.draft.revised", actor: "scribe", issue: key, feedback: fresh });
 }

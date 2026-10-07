@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { opKey, once, type EffectLedger } from "@scriptorium/runtime";
 import type { AppConfig, Vault } from "@scriptorium/core";
 import {
@@ -120,28 +121,32 @@ export function errorMessage(error: unknown): string {
  * so the poller does not read the agent's own move as a human decision.
  */
 export async function moveTo(ctx: Ctx, key: string, statusName: string, currentStatus?: string): Promise<void> {
-  if (!statusName || currentStatus?.toLowerCase() === statusName.toLowerCase()) return;
+  if (!statusName) return;
+  const target = statusName.toLowerCase();
   try {
-    // `currentStatus` is what the caller last saw, which may be a model call ago. A human who
-    // dragged the ticket to Approved in the meantime must not be silently undone by the
-    // agent's bookkeeping move: leave it where they put it, and the tick's end leaves the
-    // change for the next tick to judge as an approval (and to hold, if it predates the draft).
-    const approved = ctx.config.jira.approvedStatus.toLowerCase();
+    // Already there: recorded all the same, so the next move starts from where it is. A
+    // ticket a person had put in In Progress before asking for a draft stayed In Progress,
+    // because the move to In Review didn't know the column it was leaving.
+    if (currentStatus?.toLowerCase() === target) {
+      await ctx.state.patch(key, { lastStatus: statusName });
+      return;
+    }
+    // `currentStatus` is what the caller last saw, which may be a model call ago.
     const live = await ctx.client
       .getIssue(key)
       .then((fresh) => issueStatus(fresh))
       .catch(() => undefined);
-    if (live?.toLowerCase() === statusName.toLowerCase()) return;
-    if (live?.toLowerCase() === approved && (currentStatus ?? "").toLowerCase() !== approved && statusName.toLowerCase() !== approved) {
-      console.warn(`[scribe] ${key}: someone moved it to "${ctx.config.jira.approvedStatus}" while I worked, so I'm not moving it to "${statusName}"`);
+    if (live?.toLowerCase() === target) {
+      await ctx.state.patch(key, { lastStatus: statusName });
       return;
     }
-    // Any column a person chose while the agent worked stays theirs: only Approved was
-    // protected, so a ticket moved to "Won't Do" mid-draft was pulled back into In Progress
-    // and In Review, and into the poller's query. Moved only from a status the agent knows:
-    // the one it last saw, or the one it last set.
+    // Any column a person chose while the agent worked stays theirs: Approved above all (the
+    // tick's end leaves that change for the next tick to judge as an approval), but also a
+    // ticket moved to "Won't Do" mid-draft, which was pulled back into In Progress, In
+    // Review and the poller's query. Moved only from a status the agent knows: the one it
+    // last saw, or the one it last set. With neither, it knows nothing, and moves nothing.
     const known = [currentStatus, ctx.state.get(key)?.lastStatus].filter((name): name is string => Boolean(name)).map((name) => name.toLowerCase());
-    if (live && known.length && !known.includes(live.toLowerCase())) {
+    if (live && !known.includes(live.toLowerCase())) {
       console.warn(`[scribe] ${key}: someone moved it to "${live}" while I worked, so I'm not moving it to "${statusName}"`);
       return;
     }
@@ -220,7 +225,9 @@ export async function say(ctx: Ctx, key: string, markdown: string): Promise<Jira
     await ctx.state.markProcessed(key, [comment.id]);
     return comment;
   }
-  const op = opKey("jira.say", key, trigger.id, trigger.seq++);
+  // The text is part of the key: a retry that has something else to say (a draft written
+  // again) posts it, instead of being handed the earlier comment as if it said this.
+  const op = opKey("jira.say", key, trigger.id, trigger.seq++, createHash("sha256").update(markdown).digest("hex"));
   const { result } = await once(
     ctx.effects,
     op,

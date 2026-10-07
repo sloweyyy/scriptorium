@@ -247,11 +247,11 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
    * replies used to consume the next command's reply numbers, so a command retried after the
    * revision landed found "its" reply already done — the revision comment — and never posted.
    */
-  const attempt = async (triggerId: string, markDone: string[], work: () => Promise<void>): Promise<void> => {
+  const attempt = async (triggerId: string, markDone: string[], work: () => Promise<void>, settled: Partial<IssueState> = {}): Promise<void> => {
     ctx.triggers.set(key, { id: triggerId, seq: 0 });
     try {
       await work();
-      await ctx.state.markProcessed(key, markDone);
+      await ctx.state.markProcessed(key, markDone, settled);
       if (ctx.state.get(key)?.failing?.commentId === triggerId) await ctx.state.patch(key, { failing: undefined });
     } catch (error) {
       const failing = ctx.state.get(key)?.failing;
@@ -263,7 +263,7 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
       // Set aside, loudly: retrying something that fails the same way forever costs a model
       // call per poll and tells the reviewer nothing new.
       await ctx.state.patch(key, { failing: undefined });
-      await ctx.state.markProcessed(key, markDone);
+      await ctx.state.markProcessed(key, markDone, settled);
       await say(ctx, key, `⚠️ I tried that ${MAX_COMMAND_ATTEMPTS} times and it kept failing:\n\n{{${errorMessage(error)}}}\n\nI've set that comment aside. Comment again once the cause is fixed.`);
     } finally {
       ctx.triggers.delete(key);
@@ -276,7 +276,8 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
   const flushAndMark = async (): Promise<void> => {
     if (!pendingFeedback.length) return;
     const ids = [...pendingFeedbackIds];
-    await attempt(`feedback:${ids.at(-1)}`, ids, flushFeedback);
+    // The revision record goes in the same write that marks its feedback done.
+    await attempt(`feedback:${ids.at(-1)}`, ids, flushFeedback, { revision: undefined });
     pendingFeedbackIds.length = 0;
   };
 

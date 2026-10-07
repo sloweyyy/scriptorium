@@ -78,11 +78,12 @@ export interface IssueState {
   /** A first draft is saved and its comment hasn't posted yet (cleared once it has): the next tick posts it. */
   draftUnposted?: boolean;
   /**
-   * The feedback the saved draft was revised with, until that revision is posted. A retry
-   * posts it instead of revising it again, and feedback that came since is applied to it
-   * alone: none of this is applied twice.
+   * The feedback a revision applied, and the draft it made: kept until that feedback is
+   * marked done. A retry finds it on the saved draft (crashed before the post: post it;
+   * after: nothing to do), applies only feedback that came since, and never applies any of
+   * it twice. Recorded before the draft is saved, so a crash between finds another draft.
    */
-  revisedWith?: string[];
+  revision?: { feedback: string[]; draftHash: string };
   /**
    * Follow-ups a publish still owes: the Slack announcement and the lesson proposal. Set
    * when the publish lands, each cleared once done, so a failure between them (the
@@ -223,11 +224,12 @@ export class JiraState {
     return next;
   }
 
-  async markProcessed(key: string, commentIds: string[]): Promise<void> {
-    if (!commentIds.length) return;
+  /** Mark comments handled, and with them (in the same write) whatever their handling settles. */
+  async markProcessed(key: string, commentIds: string[], settled: Partial<IssueState> = {}): Promise<void> {
+    if (!commentIds.length && !Object.keys(settled).length) return;
     const current = this.data.issues[key];
     const merged = new Set([...(current?.processedComments ?? []), ...commentIds]);
-    await this.patch(key, { processedComments: [...merged] });
+    await this.patch(key, { processedComments: [...merged], ...settled });
   }
 
   async appendFeedback(key: string, feedback: string, author?: string): Promise<void> {

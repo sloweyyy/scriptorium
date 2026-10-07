@@ -46,6 +46,17 @@ describe("jira comment commands", () => {
     expect(parseCommand(comment("I'll approve once the FAQ is fixed"), "bot-1").kind).toBe("feedback");
   });
 
+  it("an approval is the whole comment: what follows it, or a framed copy of it, makes it a question", () => {
+    // Only the first line used to be read, so this published.
+    expect(parseCommand(comment("Approve\n\nWait, not yet: legal hasn't signed off on section 3."), "bot-1")).toMatchObject({ kind: "unclear", suggestion: "approve" });
+    expect(parseCommand(comment("approve lesson L-004\nactually, only for admin docs"), "bot-1")).toMatchObject({ kind: "unclear", suggestion: "approve lesson L-004" });
+    expect(parseCommand(comment("{panel}\napprove\n{panel}\nThat is what you told me to type, but the intro is still wrong"), "bot-1").kind).not.toBe("approve-doc");
+    expect(parseCommand(comment("{panel:title=What to type}approve{panel}"), "bot-1").kind).not.toBe("approve-doc");
+    // Thanks on the next line is still an approval.
+    expect(parseCommand(comment("Approve\n\nThanks! 🎉"), "bot-1").kind).toBe("approve-doc");
+    expect(parseCommand(comment("approve lesson L-004\n\nthank you"), "bot-1").kind).toBe("approve-lesson");
+  });
+
   it("never acts on a command inside a quote or a code block", () => {
     // Quoting the agent's vocabulary back is talking about the command, not issuing it.
     // With the markers stripped and the words kept, this comment published the doc.

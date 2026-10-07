@@ -192,6 +192,7 @@ function stubJira(): void {
     if (url.includes("/assignee") && method === "PUT") {
       const body = JSON.parse(String(init?.body ?? "{}")) as { accountId: string | null };
       assignments.push(body.accountId);
+      issue = { ...issue, fields: { ...(issue.fields as object), assignee: body.accountId ? { accountId: body.accountId } : null } };
       return new Response(null, { status: 204 });
     }
     if (url.includes("/remotelink")) return json([]);
@@ -727,6 +728,33 @@ describe("board transitions", () => {
     expect(status()).toBe("In Review");
   });
 
+  it("after a lost ledger, a ticket where it only answered `help` is not taken for one it drafts", async () => {
+    // Unlabelled: mention-only. Someone typed `help`, and it answered.
+    issue = { ...issue, fields: { ...(issue.fields as object), labels: [] } };
+    comments.push(human("h-help", "help"), { id: "bot-help", body: "Here is what I understand: …", created: new Date().toISOString(), author: { accountId: "bot-1", displayName: "Scribe" } });
+    await fs.rm(path.join(tmpRoot, "state"), { recursive: true, force: true });
+    comments.push(human("h-chat", "the intro of the PRD needs work before anyone drafts this"));
+    const movesBefore = moves.length;
+    const calls = vi.mocked(generateText).mock.calls.length;
+    (await startScribeJira(config(), vault)).stop();
+    // Conversation, not feedback: nothing drafted, nothing moved, nothing taken.
+    expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
+    expect(moves.slice(movesBefore)).toEqual([]);
+    expect(assignments).toEqual([]);
+  });
+
+  it("after a lost ledger, a published ticket isn't told its draft never reached it", async () => {
+    (await startScribeJira(config(), vault)).stop();
+    comments.push(human("h-ok", "approve"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-21T10:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(await vault.listNotes("docs")).toHaveLength(1);
+    await fs.rm(path.join(tmpRoot, "state"), { recursive: true, force: true });
+    const before = comments.length;
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.slice(before).filter((comment) => comment.body.includes("posted again"))).toEqual([]);
+  });
+
   it("a ticket whose column the agent can't place is not moved: it knows nothing, so it moves nothing", async () => {
     const { moveTo } = await import("@scriptorium/agents");
     const transitionTo = vi.fn(async () => true);
@@ -757,6 +785,47 @@ describe("board transitions", () => {
     issue = { ...issue, fields: { ...(issue.fields as object), assignee: { accountId: "writer-1", displayName: "Writer" } } };
     (await startScribeJira(config(), vault)).stop();
     expect(assignments).toEqual(["bot-1", "writer-1"]);
+  });
+
+  it("leaves a ticket it never took with the writer who holds it", async () => {
+    // No PRD: it replies and never takes the ticket, so the writer on it keeps it.
+    issue = { ...issue, fields: { ...(issue.fields as object), description: "", assignee: { accountId: "writer-1", displayName: "Writer" } } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.some((comment) => /PRD/.test(comment.body))).toBe(true);
+    expect(assignments).toEqual([]);
+  });
+
+  it("a person who takes the ticket while it drafts keeps it", async () => {
+    vi.mocked(generateText).mockImplementationOnce(async () => {
+      issue = { ...issue, fields: { ...(issue.fields as object), assignee: { accountId: "writer-2", displayName: "Writer Two" } } };
+      return CLEAN_DRAFT;
+    });
+    (await startScribeJira(config(), vault)).stop();
+    expect(assignments).toEqual(["bot-1"]);
+    expect((issue.fields as { assignee?: { accountId: string } }).assignee?.accountId).toBe("writer-2");
+  });
+
+  it("a writer who unassigned themselves isn't handed the ticket again on a later revision", async () => {
+    issue = { ...issue, fields: { ...(issue.fields as object), assignee: { accountId: "writer-1", displayName: "Writer" } } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(assignments).toEqual(["bot-1", "writer-1"]);
+    issue = { ...issue, fields: { ...(issue.fields as object), assignee: null, updated: "2026-08-21T10:00:00.000+0000" } };
+    comments.push(human("h-fb", "make the intro shorter"));
+    (await startScribeJira(config(), vault)).stop();
+    // Taken from nobody, so given back to the reporter.
+    expect(assignments.slice(2)).toEqual(["bot-1", "human-1"]);
+  });
+
+  it("a ticket given back once isn't given to the same person again by a reply that never took it", async () => {
+    issue = { ...issue, fields: { ...(issue.fields as object), assignee: { accountId: "writer-1", displayName: "Writer" } } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(assignments).toEqual(["bot-1", "writer-1"]);
+    // The writer steps off and the PRD goes; asked to draft again, it can only say what's missing.
+    issue = { ...issue, fields: { ...(issue.fields as object), assignee: null, description: "", updated: "2026-08-21T10:00:00.000+0000" } };
+    await fs.rm(path.join(tmpRoot, "state", "drafts"), { recursive: true, force: true });
+    comments.push(human("h-redraft", "draft"));
+    (await startScribeJira(config(), vault)).stop();
+    expect(assignments.slice(2)).not.toContain("writer-1");
   });
 
   it("takes the ticket while drafting and hands it back for review", async () => {

@@ -1,5 +1,5 @@
 import { audit, docSlug } from "@scriptorium/core";
-import { issueStatus, parseCommand, splitAtLastOwnComment, type IssueState, type JiraIssue } from "@scriptorium/jira";
+import { issueStatus, parseCommand, splitAtLastOwnComment, type IssueState, type JiraComment, type JiraIssue } from "@scriptorium/jira";
 import {
   approvesCurrentDraft,
   authorName,
@@ -83,15 +83,24 @@ async function runWake(ctx: Ctx, issue: JiraIssue): Promise<void> {
 }
 
 /** Rebuild what the ledger lost from the evidence that outlives it: the ticket itself and the vault. */
-async function recoverState(ctx: Ctx, issue: JiraIssue): Promise<IssueState> {
+async function recoverState(ctx: Ctx, issue: JiraIssue, settled: JiraComment[]): Promise<IssueState> {
   const key = issue.key;
   const attached = lastDraftAttachment(issue, ctx.botAccountId);
+  // Engaged only where a draft was asked for: the label, a draft of its own on the ticket,
+  // or a person who mentioned it or typed `draft`. Every ticket it had ever commented on
+  // was engaged, so one where it had only answered `help` was drafted on the next comment,
+  // taken from its assignee and moved across the board.
+  const otherAgents = await ctx.otherAgentIds();
+  const asked = settled.some((comment) => {
+    const kind = parseCommand(comment, ctx.botAccountId, { hasDraft: Boolean(attached), otherAgents }).kind;
+    return kind === "wake" || kind === "draft";
+  });
   // The inputs it has already judged. Without this the tail retry re-posts NO_PRD or the
   // same contract questions on a ticket it greeted but could not draft — a duplicate, not
   // a retry. A wake still answers (it forces the draft), and if the PRD actually changed
   // during the downtime the fingerprint differs and the retry happens by itself.
   const patch: Partial<IssueState> = {
-    engaged: true,
+    engaged: Boolean(attached) || autoDrafts(ctx, issue) || asked,
     sourceFingerprint: sourceFingerprint(issue, ctx.state.get(key)?.remoteLinkFingerprint),
   };
 
@@ -108,8 +117,10 @@ async function recoverState(ctx: Ctx, issue: JiraIssue): Promise<IssueState> {
       await ctx.state.saveDraft(key, bytes.toString("utf8"));
       // Not approvable as it stands: an attachment can exist without the comment that showed
       // it (its post failed), and nothing here proves which draft a reviewer read. It is
-      // posted again, and an approval must come after that.
-      patch.draftUnposted = true;
+      // posted again, and an approval must come after that. Not on a ticket it already
+      // published, where "nothing was published" would be false; an approval there is
+      // still held and the draft shown first, by the publish step's own check.
+      if (!patch.publishedPath) patch.draftUnposted = true;
     } catch {
       // The attachment is still proof that a draft exists; runRevise force-drafts when the
       // local copy is missing, so a failed download degrades to a redraft, not to silence.
@@ -142,7 +153,7 @@ async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{
   // still needs answering.
   if (settled.length) {
     await ctx.state.markProcessed(key, settled.map((comment) => comment.id));
-    const known = await recoverState(ctx, issue);
+    const known = await recoverState(ctx, issue, settled);
     console.log(`[scribe] ${key}: adopted after a restart, ${unprocessed.length} comment(s) to catch up on`);
     return { known, handled: false };
   }

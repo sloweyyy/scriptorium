@@ -62,6 +62,31 @@ describe("jira comment commands", () => {
     }
     // Thanks on the next line is still an approval.
     expect(parseCommand(comment("Approve\n\nThanks! 🎉"), "bot-1").kind).toBe("approve-doc");
+    // The objections a stripper deleted along with the tone: what came after "thanks" on the
+    // first line, a dash-led line taken for a sign-off, a panel or quote after it, a "?" or
+    // an emoji read as punctuation, a hedge capitalised where a name goes.
+    for (const body of [
+      "Approved, thanks — but don't publish until legal signs off",
+      "Approve, please fix step 2 first",
+      "Approve\n- not before Friday",
+      "Approve\n-- don't publish until legal signs off",
+      "Approve\n— Hold Until Friday",
+      "Approve\n{panel:bgColor=#fefae6}Don't publish before the 12th{panel}",
+      "Approve\nbq. Hold until legal signs off",
+      "Approve\n\nAll good?",
+      "Approve\n(!)",
+      "Approve\n\n🛑",
+      "Approve 🤔",
+      "Approve\n\nThanks, Not Yet",
+      "Approve\nthanks\nWait",
+    ]) {
+      expect(parseCommand(comment(body), "bot-1").kind, body).toBe("unclear");
+    }
+    expect(parseCommand(comment("approve lesson L-004, thanks but only for admin docs"), "bot-1")).toMatchObject({ kind: "unclear", suggestion: "approve lesson L-004" });
+    // And a friendly approval stays one.
+    for (const body of ["Approve\n\nThanks a lot!", "Approve\nLooks great", "Approve\nThanks for the quick turnaround", "Approve\n:tada:", "Approve (y)", "Approve\n\nThanks,\nPhuc", "Approve\n— Mai Anh", "Approve!!", "approve 👍🏽", "{quote}Draft ready{quote}\napprove"]) {
+      expect(parseCommand(comment(body), "bot-1").kind, body).toBe("approve-doc");
+    }
     expect(parseCommand(comment("approve lesson L-004\n\nthank you"), "bot-1").kind).toBe("approve-lesson");
   });
 
@@ -75,6 +100,7 @@ describe("jira comment commands", () => {
     expect(parseCommand(comment("{code}approve{code}\nwhy does this say approve?"), "bot-1").kind).toBe("feedback");
     expect(parseCommand(comment("{noformat}publish{noformat}"), "bot-1").kind).toBe("feedback");
     expect(parseCommand(comment("bq. approve\nshould this be the command?"), "bot-1").kind).toBe("feedback");
+    expect(parseCommand(comment("{panel:title=What to type}draft{panel}"), "bot-1").kind).not.toBe("draft");
     // A command typed after a quote is still the reviewer's own words.
     expect(parseCommand(comment("{quote}Step 2 is fine{quote}approve"), "bot-1").kind).toBe("approve-doc");
   });

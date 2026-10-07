@@ -95,10 +95,11 @@ function answered(value: string): boolean {
   if (!trimmed) return false;
   // The whole value a placeholder (any case), or a placeholder MARKER in it ("admins (TBD)").
   // Lint's case-insensitive word match read "Todo list reminders" as unanswered.
-  if (/^(todo|tbd|tbc|fixme|xxx|n\/?a|none|unknown|lorem ipsum|\[placeholder\]|\?+|-+|—|…|\.{2,})[.!]?$/i.test(trimmed)) return false;
+  if (/^(todo|tbd|tbc|tba|fixme|xxx|n\/?a|none|unknown|lorem ipsum|\[placeholder\]|\?+|-+|—|…|\.{2,})[.!]?$/i.test(trimmed)) return false;
   // TODO only in capitals ("Todo list reminders" is a name); the others in any case: "tbd
   // (ask PM)" is as unanswered as "TBD".
-  return !(/\bTODO\b/.test(trimmed) || /\b(tbd|tbc|fixme|xxx)\b|\[placeholder\]/i.test(trimmed));
+  // A lowercase todo is one when it reads as a note to self: "todo: confirm tier", "todo - ask PM".
+  return !(/\bTODO\b/.test(trimmed) || /\btodo\s*[:(–—-]/i.test(trimmed) || /\b(tbd|tbc|tba|fixme|xxx)\b|\[placeholder\]/i.test(trimmed));
 }
 
 export function checkContract(prdMarkdown: string): ContractResult {

@@ -891,6 +891,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/lessons.test.ts"],
   },
   {
+    control: "a question in any script gets its own gap key",
+    file: "packages/curator/src/gaps.ts",
+    find: ".replace(/[^\\p{L}\\p{N}]+/gu, \" \")",
+    replace: ".replace(/[^a-z0-9]+/g, \" \")",
+    evals: ["evals/gaps.test.ts"],
+  },
+  {
+    control: "a question with no letters is never keyed by the empty string",
+    file: "packages/curator/src/gaps.ts",
+    find: "  if (words || !question.trim()) return words;",
+    replace: "  return words;",
+    evals: ["evals/gaps.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

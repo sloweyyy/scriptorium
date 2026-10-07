@@ -145,6 +145,37 @@ describe("the same gap, asked twice", () => {
   });
 });
 
+describe("questions in any script", () => {
+  it("a non-Latin question gets its own key, its own gap and its own ticket label; asked again, it is one gap", async () => {
+    const { questionKey } = await import("@scriptorium/curator");
+    const { gapLabel } = await import("@scriptorium/agents");
+    const japanese = "料金プランは?";
+    const russian = "Как экспортировать инциденты?";
+    expect(questionKey(japanese)).not.toBe("");
+    expect(questionKey(russian)).not.toBe(questionKey(japanese));
+    expect(gapLabel(questionKey(russian))).not.toBe(gapLabel(questionKey(japanese)));
+    // Punctuation and case still don't make it a different question.
+    expect(questionKey("КАК экспортировать инциденты")).toBe(questionKey(russian));
+    // A question with no letters at all is keyed by its text, never by "".
+    expect(questionKey("???")).toMatch(/^q-[0-9a-f]{16}$/);
+    expect(questionKey("!!!")).not.toBe(questionKey("???"));
+
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "scriptorium-gapscript-"));
+    const vault = new Vault(root);
+    await vault.ensure();
+    const tickets: string[] = [];
+    const openTicket = async (gap: { key: string }) => (tickets.push(gapLabel(gap.key)), { key: `DOC-${tickets.length}`, url: "https://x" });
+    const auditFile = path.join(root, "audit.jsonl");
+    await fileGapNote(vault, { question: japanese, missing: "pricing", askedBy: "U1", auditFile, openTicket });
+    await fileGapNote(vault, { question: russian, missing: "export", askedBy: "U2", auditFile, openTicket });
+    const again = await fileGapNote(vault, { question: "料金プランは", missing: "pricing", askedBy: "U3", auditFile, openTicket });
+    expect(again.duplicate).toBe(true);
+    expect(await vault.listNotes("_gaps")).toHaveLength(2);
+    expect(new Set(tickets).size).toBe(2);
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5 });
+  });
+});
+
 describe("gap tickets, exactly once", () => {
   /** A Jira that keeps the issues it created, and can lose the response to a create once. */
   function fakeJira() {

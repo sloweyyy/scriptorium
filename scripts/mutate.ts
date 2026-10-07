@@ -851,7 +851,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "an approval older than the lesson proposal approves nothing",
     file: "apps/agents/src/scribe-jira/lessons.ts",
-    find: "    if (!shown.postedAt || (decidedAt && Date.parse(decidedAt) < Date.parse(shown.postedAt))) {",
+    find: "    if (decidedAt && Date.parse(decidedAt) < Date.parse(shown.postedAt)) {",
     replace: "    if (false) {",
     evals: ["evals/jira-board.test.ts"],
   },

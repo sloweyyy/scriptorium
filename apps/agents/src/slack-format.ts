@@ -44,11 +44,29 @@ function outsideCodeSpans(text: string, convert: (chunk: string) => string): str
     .join("");
 }
 
+/**
+ * A link whose label is what it says. `<url|label>` shows only the label, so a model (or a
+ * page it read) could write `[docs.beacon.example](https://evil.example)` and Slack showed a
+ * trusted address over another. When the label looks like an address that isn't the
+ * target's, the target is shown beside it.
+ */
+function slackLink(label: string, url: string): string {
+  const host = (() => {
+    try {
+      return new URL(url.replace(/&amp;/g, "&")).hostname.toLowerCase();
+    } catch {
+      return "";
+    }
+  })();
+  const looksLikeAddress = /(^|[\s(])(https?:\/\/)?[\w-]+(\.[\w-]+)+/i.test(label);
+  return looksLikeAddress && !label.toLowerCase().includes(host) ? `${label} (<${url}>)` : `<${url}|${label}>`;
+}
+
 function convertRun(text: string): string {
   return (
     text
       // Links first: their bracket syntax overlaps with everything below.
-      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "<$2|$1>")
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_match, label: string, url: string) => slackLink(label, url))
       // Headings have no equivalent — bold is the closest thing Slack renders.
       .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
       // Bold before italic, and `__x__` before `_x_`, or the shorter rule eats the longer.
@@ -64,11 +82,20 @@ function convertRun(text: string): string {
 
 /** The whole conversion: fences preserved, code spans preserved, everything else Slack's. */
 export function toSlackMrkdwn(markdown: string): string {
-  return splitFences(markdown.replace(TRAILING_SOURCES, ""))
+  // Escaped first, everywhere: Slack reads `<!channel>`, `<@U123>` and `<url|label>` in any
+  // text it renders. Model answers were posted raw, so an answer (or a page it summarised)
+  // could ping a whole channel, and a catch-up that named people as `<@U…>` pinged them all.
+  return splitFences(escapeSlack(markdown.replace(TRAILING_SOURCES, "")))
     .map((part) => (part.code ? part.text : outsideCodeSpans(part.text, convertRun)))
     .join("")
     .replace(WIKILINK, "`$1`")
     .trim();
+}
+
+/** Slack's three control characters, as entities: what's left of `<` can't open a mention or link. */
+function escapeSlack(text: string): string {
+  // A `>` that starts a line is a block quote, and can't open anything: it stays.
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/^(\s*)&gt;/gm, "$1>");
 }
 
 /** Slack rejects an mrkdwn text object over this. */

@@ -1136,6 +1136,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira.test.ts"],
   },
   {
+    control: "an answer can't ping a channel or a person in Slack",
+    file: "apps/agents/src/slack-format.ts",
+    find: "  return splitFences(escapeSlack(markdown.replace(TRAILING_SOURCES, \"\")))",
+    replace: "  return splitFences(markdown.replace(TRAILING_SOURCES, \"\"))",
+    evals: ["evals/slack-format.test.ts"],
+  },
+  {
+    control: "a link label that looks like another address shows the real target",
+    file: "apps/agents/src/slack-format.ts",
+    find: "  return looksLikeAddress && !label.toLowerCase().includes(host) ? `${label} (<${url}>)` : `<${url}|${label}>`;",
+    replace: "  return `<${url}|${label}>`;",
+    evals: ["evals/slack-format.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

@@ -1325,6 +1325,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate.test.ts"],
   },
   {
+    control: "a comment in a manifest is never read as a scope",
+    file: "apps/agents/src/doctor.ts",
+    find: "matchAll(/^\\s*-\\s*([\\w:.]+)/gm)",
+    replace: "matchAll(/-\\s*([\\w:.]+)/g)",
+    evals: ["evals/manifests.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

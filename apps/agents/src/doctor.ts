@@ -177,7 +177,8 @@ function message(error: unknown): string {
 export async function manifestBotScopes(file: string): Promise<string[]> {
   const text = await fs.readFile(file, "utf8");
   const bot = text.match(/scopes:\s*\n\s*bot:\s*\n((?:\s*(?:-\s*[\w:.]+|#.*)\s*\n)+)/);
-  return bot ? [...(bot[1] as string).matchAll(/-\s*([\w:.]+)/g)].map((match) => match[1] as string) : [];
+  // List items only: a comment line that mentions `scribe-bot.ts` is not a scope.
+  return bot ? [...(bot[1] as string).matchAll(/^\s*-\s*([\w:.]+)/gm)].map((match) => match[1] as string) : [];
 }
 
 export function formatChecks(checks: readonly Check[]): string {

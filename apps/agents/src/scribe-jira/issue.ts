@@ -177,7 +177,12 @@ async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{
   return { known: seeded, handled: false };
 }
 
-export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
+export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> {
+  // Each caller (the poller, a webhook) takes its view of the ticket before the lock. A view
+  // older than what the ledger has already handled is read again: acted on as it was, a
+  // drag to Approved the first caller answered was answered a second time.
+  const recorded = ctx.state.get(snapshot.key)?.lastUpdated;
+  const issue = recorded && Date.parse(snapshot.fields.updated ?? "") < Date.parse(recorded) ? await ctx.client.getIssue(snapshot.key) : snapshot;
   const key = issue.key;
   const status = issueStatus(issue);
   const seen = ctx.state.get(key);

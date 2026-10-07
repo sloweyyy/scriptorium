@@ -12,7 +12,7 @@ import {
 } from "@scriptorium/scribe";
 import { announceDraftForApproval } from "../slack-notify";
 import { handBack, moveTo, say, takeTicket, type Ctx } from "./context";
-import { loadDesignImages, loadSource, seedVault, sourceFingerprint, type PrdSource } from "./source";
+import { loadDesignImages, loadSource, sameSource, seedVault, sourceFingerprint, type PrdSource } from "./source";
 
 /**
  * How long to let an upload settle before drafting from it.
@@ -178,7 +178,7 @@ export async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: bo
   const key = issue.key;
   const known = ctx.state.get(key);
   const fingerprint = sourceFingerprint(issue, known?.remoteLinkFingerprint);
-  if (!options.force && (known?.hasDraft || known?.sourceFingerprint === fingerprint)) return;
+  if (!options.force && (known?.hasDraft || sameSource(known?.sourceFingerprint, issue, known?.remoteLinkFingerprint))) return;
 
   // An upload still in progress is not a PRD yet. The fingerprint is deliberately NOT
   // recorded here, so the next tick — by which time the rest has landed — sees a source it

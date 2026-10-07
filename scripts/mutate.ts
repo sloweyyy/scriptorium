@@ -2032,6 +2032,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "a view taken before another caller's work is read again",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "  const issue = recorded && Date.parse(snapshot.fields.updated ?? \"\") < Date.parse(recorded) ? await ctx.client.getIssue(snapshot.key) : snapshot;",
+    replace: "  const issue = snapshot;",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a fingerprint from before the description was hashed still matches",
+    file: "apps/agents/src/scribe-jira/source.ts",
+    find: " || recorded === lengthOnly;",
+    replace: ";",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

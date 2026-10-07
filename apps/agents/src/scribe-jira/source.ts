@@ -75,6 +75,18 @@ export function lastDraftAttachment(issue: JiraIssue, botAccountId: string): { a
  * agent retries by itself when the PM finally attaches the PRD — and stays quiet when
  * the only thing that changed is its own comment.
  */
+/**
+ * Is this the source it last judged? A fingerprint recorded before the description was
+ * hashed held its length: one of those still matches while nothing else changed, so an
+ * upgrade doesn't repeat every waiting ticket's "no PRD" reply (and hand it back) once.
+ */
+export function sameSource(recorded: string | undefined, issue: JiraIssue, remoteLinks?: string): boolean {
+  if (!recorded) return false;
+  const attachments = (issue.fields.attachment ?? []).map((attachment) => attachment.id).sort();
+  const lengthOnly = `${attachments.join(",")}|${issue.fields.description?.trim().length ?? 0}|${remoteLinks ?? ""}`;
+  return recorded === sourceFingerprint(issue, remoteLinks) || recorded === lengthOnly;
+}
+
 export function sourceFingerprint(issue: JiraIssue, remoteLinks?: string): string {
   const attachments = (issue.fields.attachment ?? []).map((attachment) => attachment.id).sort();
   // The text, not its length: "audience: TBD" answered as "audience: PMs" is the same length,

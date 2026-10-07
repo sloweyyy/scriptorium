@@ -587,6 +587,33 @@ describe("reminders", () => {
     expect(posted[0]?.text).toContain("approved by priya");
   });
 
+  it("an approved reminder waits while an admin has reminders switched off, or its channel is no longer allowed", async () => {
+    const admins = { ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig;
+    const core = await createTeammate(admins, vault, slack as never, "UBOT");
+    const at = new Date(Date.now() + 3_600_000).toISOString();
+    script = { calls: [{ name: "schedule_reminder", input: { channel: "C1", at, text: "Update estimates" } }], reply: "Asked." };
+    await core.onMention({ channel: "C1", ts: "3.0", user: "U1", text: "<@UBOT> remind us in an hour" });
+    await settle(core);
+    const card = posted.find((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION))!;
+    const requestId = JSON.stringify(card.blocks).match(/"value":"([0-9a-f-]{36})"/)?.[1] as string;
+    await core.onApprovalClick(APPROVE_ACTION, { actions: [{ value: requestId }], user: { id: "UPM", username: "priya" }, channel: { id: "C1" }, message: { ts: "9.1", thread_ts: "3.0" } });
+
+    expect(await core.onSlashCommand({ channel: "C1", user: "UADMIN", text: "admin deny schedule_reminder", commandId: "r1" })).toMatch(/is off/);
+    posted.length = 0;
+    await core.checkReminders(new Date(Date.now() + 3_700_000));
+    expect(posted).toEqual([]);
+
+    // Its channel taken off the allow-list: still nothing.
+    await core.onSlashCommand({ channel: "C1", user: "UADMIN", text: "admin allow schedule_reminder", commandId: "r2" });
+    const elsewhere = await createTeammate({ ...admins, teammate: { ...admins.teammate, channels: ["C2"] } } as AppConfig, vault, slack as never, "UBOT");
+    await elsewhere.checkReminders(new Date(Date.now() + 3_700_000));
+    expect(posted.filter((message) => message.channel === "C1")).toEqual([]);
+
+    // Back on, in an allowed channel: it posts.
+    await core.checkReminders(new Date(Date.now() + 3_700_000));
+    expect(posted.filter((message) => message.channel === "C1")).toHaveLength(1);
+  });
+
   it("posts once even when Slack's response to the post is lost", async () => {
     const { reminderTools } = await import("@scriptorium/agents");
     const { FileEffectLedger } = await import("@scriptorium/runtime");

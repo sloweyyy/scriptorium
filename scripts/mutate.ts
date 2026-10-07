@@ -828,6 +828,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/gemini-transport.test.ts"],
   },
   {
+    control: "an approved reminder waits while its tool is off or its channel isn't allowed",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "        if (!remindersOn || !mayPostIn(reminder.channel)) continue;\n",
+    replace: "",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "a reminder's channel is checked against the allow-list when it fires",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "      const mayPostIn = (channel: string) => settings.channels.includes(channel) || (settings.allowDms && channel.startsWith(\"D\"));",
+    replace: "      const mayPostIn = (_channel: string) => true;",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

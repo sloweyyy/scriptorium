@@ -11,7 +11,7 @@ import {
   withdrawnLessons,
 } from "@scriptorium/scribe";
 import { announceDraftForApproval } from "../slack-notify";
-import { assignTo, handBack, moveTo, say, type Ctx } from "./context";
+import { handBack, moveTo, say, takeTicket, type Ctx } from "./context";
 import { loadDesignImages, loadSource, seedVault, sourceFingerprint, type PrdSource } from "./source";
 
 /**
@@ -262,7 +262,7 @@ export async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: bo
   // Working: say so on the board before the slow part, not after — and take the ticket,
   // so the assignee column agrees with the column it sits in.
   await moveTo(ctx, key, ctx.config.jira.inProgressStatus, issueStatus(issue));
-  await assignTo(ctx, key, ctx.botAccountId);
+  await takeTicket(ctx, key, issue);
 
   const withdrawn = await withdrawnLessons(ctx.config.jira.stateDir);
   let result = await draftDoc(ctx.vault, source.markdown, source.images, { withdrawn });
@@ -357,7 +357,7 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[], 
   }
 
   await moveTo(ctx, key, ctx.config.jira.inProgressStatus, issueStatus(issue));
-  await assignTo(ctx, key, ctx.botAccountId);
+  await takeTicket(ctx, key, issue);
 
   // Re-read fresh, never carried over from the first draft — "match the new mockup" is
   // feedback the text alone cannot express. But only when the feedback actually points at

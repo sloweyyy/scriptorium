@@ -702,6 +702,25 @@ describe("board transitions", () => {
     expect(comments.at(-1)?.body).not.toContain("designs read:");
   });
 
+  it("a column a person picks while it drafts stays theirs", async () => {
+    // The PM closes it as Won't Do mid-draft: the agent's In Progress / In Review moves would
+    // pull it back onto the board and into the poller's query.
+    vi.mocked(generateText).mockImplementationOnce(async () => {
+      issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Won't Do" } } };
+      return CLEAN_DRAFT;
+    });
+    const movesBefore = moves.length;
+    (await startScribeJira(config(), vault)).stop();
+    expect(moves.slice(movesBefore)).not.toContain("In Review");
+    expect(status()).toBe("Won't Do");
+  });
+
+  it("hands the ticket back to whoever had it before, not always to its reporter", async () => {
+    issue = { ...issue, fields: { ...(issue.fields as object), assignee: { accountId: "writer-1", displayName: "Writer" } } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(assignments).toEqual(["bot-1", "writer-1"]);
+  });
+
   it("takes the ticket while drafting and hands it back for review", async () => {
     // The assignee column is the fastest thing to read on a board and should answer one
     // question: who is this waiting on? Agent while it works, reporter the moment a

@@ -25,7 +25,7 @@ jobs:
     # The whole set, weekly, takes most of an hour.
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: pnpm/action-setup@v4

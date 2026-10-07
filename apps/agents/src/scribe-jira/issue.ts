@@ -316,7 +316,11 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
       // Only on the first attempt: an automatic retry of the same comment is not a new
       // human asking, and re-reporting the same error every poll is noise.
       const retrying = ctx.state.get(key)?.failing?.commentId === comment.id;
-      await ctx.state.patch(key, retrying ? { engaged: true } : { engaged: true, lastError: undefined });
+      // Only asking for the agent engages it: a mention or `draft`. `help`, a lesson command
+      // or a near-miss approve on an unlabelled ticket used to set it too, and the agent then
+      // drafted the ticket, took it from its assignee and moved it across the board.
+      const engages = command.kind === "wake" || command.kind === "draft";
+      await ctx.state.patch(key, { ...(engages ? { engaged: true } : {}), ...(retrying ? {} : { lastError: undefined }) });
 
       switch (command.kind) {
         case "wake":

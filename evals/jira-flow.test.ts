@@ -295,6 +295,22 @@ describe("mention-only mode", () => {
     expect(comments.filter((comment) => comment.author.accountId === "bot-1")).toHaveLength(0);
   });
 
+  it("`help` on an unlabelled ticket is answered, and engages nothing: no draft, no move, no reassignment", async () => {
+    unlabelled();
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    comments.push(human("h1", "help"));
+    bumpUpdated("2026-08-20T10:15:00.000+0000");
+    (await startScribeJira(settings, vault)).stop();
+    // A second poll, as the tail would draft an "engaged" ticket on any later tick.
+    bumpUpdated("2026-08-20T10:20:00.000+0000");
+    (await startScribeJira(settings, vault)).stop();
+    const replies = comments.filter((comment) => comment.author.accountId === "bot-1");
+    expect(replies).toHaveLength(1);
+    expect(await vault.listNotes("_inbox")).toHaveLength(0);
+    expect(JSON.stringify(replies)).not.toMatch(/Draft ready|What I need from the PRD/);
+  });
+
   it("answers a mention on an unlabelled ticket", async () => {
     unlabelled();
     const settings = config();

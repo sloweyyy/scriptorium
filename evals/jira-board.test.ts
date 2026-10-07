@@ -199,6 +199,8 @@ function stubJira(): void {
     const stored = uploaded.get(url.split("/attachment/content/")[1] ?? "");
     if (stored) return new Response(stored, { status: 200 });
     if (url.includes("/attachment/content/fake-png")) return new Response("%PDF-1.7 not an image", { status: 200 });
+    // A design just under the per-image cap: eight of them overflow one request.
+    if (url.includes("/attachment/content/big-")) return new Response(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(3_600_000)]), { status: 200 });
     if (url.includes("/attachment/content/")) return new Response(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("PNGBYTES")]), { status: 200 });
     if (url.endsWith("/attachments") && method === "POST" && init?.body instanceof FormData) {
       const file = init.body.get("file") as File;
@@ -1061,6 +1063,20 @@ describe("designs the model cannot take", () => {
     expect(draftCall.images).toHaveLength(1);
     const draftComment = comments.find((comment) => comment.body.includes("full-page-4k.png"));
     expect(draftComment?.body).toMatch(/over 3\.8 MB/);
+    expect(comments.some((comment) => comment.body.includes("I hit an error"))).toBe(false);
+  });
+});
+
+describe("designs that fit one request", () => {
+  it("near-cap designs stop at the total one draft can take; the rest are named, and the draft goes ahead", async () => {
+    const big = (n: number) => ({ id: `big-${n}`, filename: `screen-${n}.png`, mimeType: "image/png", size: 3_600_008, created: `2026-08-20T09:0${n}:00.000+0000`, content: `https://example.atlassian.net/rest/api/2/attachment/content/big-${n}` });
+    issue = { ...issue, fields: { ...(issue.fields as object), attachment: [1, 2, 3, 4, 5, 6, 7].map(big) } };
+    (await startScribeJira(config(), vault)).stop();
+    const draftCall = vi.mocked(generateText).mock.calls[0]?.[0] as GenerateOptions;
+    const sent = (draftCall.images ?? []).reduce((sum, image) => sum + Buffer.from(image.base64, "base64").length, 0);
+    expect(sent).toBeLessThanOrEqual(18_000_000);
+    expect(draftCall.images!.length).toBeLessThan(7);
+    expect(comments.some((comment) => comment.body.includes("fill what one draft can take"))).toBe(true);
     expect(comments.some((comment) => comment.body.includes("I hit an error"))).toBe(false);
   });
 });

@@ -143,11 +143,18 @@ export interface PrdSource {
 export const MAX_DESIGN_BYTES = 3_750_000;
 /** Enough for a flow's screens; past this each extra image costs more than it tells. */
 export const MAX_DESIGNS = 8;
+/**
+ * All designs together, raw bytes (about 24 MB once base64'd): every image goes in one
+ * request, and eight just under the per-image cap made a request over the API's limit, so
+ * every draft on the ticket failed, the very thing the per-image cap was added to stop.
+ */
+export const MAX_DESIGN_TOTAL_BYTES = 18_000_000;
 
 export async function loadDesignImages(ctx: Ctx, issue: JiraIssue): Promise<{ images: ImageInput[]; names: string[]; skipped: string[] }> {
   const images: ImageInput[] = [];
   const names: string[] = [];
   const skipped: string[] = [];
+  let total = 0;
   for (const attachment of newestFirst(issue.fields.attachment ?? [])) {
     const mediaType = VISION_TYPES[attachment.mimeType?.toLowerCase() ?? ""];
     if (!mediaType) continue;
@@ -171,6 +178,11 @@ export async function loadDesignImages(ctx: Ctx, issue: JiraIssue): Promise<{ im
       skipped.push(`${attachment.filename} (named as an image, but it isn't one)`);
       continue;
     }
+    if (total + bytes.length > MAX_DESIGN_TOTAL_BYTES) {
+      skipped.push(`${attachment.filename} (the newer designs already fill what one draft can take; attach fewer or smaller ones)`);
+      continue;
+    }
+    total += bytes.length;
     images.push({ mediaType: actual, base64: bytes.toString("base64") });
     names.push(attachment.filename);
   }

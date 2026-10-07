@@ -1150,6 +1150,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/slack-format.test.ts"],
   },
   {
+    control: "approvers aren't nudged about a request whose tool is switched off",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "        if (!paused && nudgeMs > 0 && !switchedOff(request) && now",
+    replace: "        if (!paused && nudgeMs > 0 && now",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "one failing Jira or PR turn doesn't drop the rest of its batch",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "            return await (event.kind === \"github.pull_request\" ? checkPullRequest(key, event) : answerOnJira(key, event));\n          } catch (error) {",
+    replace: "            return await (event.kind === \"github.pull_request\" ? checkPullRequest(key, event) : answerOnJira(key, event));\n          } catch (error) {\n            throw error;",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

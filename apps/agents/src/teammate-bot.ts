@@ -219,8 +219,19 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
           }
           return;
         }
-        if (event.kind === "github.pull_request") return checkPullRequest(key, event);
-        if (event.kind === "jira.mention") return answerOnJira(key, event);
+        // Each event on its own: a Jira or PR turn that throws (a reply Jira refuses, a lookup
+        // that fails) used to end the whole batch, and the events after it, already marked
+        // seen, were never answered. Logged and audited, and the next one runs.
+        if (event.kind === "github.pull_request" || event.kind === "jira.mention") {
+          try {
+            return await (event.kind === "github.pull_request" ? checkPullRequest(key, event) : answerOnJira(key, event));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(`[teammate] ${event.kind} ${event.id} failed: ${message}`);
+            await audit(config.auditFile, { type: "teammate.event.failed", actor: "teammate", key, event: event.id, kind: event.kind, error: message }).catch(() => undefined);
+            return;
+          }
+        }
         const { channel, threadTs, text, ts } = event.payload as { channel: string; threadTs: string; text: string; ts: string };
         // One failing turn is answered and logged; it never drops the rest of the batch —
         // those deliveries are already marked seen, so Slack's redelivery would not bring them back.
@@ -621,7 +632,13 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       const nudgeMs = (settings.approvalNudgeHours ?? 24) * 3_600_000;
       // Paused means it posts nothing new, nudges included. Closing an expired card still
       // happens: it only makes the card stop claiming to be pending.
-      const paused = (await refreshControl()).paused;
+      const control = await refreshControl();
+      const paused = control.paused;
+      // A request whose tool (or a plan step's) an admin has switched off can't be carried
+      // out, and the click would refuse it: approvers aren't pinged to decide it.
+      const allowed = narrowTools(envelope.tools, control);
+      const switchedOff = (request: { tool: string; args?: unknown }) =>
+        [request.tool, ...(request.tool === PLAN_TOOL ? ((request.args as { steps?: Array<{ tool?: unknown }> } | undefined)?.steps ?? []).map((step) => String(step.tool)) : [])].some((tool) => !(tool in allowed));
       // Stored as expired too: a request cancelled outright (privacy erase) still has live buttons.
       const open = (await store.all()).filter((candidate) => candidate.agent === envelope.agent && (candidate.status === "pending" || candidate.status === "expired"));
       for (const request of open) {
@@ -636,7 +653,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
           }).catch(() => undefined);
           continue;
         }
-        if (!paused && nudgeMs > 0 && now.getTime() - Date.parse(request.requestedAt) >= nudgeMs) {
+        if (!paused && nudgeMs > 0 && !switchedOff(request) && now.getTime() - Date.parse(request.requestedAt) >= nudgeMs) {
           const approvers = (envelope.tools[request.tool]?.approvers ?? []).filter((id) => id.startsWith("slack:")).map((id) => `<@${id.slice("slack:".length)}>`);
           if (!approvers.length) continue;
           await once(

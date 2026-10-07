@@ -430,6 +430,24 @@ describe("approvals nobody decides", () => {
   });
 });
 
+describe("nudges respect what admins switched off", () => {
+  it("no approver is pinged about a request whose tool is switched off: the click would refuse it", async () => {
+    const admins = { ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig;
+    const core = await createTeammate(admins, vault, slack as never, "UBOT");
+    script = { calls: [{ name: "memory_save", input: { text: "Release notes go out on Thursdays.", scope: "channel:C1" } }], reply: "Asked." };
+    await core.onMention({ channel: "C1", ts: "3.0", user: "U1", text: "<@UBOT> remember release notes go out on Thursdays" });
+    await settle(core);
+    expect(await core.onSlashCommand({ channel: "C1", user: "UADMIN", text: "admin deny memory_save", commandId: "n1" })).toMatch(/is off/);
+    const count = posted.length;
+    await core.checkApprovals(new Date(Date.now() + 25 * 3_600_000));
+    expect(posted.slice(count).filter((message) => String(message.text).includes("Still waiting"))).toEqual([]);
+    // Switched back on: the nudge goes out.
+    await core.onSlashCommand({ channel: "C1", user: "UADMIN", text: "admin allow memory_save", commandId: "n2" });
+    await core.checkApprovals(new Date(Date.now() + 26 * 3_600_000));
+    expect(posted.slice(count).filter((message) => String(message.text).includes("Still waiting"))).toHaveLength(1);
+  });
+});
+
 describe("approvals nobody decides, while paused or erased", () => {
   const ask = async (core: Awaited<ReturnType<typeof createTeammate>>) => {
     script = { calls: [{ name: "memory_save", input: { text: "Release notes go out on Thursdays.", scope: "channel:C1" } }], reply: "Asked." };
@@ -782,6 +800,31 @@ describe("the Teammate on Jira", () => {
     };
     return { comments, jira: { client: client as never, accountId: "tm-1" } };
   }
+
+  it("one Jira turn that fails doesn't drop the next one queued on the same ticket", async () => {
+    const { comments, jira } = fakeJira();
+    const client = jira.client as unknown as { addComment: (key: string, body: string, options?: { op?: string }) => Promise<unknown> };
+    const add = client.addComment;
+    let calls = 0;
+    client.addComment = async (key, body, options) => {
+      calls += 1;
+      if (calls === 1) await new Promise((resolve) => setTimeout(resolve, 60)); // the first turn is slow: the next two queue as one batch
+      if (calls === 2) throw new Error("Jira 403: the reply's restriction names a role the Teammate isn't in");
+      return add(key, body, options);
+    };
+    const core = await createTeammate(config(), vault, slack as never, "UBOT", jira);
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]." };
+    const mention = (commentId: string, body: string) => ({ issueKey: "DOC-7", commentId, body: `[~accountid:tm-1] ${body}`, authorId: "human-1" });
+    const first = core.onJiraComment(mention("c0", "when do digests go out?"));
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    await core.onJiraComment(mention("c1", "and on weekends?"));
+    await core.onJiraComment(mention("c2", "and on holidays?"));
+    await first;
+    await settle(core);
+    // c1's reply failed; c2, queued behind it in the same batch, is still answered.
+    expect(comments).toHaveLength(2);
+    expect(calls).toBe(3);
+  });
 
   it("a comment edited to add the mention is answered — once, however often it is edited again", async () => {
     const { comments, jira } = fakeJira();

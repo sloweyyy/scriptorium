@@ -39,10 +39,10 @@ be caught.
   <a href="https://scriptorium-teammate.vercel.app/demo/">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="site/demo/poster.png">
-      <img src="site/demo/poster-light.png" width="720" alt="The 80-second demo: a cited answer in Slack, with its sources">
+      <img src="site/demo/poster-light.png" width="720" alt="The 96-second demo: a cited answer in Slack, with its sources">
     </picture>
   </a><br>
-  <sub><a href="https://scriptorium-teammate.vercel.app/demo/">▶ Watch the 80-second demo</a>: cited answers, gaps that become tickets, approvals, and docs that learn with permission.</sub>
+  <sub><a href="https://scriptorium-teammate.vercel.app/demo/">▶ Watch the 96-second demo</a>: cited answers, gaps that become tickets, approvals, and docs that learn with permission.</sub>
 </p>
 
 <p align="center">

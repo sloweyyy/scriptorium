@@ -10,15 +10,24 @@ export interface OrganizeResult {
   note?: string;
 }
 
-function classifyMarkdown(note: Note): "prd" | "docs" | "reference" {
+/**
+ * Where a dropped markdown file goes, or nowhere. docs/ is the folder of human-approved
+ * documentation: a file goes there only when its dropper said `kind: doc`, never as the
+ * fallback for anything unrecognised. Filing unclassified notes into docs/ let any dropped
+ * file read as approved documentation to Curator, and to every answer that cited it.
+ */
+function classifyMarkdown(note: Note): "prd" | "docs" | "reference" | undefined {
   const kind = String(note.frontmatter.kind ?? "").toLowerCase();
   if (kind === "prd") return "prd";
   // Retrieved external material: kept apart from what this team authored.
   if (kind === "reference") return "reference";
   if (kind === "doc" || kind === "docs") return "docs";
   if (/(^|\W)prd(\W|$)/i.test(note.relPath) || /##\s*(requirements|problem)/i.test(note.body)) return "prd";
-  return "docs";
+  return undefined;
 }
+
+/** Provenance only the system writes: a dropped file can't arrive already approved. */
+const SYSTEM_FIELDS = ["approved_by", "approved_at", "approval_sig", "status", "published", "applied_lessons"];
 
 /** File one _inbox item into its place: classify, normalize frontmatter, link, refresh the index note. */
 export async function organizeInboxFile(vault: Vault, relPath: string): Promise<OrganizeResult> {
@@ -40,13 +49,23 @@ export async function organizeInboxFile(vault: Vault, relPath: string): Promise<
   if (extension === ".md") {
     const note = await vault.readNote(relPath);
     const kind = classifyMarkdown(note);
+    if (!kind) {
+      return { action: "skipped", from: relPath, note: "not filed: say what it is with `kind: prd`, `kind: doc` or `kind: reference` in its frontmatter" };
+    }
     const feature = String(note.frontmatter.feature ?? firstHeading(note.body) ?? basename.replace(/\.md$/, ""));
     // An explicit slug wins: retrieved pages carry stable ids and often share a title.
     const slug = typeof note.frontmatter.slug === "string" && note.frontmatter.slug ? slugify(note.frontmatter.slug) : slugify(feature);
     const to = `${kind}/${slug}.md`;
+    // Never over an approved doc: docs/<slug> was published by a human's approval. PRDs and
+    // reference pages are inputs, refreshed by being dropped again (Scribe re-drops a
+    // ticket's PRD on every draft), so they are replaced as before.
+    if (kind === "docs" && (await vault.exists(to))) {
+      return { action: "skipped", from: relPath, note: `not filed: ${to} already exists, and a dropped file never replaces it` };
+    }
     const KINDS = { prd: "prd", docs: "doc", reference: "reference" } as const;
+    const frontmatter = Object.fromEntries(Object.entries(note.frontmatter).filter(([key]) => !SYSTEM_FIELDS.includes(key)));
     await vault.writeNote(to, note.body, {
-      ...note.frontmatter,
+      ...frontmatter,
       kind: KINDS[kind],
       feature,
       filed: new Date().toISOString(),

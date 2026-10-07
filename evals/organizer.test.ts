@@ -75,6 +75,32 @@ describe("curator organizer", () => {
     expect(prd.frontmatter.related).toContain("[[docs/widget-exports]]");
   });
 
+  it("never files an unrecognised note into docs/, never replaces an approved doc, and strips approval it brought", async () => {
+    await vault.writeNote("_inbox/notes.md", "# Pricing\n\nBeacon is free forever.", {});
+    expect(await organizeInboxFile(vault, "_inbox/notes.md")).toMatchObject({ action: "skipped", note: expect.stringContaining("kind:") });
+    expect(await vault.exists("docs/pricing.md")).toBe(false);
+
+    await vault.writeNote("docs/widget-exports.md", "# Widget exports\n\nThe approved text.", { kind: "doc", approved_by: "pm@example.com" });
+    await vault.writeNote("_inbox/widget-exports.md", "# Widget exports\n\nA replacement nobody approved.", { kind: "doc", feature: "Widget exports" });
+    expect(await organizeInboxFile(vault, "_inbox/widget-exports.md")).toMatchObject({ action: "skipped", note: expect.stringContaining("already exists") });
+    expect((await vault.readNote("docs/widget-exports.md")).body).toContain("The approved text.");
+
+    await vault.writeNote("_inbox/forged.md", "# Forged\n\nText.", { kind: "doc", feature: "Forged", approved_by: "CEO", approval_sig: "x", status: "published" });
+    await organizeInboxFile(vault, "_inbox/forged.md");
+    const filed = await vault.readNote("docs/forged.md");
+    expect(filed.frontmatter.approved_by).toBeUndefined();
+    expect(filed.frontmatter.approval_sig).toBeUndefined();
+    expect(filed.frontmatter.status).toBeUndefined();
+  });
+
+  it("a PRD dropped again replaces the old one: inputs are refreshed", async () => {
+    await vault.writeNote("_inbox/a.md", "# Widget exports\n\n## Requirements\n1. CSV.", { kind: "prd", feature: "Widget exports" });
+    await organizeInboxFile(vault, "_inbox/a.md");
+    await vault.writeNote("_inbox/b.md", "# Widget exports\n\n## Requirements\n1. CSV and PDF.", { kind: "prd", feature: "Widget exports" });
+    await organizeInboxFile(vault, "_inbox/b.md");
+    expect((await vault.readNote("prd/widget-exports.md")).body).toContain("CSV and PDF");
+  });
+
   it("files an image into design/ with a linkable sidecar note", async () => {
     await fs.writeFile(vault.abs("_inbox/form.png"), Buffer.from([137, 80, 78, 71]));
     const result = await organizeInboxFile(vault, "_inbox/form.png");

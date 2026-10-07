@@ -4,7 +4,7 @@ export interface LintFinding {
   message: string;
 }
 
-const PLACEHOLDER_PATTERN = /\b(TODO|TBD|FIXME|lorem ipsum|xxx)\b|\[placeholder\]/i;
+export const PLACEHOLDER_PATTERN = /\b(TODO|TBD|FIXME|lorem ipsum|xxx)\b|\[placeholder\]/i;
 const REQUIRED_SECTIONS = ["## Overview", "## Steps"];
 
 // House glossary (Beacon's style guide) — banned term -> preferred term.

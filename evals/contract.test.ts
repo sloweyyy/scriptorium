@@ -33,6 +33,17 @@ describe("input contract", () => {
     expect(result.ok).toBe(false);
     expect(result.missing.map((field) => field.key)).toEqual(["feature"]);
   });
+
+  it("treats a placeholder as unanswered, in front matter or in the body", () => {
+    for (const placeholder of ["TBD", "TODO", "n/a", "?", "...", "—"]) {
+      const result = checkContract(`---\nfeature: Digest emails\naudience: "${placeholder}"\nuser_goal: one email a day\n---\n# X`);
+      expect(result.missing.map((field) => field.key), placeholder).toEqual(["audience"]);
+    }
+    const labeled = checkContract("# Digest emails\n\n**Feature:** Digest emails\n**Audience:** TBD\n**User goal:** one email a day");
+    expect(labeled.missing.map((field) => field.key)).toEqual(["audience"]);
+    // A real answer that mentions nothing of the kind still passes.
+    expect(checkContract("---\nfeature: Digest emails\naudience: workspace admins\nuser_goal: one email a day\n---\n# X").ok).toBe(true);
+  });
 });
 
 describe("contract fields written the way humans write them", () => {

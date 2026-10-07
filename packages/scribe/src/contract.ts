@@ -1,4 +1,5 @@
 import { parseMarkdown, type Frontmatter } from "@scriptorium/core";
+import { PLACEHOLDER_PATTERN } from "./lint";
 
 export interface ContractField {
   key: string;
@@ -84,6 +85,18 @@ export interface ContractResult {
   body: string;
 }
 
+/**
+ * A value that says something. `audience: TBD` is the author saying they haven't decided,
+ * and drafting from it means guessing the audience: the very thing the contract exists to
+ * stop. Lint already bans these words in a draft; the PRD that feeds it can't use them as
+ * an answer either.
+ */
+function answered(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || PLACEHOLDER_PATTERN.test(trimmed)) return false;
+  return !/^(n\/?a|none|unknown|tbc|\?+|-+|—|…|\.{2,})$/i.test(trimmed);
+}
+
 export function checkContract(prdMarkdown: string): ContractResult {
   const { frontmatter, body } = parseMarkdown(prdMarkdown);
 
@@ -93,9 +106,9 @@ export function checkContract(prdMarkdown: string): ContractResult {
   const resolved: Frontmatter = { ...frontmatter };
   const missing = REQUIRED_FIELDS.filter((field) => {
     const declared = resolved[field.key];
-    if (declared !== undefined && declared !== null && String(declared).trim() !== "") return false;
+    if (declared !== undefined && declared !== null && answered(String(declared))) return false;
     const found = findInBody(body, field.key);
-    if (found) {
+    if (found && answered(found)) {
       resolved[field.key] = found;
       return false;
     }

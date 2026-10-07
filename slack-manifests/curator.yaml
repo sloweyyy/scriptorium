@@ -16,15 +16,14 @@ oauth_config:
       # answered, filed as a gap, or failed. Without it the bot still works: the progress
       # message carries the same information, just a couple of seconds later.
       - reactions:write
-      - channels:history
-      - groups:history
-      - im:history
+      # No history scopes: Curator answers from the vault, never from channel history.
 settings:
   event_subscriptions:
     bot_events:
       - app_mention
+  # No buttons or shortcuts: Curator has nothing to click.
   interactivity:
-    is_enabled: true
+    is_enabled: false
   org_deploy_enabled: false
   socket_mode_enabled: true
   token_rotation_enabled: false

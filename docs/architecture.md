@@ -70,6 +70,15 @@ Each invariant is enforced in one place, and an eval fails if it is broken.
 9. **Curator never authors and never drifts with lessons.** `evals/curator-isolation.test.ts`
 10. **Every publish is on the record.** It is a git commit naming the approver, with an
     append-only audit line. `evals/publish-record.test.ts`
+11. **Nothing is drafted from a guess.** A PRD missing its feature, audience or user goal,
+    or holding a placeholder for one, gets questions back. `evals/contract.test.ts`,
+    `evals/jira-flow.test.ts`
+12. **A comment publishes only when it is an approval and nothing else.** Any word past
+    the command and courtesy makes it a question. `evals/jira.test.ts`
+13. **What reaches a site is inert.** Text nobody vouched for is written inert, and every
+    body is made inert again as it leaves for a site: raw HTML escaped, a link that isn't
+    to the web unlinked, Quartz's own HTML-making syntax broken. `evals/inert.test.ts`,
+    `evals/publish.test.ts`
 
 The threat model behind these invariants is in [`security-model.md`](security-model.md).
 To add to the system, see [`extending.md`](extending.md).

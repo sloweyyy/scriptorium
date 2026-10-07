@@ -40,6 +40,7 @@ vi.mock("@scriptorium/core", async (importOriginal) => ({
 
 // Imported after the mock is registered so the pipeline closes over the stub.
 const { startScribeJira } = await import("@scriptorium/agents");
+const { JiraState } = await import("@scriptorium/jira");
 
 interface StubComment {
   id: string;
@@ -241,6 +242,8 @@ beforeEach(async () => {
   changelog = [];
   assignments = [];
   vi.mocked(generateText).mockClear();
+  // A test that fails before putting the stub back must not hand the next one its draft.
+  vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
   board = ["In Progress", "In Review", "Done"];
   issue = {
     id: "1",
@@ -713,6 +716,41 @@ describe("board transitions", () => {
     (await startScribeJira(config(), vault)).stop();
     expect(moves.slice(movesBefore)).not.toContain("In Review");
     expect(status()).toBe("Won't Do");
+  });
+
+  it("a ticket a person put in In Progress before asking for a draft still goes to In Review", async () => {
+    (await startScribeJira(config(), vault)).stop();
+    expect(status()).toBe("In Review");
+    comments.push(human("h-redraft", "draft"));
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "In Progress" }, updated: "2026-08-21T10:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(status()).toBe("In Review");
+  });
+
+  it("a ticket whose column the agent can't place is not moved: it knows nothing, so it moves nothing", async () => {
+    const { moveTo } = await import("@scriptorium/agents");
+    const transitionTo = vi.fn(async () => true);
+    const ctx = {
+      config: { jira: { approvedStatus: "Approved" } },
+      client: { getIssue: async () => ({ fields: { status: { name: "Approved" } } }), transitionTo },
+      state: { get: () => ({}), patch: async () => ({}) },
+    };
+    // No status seen and none recorded (an older ledger): a drag to Approved stays put.
+    await moveTo(ctx as never, "DOC-9", "In Review");
+    expect(transitionTo).not.toHaveBeenCalled();
+  });
+
+  it("a ticket already in the column the agent wanted is recorded there, so its next move goes ahead", async () => {
+    const { moveTo } = await import("@scriptorium/agents");
+    const patches: object[] = [];
+    const ctx = {
+      config: { jira: { approvedStatus: "Approved" } },
+      client: { getIssue: async () => ({ fields: { status: { name: "In Progress" } } }), transitionTo: vi.fn(async () => true) },
+      state: { get: () => ({ lastStatus: "To Do" }), patch: async (_key: string, values: object) => patches.push(values) },
+    };
+    // Seen in To Do; a person had moved it on to In Progress since.
+    await moveTo(ctx as never, "DOC-9", "In Progress", "To Do");
+    expect(patches).toEqual([{ lastStatus: "In Progress" }]);
   });
 
   it("hands the ticket back to whoever had it before, not always to its reporter", async () => {
@@ -1240,6 +1278,101 @@ describe("a crash or an error mid-batch loses nothing and repeats nothing (H4)",
     // The saved revision already has the paste step: asking for it again added it twice.
     expect(prompts.join("\n")).not.toContain("add the paste step");
     expect(comments.filter((comment) => comment.body.includes("Revised draft"))).toHaveLength(1);
+    vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
+  });
+
+  /** Everything lands, then marking the human's comment done fails once (a disk, a restart). */
+  const failMarkingHumanCommentOnce = () => {
+    const original = JiraState.prototype.markProcessed;
+    let failed = false;
+    return vi.spyOn(JiraState.prototype, "markProcessed").mockImplementation(async function (this: never, key: string, ids: string[], settled?: object) {
+      if (!failed && ids.some((id) => !id.startsWith("bot-"))) {
+        failed = true;
+        throw new Error("disk full");
+      }
+      return original.call(this, key, ids, settled as never);
+    });
+  };
+
+  it("a revision whose comment landed, retried before its feedback was marked done, is neither revised again nor said to be posted unseen", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    vi.mocked(generateText).mockImplementation(async () => `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`);
+    // The revision posts and is recorded; then marking its feedback done fails.
+    const mark = failMarkingHumanCommentOnce();
+    try {
+      await tickWith(settings, "add the paste step");
+    } finally {
+      mark.mockRestore();
+    }
+    expect(comments.filter((comment) => comment.body.includes("Revised draft"))).toHaveLength(1);
+    const calls = vi.mocked(generateText).mock.calls.length;
+    vi.mocked(generateText).mockImplementation(async () => `${CLEAN_DRAFT}\n3. Paste the snippet into your page.\n4. Paste it again.`);
+    await tickWith(settings);
+    // The feedback is in the posted revision already: no second revise, nothing reposted.
+    expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
+    expect(comments.filter((comment) => /Revised draft|posted again/.test(comment.body))).toHaveLength(1);
+    await tickWith(settings, "approve");
+    const [doc] = await vault.listNotes("docs");
+    expect((await vault.readNote(doc as string)).body).not.toContain("Paste it again");
+    vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
+  });
+
+  it("a draft written again on a retry is posted, never recorded under the earlier draft's comment", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    vi.mocked(generateText).mockImplementation(async () => `${CLEAN_DRAFT}\n3. First take.`);
+    const mark = failMarkingHumanCommentOnce();
+    try {
+      await tickWith(settings, "draft");
+    } finally {
+      mark.mockRestore();
+    }
+    vi.mocked(generateText).mockImplementation(async () => `${CLEAN_DRAFT}\n3. Second take.`);
+    await tickWith(settings);
+    // Whatever is approved next must be a draft a comment showed.
+    expect(comments.some((comment) => comment.body.includes("Second take"))).toBe(true);
+    await tickWith(settings, "approve");
+    const [doc] = await vault.listNotes("docs");
+    expect((await vault.readNote(doc as string)).body).toContain("Second take");
+    vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
+  });
+
+  it("a revision recorded but not saved is made again from the draft it started from, not from itself", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    vi.mocked(generateText).mockImplementation(async () => `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`);
+    // Recording the revision fails: the draft it made is never saved.
+    const original = JiraState.prototype.patch;
+    let failed = false;
+    const patch = vi.spyOn(JiraState.prototype, "patch").mockImplementation(async function (this: never, key: string, values: object) {
+      if (!failed && "revision" in values) {
+        failed = true;
+        throw new Error("disk full");
+      }
+      return original.call(this, key, values as never);
+    });
+    try {
+      await tickWith(settings, "add the paste step");
+    } finally {
+      patch.mockRestore();
+    }
+    const before = vi.mocked(generateText).mock.calls.length;
+    await tickWith(settings);
+    const retried = vi.mocked(generateText).mock.calls.slice(before).map((call) => (call[0] as GenerateOptions).prompt);
+    expect(retried[0]).toContain("add the paste step");
+    // Revised from the first draft: the step isn't there yet to be added twice.
+    expect(retried[0]).not.toContain("Paste the snippet into your page.");
+  });
+
+  it("a revision posted after a first draft that never landed is not posted a second time", async () => {
+    const settings = config();
+    failNextPostContaining = "Draft ready";
+    (await startScribeJira(settings, vault)).stop();
+    vi.mocked(generateText).mockImplementation(async () => `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`);
+    await tickWith(settings, "add the paste step");
+    expect(comments.filter((comment) => comment.body.includes("Revised draft"))).toHaveLength(1);
+    expect(comments.filter((comment) => comment.body.includes("posted again"))).toHaveLength(0);
     vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
   });
 

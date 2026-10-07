@@ -8,7 +8,7 @@ import { handleIssue, reportFailure } from "./scribe-jira/issue";
 import { runPublish } from "./scribe-jira/publishing";
 import { remoteLinkTicks } from "./scribe-jira/source";
 
-export { approvesCurrentDraft, knownAccounts, mayApproveOnJira, withIssueLock } from "./scribe-jira/context";
+export { approvesCurrentDraft, knownAccounts, mayApproveOnJira, moveTo, withIssueLock } from "./scribe-jira/context";
 export { MAX_DESIGN_BYTES, MAX_DESIGNS, MAX_PRD_BYTES, lastDraftAttachment, sniffImage, newestFirst, prdFrontmatter, safeDesignName, sourceFingerprint } from "./scribe-jira/source";
 export { houseRules } from "./scribe-jira/drafting";
 export { MAX_COMMAND_ATTEMPTS } from "./scribe-jira/issue";

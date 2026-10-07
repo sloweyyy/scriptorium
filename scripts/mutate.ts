@@ -1292,7 +1292,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "the doctor names a Curator that answers nowhere",
     file: "apps/agents/src/doctor.ts",
-    find: "    if (!config.curator.channels?.length) add(",
+    find: "    if (!config.curator.channels?.length && !config.slack?.notifyChannel) add(",
     replace: "    if (false) add(",
     evals: ["evals/curator-slack.test.ts"],
   },
@@ -1379,6 +1379,27 @@ export const MUTANTS: Mutant[] = [
     find: "  return !/\\b(TODO|TBD|FIXME|XXX)\\b|\\[placeholder\\]/.test(trimmed);",
     replace: "  return !/\\b(TODO|TBD|FIXME|XXX)\\b|\\[placeholder\\]/i.test(trimmed);",
     evals: ["evals/contract.test.ts"],
+  },
+  {
+    control: "unset, Curator answers in the notify channel it announces in",
+    file: "apps/agents/src/curator-bot.ts",
+    find: "  return config.slack.notifyChannel ? [config.slack.notifyChannel] : [];",
+    replace: "  return [];",
+    evals: ["evals/curator-slack.test.ts"],
+  },
+  {
+    control: "the publish announcement invites questions only where Curator answers",
+    file: "apps/agents/src/slack-notify.ts",
+    find: "    curatorChannels(config).includes(channel) ? \"Ask me about it",
+    replace: "    true ? \"Ask me about it",
+    evals: ["evals/slack-notify.test.ts"],
+  },
+  {
+    control: "the vault index counts gaps, never lists their questions",
+    file: "packages/curator/src/organizer.ts",
+    find: "    [\"Lessons\", \"_lessons\"],\n  ];",
+    replace: "    [\"Open gaps (listed)\", \"_gaps\"],\n    [\"Lessons\", \"_lessons\"],\n  ];",
+    evals: ["evals/mcp-server.test.ts"],
   },
   {
     control: "a delegation ends by itself",

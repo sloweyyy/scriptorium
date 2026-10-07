@@ -59,8 +59,10 @@ describe("cross-surface loop", () => {
     expect(note.frontmatter.status).toBe("open");
     expect(note.body).toContain("What are the retention limits?");
 
+    // Counted in the index, never named: the gap is someone's question.
     const moc = await vault.readNote("index.md");
-    expect(moc.body).toContain(result.relPath.replace(/\.md$/, ""));
+    expect(moc.body).toContain("1 question the vault couldn't answer");
+    expect(moc.body).not.toContain(result.relPath.replace(/\.md$/, ""));
   });
 });
 

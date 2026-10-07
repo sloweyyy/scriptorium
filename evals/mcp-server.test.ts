@@ -81,6 +81,16 @@ describe("knowledge MCP server", () => {
     expect(text(await client.callTool({ name: "vault_overview", arguments: {} }))).not.toMatch(/_gaps\/|_inbox\//);
   });
 
+  it("a filed gap's question can't be read back through the index either", async () => {
+    const { fileGapNote } = await import("@scriptorium/curator");
+    // Filed the real way, so the index is regenerated too.
+    await fileGapNote(vault, { question: "Can we fire Dana before her SSO access is revoked?", missing: "offboarding", askedBy: "U1", auditFile: path.join(tmpRoot, "audit.jsonl") });
+    const index = text(await client.callTool({ name: "read_note", arguments: { path: "index" } }));
+    expect(index).toContain("Open gaps");
+    expect(index).not.toMatch(/Dana|fire|revoked|_gaps\//);
+    expect(text(await client.callTool({ name: "search_vault", arguments: { query: "Dana SSO revoked" } }))).not.toMatch(/Dana/);
+  });
+
   it("searches the vault as it is now, not as it was when the server started", async () => {
     await vault.writeNote("docs/maintenance.md", "# Maintenance\n\nWindows are announced 24 hours ahead.", { feature: "Maintenance" });
     expect(text(await client.callTool({ name: "search_vault", arguments: { query: "maintenance windows" } }))).toContain("docs/maintenance");

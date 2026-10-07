@@ -92,7 +92,8 @@ export async function runDoctor(config: AppConfig, probes: DoctorProbes = {}): P
 
   // Curator's Slack app
   if (config.curator?.botToken) {
-    if (!config.curator.channels?.length) add("curator", "warn", "CURATOR_SLACK_CHANNELS is empty, so Curator answers nowhere", "list the channel ids it may answer in");
+    if (!config.curator.channels?.length && !config.slack?.notifyChannel) add("curator", "warn", "CURATOR_SLACK_CHANNELS is empty and there is no notify channel, so Curator answers nowhere", "list the channel ids it may answer in");
+    else if (!config.curator.channels?.length) add("curator", "ok", `answers in the notify channel only (${config.slack?.notifyChannel}); list more in CURATOR_SLACK_CHANNELS`);
     else add("curator", "ok", `answers in ${config.curator.channels.length} channel(s)`);
     if (!config.curator.dailyTokens) add("spend", "warn", "Curator has no daily token cap", "set CURATOR_DAILY_TOKENS (per channel)");
   }

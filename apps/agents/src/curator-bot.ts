@@ -153,6 +153,16 @@ export function handoffLines(handoff: string, config: Pick<AppConfig, "jira">): 
  *   internal plane (PRDs, house rules), and an invitation to a channel isn't permission.
  * A refusal in a channel it doesn't serve says where to ask instead.
  */
+/**
+ * Where Curator answers: CURATOR_SLACK_CHANNELS, or, unset, the notify channel. Curator
+ * announces each published doc there with "ask me about it", and answering nowhere after
+ * saying that was the only result of upgrading without setting the list.
+ */
+export function curatorChannels(config: Pick<AppConfig, "curator" | "slack">): string[] {
+  if (config.curator.channels?.length) return config.curator.channels;
+  return config.slack.notifyChannel ? [config.slack.notifyChannel] : [];
+}
+
 export function curatorAdmits(
   event: { channel: string; bot_id?: string; subtype?: string },
   channels: readonly string[] = [],
@@ -181,7 +191,7 @@ export async function startCuratorBot(config: AppConfig, vault: Vault): Promise<
   const budget = new DailyBudget(config.curator.dailyTokens);
 
   app.event("app_mention", async ({ event, say }) => {
-    const admitted = curatorAdmits(event as { channel: string; bot_id?: string; subtype?: string }, config.curator.channels);
+    const admitted = curatorAdmits(event as { channel: string; bot_id?: string; subtype?: string }, curatorChannels(config));
     if (!admitted.ok) {
       if (admitted.reply) await say({ thread_ts: event.thread_ts ?? event.ts, text: admitted.reply });
       return;

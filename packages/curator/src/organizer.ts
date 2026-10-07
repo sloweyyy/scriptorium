@@ -148,12 +148,16 @@ export async function updateMoc(vault: Vault): Promise<void> {
     ["PRDs", "prd"],
     ["Designs", "design"],
     ["Reference (retrieved sources)", "reference", 10],
-    ["Open gaps", "_gaps"],
     ["Lessons", "_lessons"],
   ];
   const lines: string[] = ["# Vault index", "", "_Maintained by Curator._", ""];
   for (const [heading, dir, limit] of sections) {
     lines.push(`## ${heading}`, "", ...(await sectionFor(vault, dir, limit)), "");
   }
+  // Gaps by count only. Each one is someone's question, word for word in its title and in
+  // its file name; listed here, the index (searchable, readable, citable) handed them to
+  // anyone asking, though the gap notes themselves are private to retrieval.
+  const open = (await Promise.all((await vault.listNotes("_gaps")).map(async (relPath) => (await vault.readNote(relPath)).frontmatter.status))).filter((status) => status === "open" || status === "queued").length;
+  lines.push("## Open gaps", "", open ? `- ${open} question${open === 1 ? "" : "s"} the vault couldn't answer, each a doc request in Jira` : "- _none yet_", "");
   await vault.writeNote("index.md", lines.join("\n"));
 }

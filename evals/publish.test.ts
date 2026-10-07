@@ -387,6 +387,23 @@ describe("publish divergence gate", () => {
   });
 });
 
+describe("what leaves for a site is inert", () => {
+  it("after the link transform, which can join text into a tag, and for notes not written inert", async () => {
+    await vault.writeNote("reference/secret.md", "# Secret", { kind: "reference", source_url: "https://example.com/x" });
+    await vault.writeNote("docs/joined.md", "# Joined\n\nPruned: <[[reference/secret]]img src=x onerror=alert(1)>\n\nDropped: <[[gone|img src=x onerror=alert(2)]]>", { kind: "doc" });
+    await vault.writeNote("_lessons/L-001.md", "Never say <img src=x onerror=alert(3)>.", { kind: "lesson", status: "proposed" });
+    for (const target of ["internal", "external"] as const) {
+      const dir = path.join(tmpRoot, `staged-${target}`);
+      const result = await stageVault({ vault, target, destDir: dir });
+      for (const relPath of result.files) {
+        const raw = await fs.readFile(path.join(dir, relPath), "utf8");
+        expect(raw, `${target}: ${relPath}`).not.toMatch(/<img/);
+      }
+      expect(result.files, target).toContain("docs/joined.md");
+    }
+  });
+});
+
 describe("internal target link pruning", () => {
   it("never publishes the title of a note it refuses to publish", async () => {
     // The vault index lists every retrieved reference note by title. The files are

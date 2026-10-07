@@ -40,6 +40,15 @@ describe("inert markdown", () => {
     expect(inertMarkdown(links)).toBe("[p](#unsafe-link-removed) &lt;javascript:alert(2)>\n\n[d]: #unsafe-link-removed");
   });
 
+  it("parses tables as the sites do: a row is split into cells before code spans are read", () => {
+    // CommonMark reads one code span from the first backtick to the last; GFM (Quartz,
+    // Starlight) splits the row at `|` first, and the <img> between them is live.
+    const row = "| a | b |\n|---|---|\n| `x | <img src=x onerror=alert(1)> ` | y |";
+    expect(inertMarkdown(row)).toBe("| a | b |\n|---|---|\n| `x | &lt;img src=x onerror=alert(1)> ` | y |");
+    const kept = "| Key | Example |\n|---|---|\n| `Ctrl` | `<kbd>` |\n\n~~old~~ www.beacon.example and [^1]\n\n[^1]: A note.\n\n- [x] done";
+    expect(inertMarkdown(kept)).toBe(kept);
+  });
+
   it("a target is read as the browser reads it, wherever the title puts its own scheme", () => {
     for (const hostile of [
       '[x](javascript:alert(1) "javascript:")',
@@ -76,12 +85,18 @@ describe("inert markdown", () => {
   it("a shape too costly to parse is kept as code, unparsed", () => {
     // micromark takes seconds over these, on the one process (`- - - …` 25,000 long: 9 s).
     const paragraphWithSteps = `${"*_".repeat(400)}\n` + Array.from({ length: 3 }, () => `2. ${"*_".repeat(400)}`).join("\n");
+    const blocks = (block: string, count: number) => Array.from({ length: count }, () => block).join("\n\n");
     for (const costly of [
-      "x".repeat(100_001),
+      "x".repeat(1_000_001),
       `${"> ".repeat(21)}x`,
       `${"- ".repeat(25_000)}x`,
-      "> x\n\n".repeat(3_001),
+      `${" ".repeat(70)}- x`,
+      "> x\n\n".repeat(3_001), // a blank line ends a quote: each is a new one
+      "- > a\n".repeat(3_001), // a new item closes the quote inside the last one
+      blocks("*_".repeat(450), 60), // 54,000 in all, each paragraph under the limit
+      blocks("[a]".repeat(450), 120),
       `${"*_".repeat(501)}a`,
+      "~~a".repeat(501),
       "[a](".repeat(501),
       paragraphWithSteps, // a `2.` line continues a paragraph, so its count does too
       "````\n" + "- ".repeat(30),
@@ -96,13 +111,23 @@ describe("inert markdown", () => {
     expect(lintDoc(`# T\n\n## Overview\n\n${"- ".repeat(30)}x\n\n## Steps\n\n1. Go.`).map((finding) => finding.code)).toContain("too-costly");
   });
 
+  it("a long page gets fewer passes, so it costs no more to parse than a short one", () => {
+    const chained = "<div>\n[x](javascript:alert(1))\n</div>";
+    expect(inertMarkdown(chained)).toBe("&lt;div>\n[x](#unsafe-link-removed)\n&lt;/div>");
+    const long = `${"word ".repeat(120_000)}\n\n${chained}`;
+    expect(inertMarkdown(long)).toMatch(/^```\n/);
+  });
+
   it("long pages, lists and code samples are not costly shapes", () => {
     const json = "```json\n" + Array.from({ length: 600 }, (_, i) => `[${i}],`).join("\n") + "\n```";
     const psql = "```\n" + "-".repeat(60) + "+" + "-".repeat(60) + "\n```";
     const snake = "```python\n" + Array.from({ length: 800 }, () => "user_id = load_user(org_id)").join("\n") + "\n```";
     const list = Array.from({ length: 1_500 }, (_, i) => `- Item ${i} is **bold** with [a link](https://x.example/${i})`).join("\n");
     const steps = Array.from({ length: 200 }, (_, i) => `${i + 1}. Step **${i}** in [the docs](https://x.example)`).join("\n");
-    for (const normal of [`# Rules\n\n${"-".repeat(120)}\n\n${" ".repeat(120)}\n\nText.`, json, psql, snake, list, steps]) {
+    const index = Array.from({ length: 15_000 }, (_, i) => `- [[docs/feature-${i}|Feature ${i}]]`).join("\n");
+    const quote = Array.from({ length: 5_000 }, (_, i) => `> line ${i}`).join("\n");
+    const wrapped = Array.from({ length: 1_500 }, (_, i) => `- Item ${i} that is long\n  and wraps`).join("\n");
+    for (const normal of [`# Rules\n\n${"-".repeat(120)}\n\n${" ".repeat(120)}\n\nText.`, json, psql, snake, list, steps, index, quote, wrapped]) {
       expect(unsafeMarkup(normal).tooCostly, normal.slice(0, 30)).toBeUndefined();
       expect(inertMarkdown(normal), normal.slice(0, 30)).toBe(normal);
     }

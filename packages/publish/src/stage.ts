@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { parseMarkdown, toPosix, Vault } from "@scriptorium/core";
+import { inertMarkdown, parseMarkdown, toPosix, Vault } from "@scriptorium/core";
 import {
   EXTERNAL_STRIP_KEYS,
   includePatterns,
@@ -79,6 +79,10 @@ export async function stageVault(input: StageInput): Promise<StageResult> {
   const staging = new Vault(destDir);
   const droppedLinks: string[] = [];
 
+  // Every body leaves inert, after its links are transformed. The transform joins text: a
+  // pruned `<[[reference/x]]img onerror=…>` is a tag, and so is the label left by a dropped
+  // `<[[gone|img onerror=…]]>`. And not every note was written inert: a lesson is distilled
+  // from Jira feedback, and the index carries each PRD's `feature` as written.
   for (const relPath of files) {
     const note = await vault.readNote(relPath);
     if (target === "internal") {
@@ -88,12 +92,12 @@ export async function stageVault(input: StageInput): Promise<StageResult> {
       // along onto a published page just because the files themselves were excluded.
       const { body, dropped } = transformBodyLinks(relPath, note.body, included, "prune");
       droppedLinks.push(...dropped);
-      await staging.writeNote(relPath, body, transformFrontmatter(note.frontmatter, [], included));
+      await staging.writeNote(relPath, inertMarkdown(body), transformFrontmatter(note.frontmatter, [], included));
       continue;
     }
     const { body, dropped } = transformBodyLinks(relPath, note.body, included);
     droppedLinks.push(...dropped);
-    await staging.writeNote(relPath, body, transformFrontmatter(note.frontmatter, EXTERNAL_STRIP_KEYS, included));
+    await staging.writeNote(relPath, inertMarkdown(body), transformFrontmatter(note.frontmatter, EXTERNAL_STRIP_KEYS, included));
   }
 
   const staged = await walkFiles(destDir);

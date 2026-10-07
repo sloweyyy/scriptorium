@@ -1,4 +1,5 @@
 import { parse, postprocess, preprocess } from "micromark";
+import { gfm } from "micromark-extension-gfm";
 import { decodeString } from "micromark-util-decode-string";
 
 /**
@@ -10,7 +11,8 @@ import { decodeString } from "micromark-util-decode-string";
  * So an `<img onerror=…>` in a question ran as script on the internal site, and a
  * `[guide](javascript:…)` in a draft went live on both sites.
  *
- * The markdown is parsed the way the sites parse it (CommonMark), and only two things change:
+ * The markdown is parsed the way the sites parse it (CommonMark with GFM: Quartz and Starlight
+ * both split a table row into cells before reading code spans), and only two things change:
  * raw HTML, whose `<` becomes `&lt;` (it still reads as `<`), and a link whose target isn't
  * http(s), mailto or relative, which loses its target. Everything else, code above all
  * (fenced, indented, in a list, a span across a line break), is left byte for byte.
@@ -22,8 +24,10 @@ import { decodeString } from "micromark-util-decode-string";
  */
 export function inertMarkdown(markdown: string): string {
   if (tooCostly(markdown)) return isCode(markdown) ? markdown : asCode(markdown);
+  // Each pass parses all of it, so a long page gets fewer: none costs over MAX_PARSED.
+  const passes = Math.min(MAX_PASSES, Math.floor(MAX_PARSED / Math.max(markdown.length, 1)));
   let text = markdown;
-  for (let pass = 0; pass < MAX_PASSES; pass += 1) {
+  for (let pass = 0; pass < passes; pass += 1) {
     const found = scan(text);
     if (!found.lessThan.size && !found.targets.length) return text;
     text = rewrite(text, found);
@@ -44,12 +48,16 @@ export function unsafeMarkup(markdown: string): { html: string[]; links: string[
 
 /** Real text is inert after a pass or two; a further one only follows a deliberate chain. */
 const MAX_PASSES = 4;
-const MAX_LENGTH = 100_000;
+/** About half a second of parsing: a 1,000,000-character page gets one pass, 250,000 four. */
+const MAX_PARSED = 1_000_000;
 const MAX_DEPTH = 20;
-const MAX_CONTAINERS = 3_000;
+/** A list nested by indentation alone: each line re-reads every level's indent (700 deep: 4 s). */
+const MAX_COLUMN = 64;
+const MAX_OPENED = 3_000;
 const MAX_MARKERS = 1_000;
 /** Fenced code isn't parsed for emphasis or links: a long JSON or SQL sample is normal. */
 const MAX_MARKERS_IN_CODE = 2_000;
+const MAX_MARKERS_IN_ALL = 50_000;
 const REMOVED = "#unsafe-link-removed";
 const SAFE_SCHEMES = new Set(["http", "https", "mailto"]);
 
@@ -68,7 +76,7 @@ interface Found {
  */
 function scan(markdown: string): Found {
   const found: Found = { lessThan: new Set(), targets: [], html: new Set(), links: new Set() };
-  const events = postprocess(parse().document().write(preprocess()(markdown, undefined, true)));
+  const events = postprocess(parse({ extensions: [gfm()] }).document().write(preprocess()(markdown, undefined, true)));
   for (const [kind, token] of events) {
     if (kind !== "enter") continue;
     const start = token.start.offset;
@@ -98,25 +106,41 @@ function scan(markdown: string): Found {
 
 /**
  * Why parsing this would hold the process for seconds, or undefined. micromark parses some
- * shapes in quadratic time: many quotes or lists (`- - - …` 25,000 long on one line took 9 s,
- * and 8,000 one-line quotes 1.6 s), and a paragraph dense with emphasis markers or brackets
- * (`*_*_…`, `[a]([a](…`). Each
- * limit is far past what a person writes; within them the worst text takes well under a
- * second a pass.
+ * shapes in quadratic time, and the limits below bound each one, far past what a person
+ * writes:
+ * - closing a quote or a list costs in proportion to all that came before it: 8,000
+ *   one-line quotes took 1.6 s, and `- - - …` 25,000 long on one line 9 s. Counted: the
+ *   quotes and lists each line opens (a flat list's next item, or a quote's next line, opens
+ *   none);
+ * - a paragraph dense with emphasis markers or brackets (`*_*_…`, `~~a~~a…`, `[a]([a](…`)
+ *   costs their number squared. Counted per paragraph, and in all.
  */
 function tooCostly(markdown: string): string | undefined {
-  if (markdown.length > MAX_LENGTH) return `it is over ${MAX_LENGTH} characters long`;
+  if (markdown.length > MAX_PARSED) return `it is over ${MAX_PARSED} characters long`;
   let fence: { char: string; length: number } | undefined;
-  let containers = 0;
+  let before: string[] = [];
+  let opened = 0;
   let markers = 0;
   let brackets = 0;
+  let allMarkers = 0;
+  let allBrackets = 0;
   for (const line of markdown.split("\n")) {
-    // Quote and list markers, each opening a container: a rule of dashes or a run of spaces opens none.
-    const depth = line.match(/^(?:[ \t]*(?:>|[*+-](?=[ \t\r]|$)|\d{1,9}[.)](?=[ \t\r]|$)))*/)?.[0].match(/>|[*+-]|\d{1,9}[.)]/g)?.length ?? 0;
-    if (depth > MAX_DEPTH) return `a line opens over ${MAX_DEPTH} quotes or lists`;
-    // Closing one costs time in proportion to what came before: 8,000 one-line quotes took 1.6 s.
-    containers += depth;
-    if (containers > MAX_CONTAINERS) return `it has over ${MAX_CONTAINERS} quote and list markers`;
+    const containers = containerMarkers(line);
+    if (containers.length > MAX_DEPTH) return `a line opens over ${MAX_DEPTH} quotes or lists`;
+    if (Number.parseInt(containers.at(-1) ?? "0", 10) > MAX_COLUMN) return `a quote or list is indented over ${MAX_COLUMN} columns`;
+    // Carried on from the line before: a quote whose `>` repeats in place, and a list with a
+    // new item in place (what was inside its last item is closed, so all after it is new).
+    let carried = 0;
+    while (carried < containers.length && containers[carried] === before[carried]) {
+      carried += 1;
+      if (!containers[carried - 1]?.endsWith(">")) break;
+    }
+    opened += containers.length - carried;
+    if (opened > MAX_OPENED) return `it opens over ${MAX_OPENED} quotes or lists`;
+    // A blank line ends every quote; a list goes on past it.
+    if (line.trim()) before = containers;
+    else if (before.some((marker) => marker.endsWith(">"))) before = before.slice(0, before.findIndex((marker) => marker.endsWith(">")));
+
     const [, run, info = ""] = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/) ?? [];
     if (fence) {
       if (run?.startsWith(fence.char) && run.length >= fence.length && !info.trim()) {
@@ -133,16 +157,28 @@ function tooCostly(markdown: string): string | undefined {
       // (Only a bullet or a `1.` can: a `2.` line inside a paragraph continues it.)
       markers = brackets = 0;
     }
-    // An `_` inside a word (snake_case) can't be emphasis, and costs nothing.
-    markers += line.match(/\*|(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])/gu)?.length ?? 0;
-    brackets += line.match(/[[\]]/g)?.length ?? 0;
+    // Emphasis and strikethrough. An `_` inside a word (snake_case) can't be emphasis, and costs nothing.
+    const lineMarkers = line.match(/[*~]|(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])/gu)?.length ?? 0;
+    const lineBrackets = line.match(/[[\]]/g)?.length ?? 0;
+    markers += lineMarkers;
+    brackets += lineBrackets;
+    allMarkers += lineMarkers;
+    allBrackets += lineBrackets;
     // Counted in code too, against a higher limit: a line that opens a fence inside an HTML
     // block opens nothing, and what follows is parsed.
     const limit = fence ? MAX_MARKERS_IN_CODE : MAX_MARKERS;
-    if (markers > limit) return `a paragraph has over ${limit} * and _`;
+    if (markers > limit) return `a paragraph has over ${limit} *, _ and ~`;
     if (brackets > limit) return `a paragraph has over ${limit} brackets`;
+    if (allMarkers > MAX_MARKERS_IN_ALL) return `it has over ${MAX_MARKERS_IN_ALL} *, _ and ~`;
+    if (allBrackets > 2 * MAX_MARKERS_IN_ALL) return `it has over ${2 * MAX_MARKERS_IN_ALL} brackets`;
   }
   return undefined;
+}
+
+/** The quote and list markers a line opens with, each as its column and kind (`4>`, `0-`, `2.`). */
+function containerMarkers(line: string): string[] {
+  const prefix = line.match(/^(?:[ \t]*(?:>|[*+-](?=[ \t\r]|$)|\d{1,9}[.)](?=[ \t\r]|$)))*/)?.[0] ?? "";
+  return Array.from(prefix.matchAll(/>|[*+-]|\d{1,9}([.)])/g), (match) => `${match.index}${match[1] ?? match[0]}`);
 }
 
 function rewrite(markdown: string, { lessThan, targets }: Found): string {

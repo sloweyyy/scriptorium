@@ -56,6 +56,10 @@ describe("jira comment commands", () => {
     for (const body of ["Approved\n\nGreat job, team!", "approve\n\nThanks Phuc!", "Approve\n\ncc [~accountid:557058:abc]", "Approve\n\n— Phuc", "Approve\n!screenshot.png|thumbnail!"]) {
       expect(parseCommand(comment(body), "bot-1").kind, body).toBe("approve-doc");
     }
+    // Any other words after it are a question, however they're phrased: a hedge list missed these.
+    for (const body of ["Approve\n\nNOT approved yet: legal has to sign off first", "Approve\n\nDon’t publish this yet", "Approve\nafter legal signs off", "Approve\nonly if legal agrees", "Approve\nnever mind, I meant reject", "Approve\n\nwith one change: step 2 should say Settings", "Approve\n\nThanks, but not yet", "Approve\nthanks but wait"]) {
+      expect(parseCommand(comment(body), "bot-1").kind, body).toBe("unclear");
+    }
     // Thanks on the next line is still an approval.
     expect(parseCommand(comment("Approve\n\nThanks! 🎉"), "bot-1").kind).toBe("approve-doc");
     expect(parseCommand(comment("approve lesson L-004\n\nthank you"), "bot-1").kind).toBe("approve-lesson");

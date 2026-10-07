@@ -96,6 +96,20 @@ const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve,
 
 // A local-socket flake must fail in seconds, not stall the gate for two minutes.
 describe("ingress", { timeout: 15_000, retry: 1 }, () => {
+  it("a malformed request is answered 400 and the process stays up", async () => {
+    // Unauthenticated, before any token check: these used to exit Node.
+    expect((await fetch(`${base}/runs/%E0`)).status).toBe(404);
+    const { request } = await import("node:http");
+    const raw = (path: string) =>
+      new Promise<number>((resolve, reject) => {
+        const req = request({ host: "127.0.0.1", port: Number(new URL(base).port), path, method: "GET" }, (res) => (res.resume(), resolve(res.statusCode ?? 0)));
+        req.on("error", reject);
+        req.end();
+      });
+    expect(await raw("//")).toBe(400);
+    expect((await fetch(`${base}/health`)).status).toBe(200);
+  });
+
   it("serves health with what is actually configured", async () => {
     const response = await fetch(`${base}/health`);
     expect(response.status).toBe(200);

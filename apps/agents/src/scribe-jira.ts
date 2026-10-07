@@ -8,7 +8,7 @@ import { handleIssue, reportFailure } from "./scribe-jira/issue";
 import { runPublish } from "./scribe-jira/publishing";
 import { remoteLinkTicks } from "./scribe-jira/source";
 
-export { approvesCurrentDraft, knownAccounts, mayApproveOnJira } from "./scribe-jira/context";
+export { approvesCurrentDraft, knownAccounts, mayApproveOnJira, withIssueLock } from "./scribe-jira/context";
 export { MAX_DESIGN_BYTES, MAX_DESIGNS, MAX_PRD_BYTES, lastDraftAttachment, sniffImage, newestFirst, prdFrontmatter, safeDesignName } from "./scribe-jira/source";
 export { houseRules } from "./scribe-jira/drafting";
 export { MAX_COMMAND_ATTEMPTS } from "./scribe-jira/issue";
@@ -89,12 +89,23 @@ export async function startScribeJira(config: AppConfig, vault: Vault, options: 
     }
   };
 
+  /** Is this issue one the poller's own query returns? Asked of Jira, with the same JQL. */
+  const inScope = async (issueKey: string): Promise<boolean> => {
+    if (!/^[A-Z][A-Z0-9_]*-\d+$/.test(issueKey)) return false;
+    const scope = defaultJql(config.jira).replace(/\s+ORDER\s+BY\s+[\s\S]*$/i, "");
+    return (await client.searchIssues(`key = "${issueKey}" AND (${scope})`, 1)).some((found) => found.key === issueKey);
+  };
+
   await tick();
   const timer = setInterval(() => void tick(), config.jira.pollMs);
 
   return {
     stop: () => clearInterval(timer),
     async nudge(issueKey: string): Promise<void> {
+      // Only a ticket the poller would work: the one Jira webhook also carries other
+      // projects' events (the Teammate triages them), and every hook but this one filtered
+      // by project, so a `draft` or `approve` comment anywhere drove Scribe.
+      if (!(await inScope(issueKey))) return;
       // Re-fetch rather than believe the event: the payload is untrusted input, and by the
       // time we look the ticket may have moved on anyway.
       const issue = await client.getIssue(issueKey);

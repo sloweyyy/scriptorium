@@ -63,6 +63,8 @@ let failNextPostContaining: string | undefined;
 let tmpRoot: string;
 let vault: Vault;
 let comments: StubComment[];
+/** Search queries and issue reads, in order. */
+let fetched: string[] = [];
 let issue: Record<string, unknown>;
 /** Every status the agent moved the ticket to, in order. */
 let moves: string[];
@@ -137,7 +139,11 @@ function stubJira(): void {
     const json = (value: unknown): Response => new Response(JSON.stringify(value), { status: 200 });
 
     if (url.includes("/myself")) return json({ accountId: "bot-1", displayName: "Scribe" });
-    if (url.includes("/search")) return json({ issues: [issue] });
+    if (url.includes("/search")) {
+      fetched.push(decodeURIComponent(url.replace(/\+/g, " ")));
+      return json({ issues: [issue] });
+    }
+    if (/\/issue\/[A-Z]+-\d+(\?|$)/.test(url) && method === "GET") fetched.push(url);
     if (url.includes("/comment") && method === "GET") return json({ comments });
     if (url.includes("/comment") && method === "POST") {
       if (failCommentPostIn > 0 && --failCommentPostIn === 0) throw new TypeError("fetch failed: connect ECONNRESET");
@@ -217,6 +223,7 @@ function human(id: string, body: string): StubComment {
 }
 
 beforeEach(async () => {
+  fetched = [];
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "scriptorium-board-"));
   vault = new Vault(path.join(tmpRoot, "vault"));
   await vault.ensure();
@@ -841,6 +848,46 @@ describe("who may approve on Jira", () => {
     run.stop();
     expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(0);
     expect(comments.at(-1)?.body).toContain("couldn't tell who approved");
+  });
+});
+
+describe("webhook nudges", () => {
+  it("a nudge for a ticket the poller wouldn't work does nothing: not read, not handled", async () => {
+    const handle = await startScribeJira(config(), vault);
+    handle.stop();
+    const before = comments.length;
+    fetched = [];
+    await handle.nudge("HR-9");
+    expect(fetched.some((url) => url.includes('key = "HR-9"'))).toBe(true);
+    expect(fetched.some((url) => /\/issue\/HR-9/.test(url))).toBe(false);
+    expect(comments.length).toBe(before);
+  });
+
+  it("concurrent work on one ticket runs one at a time, however the callers interleave", async () => {
+    const { withIssueLock } = await import("@scriptorium/agents");
+    const ctx = { locks: new Map<string, Promise<unknown>>() } as never;
+    let running = 0;
+    let most = 0;
+    const work = (ms: number) => async () => {
+      running += 1;
+      most = Math.max(most, running);
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      running -= 1;
+    };
+    // A tick; two webhook nudges; a nudge from its own reply once the first finished; the
+    // next tick while that one runs. The old lock let the last two run side by side.
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const runs: Array<Promise<unknown>> = [withIssueLock(ctx, "DOC-1", work(40))];
+    await sleep(4);
+    runs.push(withIssueLock(ctx, "DOC-1", work(40)));
+    await sleep(4);
+    runs.push(withIssueLock(ctx, "DOC-1", work(40)));
+    await sleep(80);
+    runs.push(withIssueLock(ctx, "DOC-1", work(120)));
+    await sleep(60);
+    runs.push(withIssueLock(ctx, "DOC-1", work(40)));
+    await Promise.all(runs);
+    expect(most).toBe(1);
   });
 });
 

@@ -60,6 +60,8 @@ let failRevisionPosts = false;
 let afterPost: { text: string; run: () => void } | undefined;
 /** Fail the next comment post containing this text, once. */
 let failNextPostContaining: string | undefined;
+/** A search that returns an older view of the ticket than a fetch does: a second caller's snapshot. */
+let staleSearch: unknown;
 
 let tmpRoot: string;
 let vault: Vault;
@@ -142,7 +144,7 @@ function stubJira(): void {
     if (url.includes("/myself")) return json({ accountId: "bot-1", displayName: "Scribe" });
     if (url.includes("/search")) {
       fetched.push(decodeURIComponent(url.replace(/\+/g, " ")));
-      return json({ issues: [issue] });
+      return json({ issues: [staleSearch ?? issue] });
     }
     if (/\/issue\/[A-Z]+-\d+(\?|$)/.test(url) && method === "GET") fetched.push(url);
     if (url.includes("/comment") && method === "GET") return json({ comments });
@@ -184,7 +186,9 @@ function stubJira(): void {
       const target = board[Number(body.transition.id) - 1];
       if (target) {
         moves.push(target);
-        issue = { ...issue, fields: { ...(issue.fields as object), status: { name: target } } };
+        // A transition changes `updated`, as Jira's does.
+        const updated = new Date(Math.max(Date.parse((issue.fields as { updated: string }).updated) + 1000, Date.now())).toISOString();
+        issue = { ...issue, fields: { ...(issue.fields as object), status: { name: target }, updated } };
         changelog.push({ author: { displayName: "Scribe", accountId: "bot-1" }, items: [{ field: "status", toString: target }] });
       }
       return new Response(null, { status: 204 });
@@ -239,6 +243,7 @@ beforeEach(async () => {
   comments = [];
   failRevisionPosts = false;
   failNextPostContaining = undefined;
+  staleSearch = undefined;
   afterPost = undefined;
   uploaded = new Map();
   moves = [];
@@ -931,6 +936,36 @@ describe("approving a revision nobody has seen", () => {
 
     expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(0);
     expect(comments.at(-1)?.body).toContain("haven't seen yet");
+    expect(status()).toBe("In Review");
+  });
+
+  it("a second caller holding a view from before the first one's work doesn't answer the same drag again", async () => {
+    const settings = config();
+    const stateDir = settings.jira.stateDir;
+    await fs.mkdir(path.join(stateDir, "drafts"), { recursive: true });
+    await fs.writeFile(path.join(stateDir, "drafts", "DOC-1.md"), CLEAN_DRAFT);
+    await fs.writeFile(
+      path.join(stateDir, "jira-state.json"),
+      JSON.stringify({
+        version: 1,
+        issues: {
+          "DOC-1": { hasDraft: true, engaged: true, docSlug: "incident-timeline-embed", sourceFingerprint: "seeded", processedComments: [], lastStatus: "In Review", lastUpdated: "2026-08-20T10:00:00.000+0000" },
+        },
+      }),
+    );
+    comments.push(human("h1", "the intro should name the audience"));
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Done" }, updated: "2026-08-20T15:00:00.000+0000" } };
+    changelog = [{ author: { displayName: "Reviewer", accountId: "human-1" }, items: [{ field: "status", toString: "Done" }] }];
+    // The poller and the webhook each take a view of the drag before either has the lock.
+    const view = issue;
+    (await startScribeJira(settings, vault)).stop();
+    expect(comments.at(-1)?.body).toContain("haven't seen yet");
+    expect(status()).toBe("In Review");
+    const answered = comments.length;
+    // The second caller, with the view from before the first one's work.
+    staleSearch = view;
+    (await startScribeJira(settings, vault)).stop();
+    expect(comments.length).toBe(answered);
     expect(status()).toBe("In Review");
   });
 });

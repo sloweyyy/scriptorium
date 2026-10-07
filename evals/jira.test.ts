@@ -12,7 +12,7 @@ import {
   splitAtLastOwnComment,
   type JiraComment,
 } from "@scriptorium/jira";
-import { newestFirst, prdFrontmatter, safeDesignName, sourceFingerprint } from "@scriptorium/agents";
+import { newestFirst, prdFrontmatter, safeDesignName, sameSource, sourceFingerprint } from "@scriptorium/agents";
 
 function comment(body: string, accountId = "human-1", id = "1"): JiraComment {
   return { id, body, created: new Date().toISOString(), author: { accountId, displayName: "Reviewer" } };
@@ -423,6 +423,15 @@ describe("what the ticket offered last time", () => {
     // A PM answers the contract's question in place: same length, different words.
     expect(sourceFingerprint(issue("audience: TBD"))).not.toBe(sourceFingerprint(issue("audience: PMs")));
     expect(sourceFingerprint(issue("audience: PMs "))).toBe(sourceFingerprint(issue("audience: PMs")));
+  });
+
+  it("one recorded before the description was hashed still matches a source that hasn't changed", () => {
+    const issue = (description: string) => ({ key: "DOC-1", fields: { summary: "S", description, attachment: [] } }) as never;
+    // The length form ("ids|13|links"): an upgrade must not repeat every waiting ticket's reply.
+    expect(sameSource("|13|", issue("audience: PMs"))).toBe(true);
+    expect(sameSource("|14|", issue("audience: PMs"))).toBe(false);
+    expect(sameSource(sourceFingerprint(issue("audience: PMs")), issue("audience: PMs"))).toBe(true);
+    expect(sameSource(undefined, issue("audience: PMs"))).toBe(false);
   });
 });
 

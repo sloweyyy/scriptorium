@@ -28,9 +28,10 @@ export function inertMarkdown(markdown: string): string {
   const passes = Math.min(MAX_PASSES, Math.floor(MAX_PARSED / Math.max(markdown.length, 1)));
   let text = markdown;
   for (let pass = 0; pass < passes; pass += 1) {
-    const found = scan(text);
-    if (!found.lessThan.size && !found.targets.length) return text;
-    text = rewrite(text, found);
+    const escaped = escapeTablePipes(text);
+    const found = scan(escaped);
+    if (escaped === text && !found.lessThan.size && !found.targets.length && !found.breaks.size) return text;
+    text = rewrite(escaped, found);
   }
   return asCode(markdown);
 }
@@ -61,47 +62,148 @@ const MAX_MARKERS_IN_ALL = 50_000;
 const REMOVED = "#unsafe-link-removed";
 const SAFE_SCHEMES = new Set(["http", "https", "mailto"]);
 
+const ZERO_WIDTH = "\u200B";
+
 interface Found {
   /** Offsets of every `<` that opens raw HTML or an autolink to a non-web target. */
   lessThan: Set<number>;
-  /** Source spans of link targets that aren't to the web, in order. */
-  targets: Array<{ start: number; end: number }>;
+  /** Source spans to replace: link targets that aren't to the web, a mermaid block's language. */
+  targets: Array<{ start: number; end: number; text: string }>;
+  /** Offsets to put a zero-width space before, so Quartz doesn't read the syntax there. */
+  breaks: Set<number>;
   html: Set<string>;
   links: Set<string>;
 }
+
+/*
+ * The internal site is Quartz, and its Obsidian-flavoured plugin turns some text back into
+ * HTML after the markdown is parsed, on defaults (quartz/plugins/transformers/ofm.ts, v4):
+ * - `==text==` becomes `<span class="text-highlight">${text}</span>` from the DECODED text,
+ *   so `==&lt;script>…==`, which inert wrote itself, ran as script;
+ * - `![[note|alias]]` puts the alias in `data-embed-alias="${alias}"`, and a broken link
+ *   puts it in `<a>${alias}</a>`: a `"` or `<` in it is markup;
+ * - an image whose URL ends `.mp4` becomes `<video src="${url}">`: a `"` in the URL is markup;
+ * - before parsing, `%%…%%` is cut from the raw text (inside code too), which can join what
+ *   is left into a tag, and `[[https://…|a]]` is rewritten into a markdown link nobody parsed;
+ * - inside a table, a wikilink's `|` is escaped before parsing, which joins two cells;
+ * - mermaid runs with `securityLevel: "loose"`: `click … href "javascript:…"` and `call`.
+ * Each is neutralised here, on every page, so a note reads the same in the vault and on
+ * both sites (a lesson's approval is signed over its text).
+ */
+const QUARTZ_HIGHLIGHT = /==([^=]+)==/g;
+const QUARTZ_WIKILINK = /!?\[\[([^\[\]\|\#\\]+)?(#+[^\[\]\|\#\\]+)?(\\?\|[^\[\]\#]*)?\]\]/g;
+const QUARTZ_TABLE = /^\|([^\n])+\|\n(\|)( ?:?-{3,}:? ?\|)+\n(\|([^\n])+\|\n?)+/gm;
+const QUARTZ_TABLE_WIKILINK = /(!?\[\[[^\]]*?\]\]|\[\^[^\]]*?\])/g;
+/** Mermaid that can act on a click: Quartz runs it with `securityLevel: "loose"`. */
+const MERMAID_ACTIONS = /\b(?:click|call|href|links?)\b|javascript\s*:/i;
+/** Tokens whose text Quartz doesn't read as a note's text: a URL, code, raw HTML. */
+const NOT_TEXT = new Set(["resource", "definition", "codeText", "codeFenced", "codeIndented", "htmlFlow", "htmlText", "autolink", "literalAutolink", "literalAutolinkEmail", "literalAutolinkHttp", "literalAutolinkWww"]);
+/** Where one text node ends and the next begins, give or take: a block, a table cell. */
+const TEXT_ENDS = new Set(["paragraph", "atxHeading", "setextHeading", "tableData", "tableHeader", "tableRow"]);
 
 /**
  * One parse, read as micromark's flat event list: no recursion, however deep the nesting,
  * and the exact source span of every link target, whatever the title says.
  */
 function scan(markdown: string): Found {
-  const found: Found = { lessThan: new Set(), targets: [], html: new Set(), links: new Set() };
+  const found: Found = { lessThan: new Set(), targets: [], breaks: new Set(), html: new Set(), links: new Set() };
   const events = postprocess(parse({ extensions: [gfm()] }).document().write(preprocess()(markdown, undefined, true)));
+  // micromark skips a leading byte-order mark and counts from after it: every offset was one
+  // short, and `[x](javascript:…)` was read from its `(`, which has no scheme.
+  const shift = markdown.charCodeAt(0) === 0xfeff ? 1 : 0;
+  let run = { text: "", at: [] as number[] };
+  const endRun = (): void => {
+    quartzText(run, found);
+    run = { text: "", at: [] };
+  };
+  let notText = 0;
+  let mermaid: { info?: { start: number; end: number }; code: string } | undefined;
   for (const [kind, token] of events) {
+    const start = token.start.offset + shift;
+    const end = token.end.offset + shift;
+    if (TEXT_ENDS.has(token.type)) endRun();
+    if (NOT_TEXT.has(token.type)) notText += kind === "enter" ? 1 : -1;
+    if (token.type === "codeFenced") {
+      if (kind === "enter") mermaid = { code: "" };
+      else {
+        if (mermaid?.info && MERMAID_ACTIONS.test(mermaid.code)) found.targets.push({ ...mermaid.info, text: "text" });
+        mermaid = undefined;
+      }
+    }
     if (kind !== "enter") continue;
-    const start = token.start.offset;
-    const end = token.end.offset;
     const source = markdown.slice(start, end);
-    if (token.type === "htmlFlow" || token.type === "htmlText") {
+    if (token.type === "codeFencedFenceInfo" && mermaid && !mermaid.info && /^mermaid$/i.test(source.trim())) mermaid.info = { start, end };
+    else if (token.type === "codeFlowValue" && mermaid?.info) mermaid.code += `${source}\n`;
+    else if (token.type === "htmlFlow" || token.type === "htmlText") {
       for (let index = start; index < end; index += 1) if (markdown[index] === "<") found.lessThan.add(index);
       for (const match of source.matchAll(/<(!--|\/?[A-Za-z][\w-]*)/g)) found.html.add(`<${match[1]}`);
     } else if (token.type === "resourceDestinationString" || token.type === "definitionDestinationString") {
       // The target as the browser gets it: `java&#115;cript:` and `javascript\:` are `javascript:`.
-      const scheme = unsafeScheme(decodeString(source));
-      if (scheme) {
-        found.targets.push({ start, end });
-        found.links.add(scheme);
+      const url = decodeString(source);
+      const scheme = unsafeScheme(url);
+      // And as Quartz writes it into an attribute (`<video src="${url}">`): a quote ends it.
+      const quoted = /["'<>`]/.test(url);
+      if (scheme || quoted) {
+        found.targets.push({ start, end, text: REMOVED });
+        found.links.add(scheme ? `${scheme}:` : "a URL holding a quote or angle bracket");
       }
     } else if (token.type === "autolinkProtocol") {
       // `<javascript:…>` becomes text, as written.
       const scheme = unsafeScheme(source);
       if (scheme) {
         found.lessThan.add(start - 1);
-        found.links.add(scheme);
+        found.links.add(`${scheme}:`);
       }
+    } else if (!notText && token.type === "data") {
+      for (let index = 0; index < source.length; index += 1) {
+        run.text += source[index];
+        run.at.push(start + index);
+      }
+    } else if (!notText && (token.type === "characterEscape" || token.type === "characterReference")) {
+      // One character of text, decoded, at the escape's own place.
+      for (const char of decodeString(source)) {
+        run.text += char;
+        run.at.push(start);
+      }
+    } else if (!notText && token.type === "lineEnding") {
+      run.text += "\n";
+      run.at.push(start);
     }
   }
+  endRun();
+  quartzSource(markdown, found);
   return found;
+}
+
+/** What Quartz finds in one text node's decoded text, and would write out as HTML. */
+function quartzText(run: { text: string; at: number[] }, found: Found): void {
+  for (const match of run.text.matchAll(QUARTZ_HIGHLIGHT)) {
+    const second = run.at[match.index + 1];
+    if (match[1]?.includes("<") && second !== undefined) found.breaks.add(second);
+  }
+  for (const match of run.text.matchAll(QUARTZ_WIKILINK)) {
+    const second = run.at[match.index + (match[0].startsWith("!") ? 2 : 1)];
+    if (/["<>]/.test(match[0]) && second !== undefined) found.breaks.add(second);
+  }
+}
+
+/** What Quartz rewrites in the raw text before parsing it, code blocks included. */
+function quartzSource(markdown: string, found: Found): void {
+  if (/%%[\s\S]*?%%/.test(markdown)) {
+    for (let index = markdown.indexOf("%%"); index >= 0; index = markdown.indexOf("%%", index + 1)) found.breaks.add(index + 1);
+  }
+  for (const match of markdown.matchAll(QUARTZ_WIKILINK)) {
+    if (/^https?:\/\//i.test(match[1] ?? "")) found.breaks.add(match.index + (match[0].startsWith("!") ? 2 : 1));
+  }
+}
+
+/**
+ * A wikilink's `|` inside a table, escaped as Quartz escapes it before parsing (it joins the
+ * cells either side): then this parse and Quartz's read the same row. Idempotent.
+ */
+function escapeTablePipes(markdown: string): string {
+  if (!markdown.includes("[")) return markdown;
+  return markdown.replace(QUARTZ_TABLE, (table) => table.replace(QUARTZ_TABLE_WIKILINK, (link) => link.replace(/((^|[^\\])(\\\\)*)\|/g, "$1\\|")));
 }
 
 /**
@@ -181,17 +283,19 @@ function containerMarkers(line: string): string[] {
   return Array.from(prefix.matchAll(/>|[*+-]|\d{1,9}([.)])/g), (match) => `${match.index}${match[1] ?? match[0]}`);
 }
 
-function rewrite(markdown: string, { lessThan, targets }: Found): string {
+function rewrite(markdown: string, { lessThan, targets, breaks }: Found): string {
+  const ordered = [...targets].sort((a, b) => a.start - b.start);
   let out = "";
   let at = 0;
   for (let index = 0; index < markdown.length; ) {
-    const target = targets[at];
+    const target = ordered[at];
     if (target && target.start === index) {
-      out += REMOVED;
+      out += target.text;
       index = target.end;
       at += 1;
       continue;
     }
+    if (breaks.has(index)) out += ZERO_WIDTH;
     out += lessThan.has(index) ? "&lt;" : markdown[index];
     index += 1;
   }

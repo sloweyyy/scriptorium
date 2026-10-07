@@ -47,7 +47,7 @@ export function lintDoc(markdown: string): LintFinding[] {
     findings.push({ code: "raw-html", severity: "error", message: `Raw HTML isn't allowed in a doc: ${unsafe.html.join(", ")}. Write it as markdown.` });
   }
   if (unsafe.links.length) {
-    findings.push({ code: "unsafe-link", severity: "error", message: `Links must go to http(s) or mailto, not ${unsafe.links.map((scheme) => `${scheme}:`).join(", ")}.` });
+    findings.push({ code: "unsafe-link", severity: "error", message: `Links must go to http(s) or mailto, with no quotes or angle brackets in the URL. Found: ${unsafe.links.join(", ")}.` });
   }
   if (unsafe.tooCostly) {
     findings.push({ code: "too-costly", severity: "error", message: `This doc would be published as a code block: ${unsafe.tooCostly}.` });

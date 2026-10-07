@@ -244,7 +244,16 @@ export interface AppConfig {
   auditFile: string;
   port: number;
   scribe: SlackAppTokens;
-  curator: SlackAppTokens;
+  curator: SlackAppTokens & {
+    /**
+     * Channel ids Curator answers in. Empty: nowhere. It reads prd/** and _lessons/**, the
+     * internal plane, so being invited to a channel (a guest or Slack Connect one) is not
+     * reason enough to quote them there.
+     */
+    channels?: string[];
+    /** Model tokens per channel per UTC day. Unset: unlimited (the doctor says so). */
+    dailyTokens?: number;
+  };
   teammate: TeammateSettings;
   jira: JiraSettings;
   docsRepo: DocsRepoSettings;
@@ -334,6 +343,8 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
     curator: {
       botToken: env("CURATOR_SLACK_BOT_TOKEN"),
       appToken: env("CURATOR_SLACK_APP_TOKEN"),
+      channels: list(env("CURATOR_SLACK_CHANNELS")),
+      dailyTokens: envOptionalNumber("CURATOR_DAILY_TOKENS"),
     },
     signingKey: env("SCRIPTORIUM_SIGNING_KEY"),
     teammate: {

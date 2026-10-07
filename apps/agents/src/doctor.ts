@@ -90,6 +90,13 @@ export async function runDoctor(config: AppConfig, probes: DoctorProbes = {}): P
   // Spend
   if (!teammate.dailyTokens && !teammate.dailyTokensTotal) add("spend", "warn", "no daily token cap", "set TEAMMATE_DAILY_TOKENS (per channel) and TEAMMATE_DAILY_TOKENS_TOTAL");
 
+  // Curator's Slack app
+  if (config.curator?.botToken) {
+    if (!config.curator.channels?.length) add("curator", "warn", "CURATOR_SLACK_CHANNELS is empty, so Curator answers nowhere", "list the channel ids it may answer in");
+    else add("curator", "ok", `answers in ${config.curator.channels.length} channel(s)`);
+    if (!config.curator.dailyTokens) add("spend", "warn", "Curator has no daily token cap", "set CURATOR_DAILY_TOKENS (per channel)");
+  }
+
   // Slack
   if (teammate.botToken && probes.slackIdentity) {
     try {

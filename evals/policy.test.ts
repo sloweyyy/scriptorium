@@ -310,6 +310,35 @@ describe("approvals and failures", () => {
     expect(b.request.requestedBy).toBe("u2");
   });
 
+  it("an approval is spent only by its asker, in its own conversation", async () => {
+    const store = new MemoryApprovalStore();
+    const asked = await runUnderPolicy(envelope, publish, DRAFT, deps(store, { key: "slack:thread:C1/1.0", requestedBy: "u1" }));
+    if (asked.kind !== "pending") throw new Error("expected pending");
+    await decideApproval(store, envelope, asked.request.id, "approved", { accountId: "pm-1" });
+    // Someone else asking for the same args, or the asker in another thread: a new request each.
+    expect((await runUnderPolicy(envelope, publish, DRAFT, deps(store, { key: "slack:thread:C1/1.0", requestedBy: "u2" }))).kind).toBe("pending");
+    expect((await runUnderPolicy(envelope, publish, DRAFT, deps(store, { key: "slack:thread:C9/9.0", requestedBy: "u1" }))).kind).toBe("pending");
+    expect(runs).toHaveLength(0);
+    expect((await runUnderPolicy(envelope, publish, DRAFT, deps(store, { key: "slack:thread:C1/1.0", requestedBy: "u1" }))).kind).toBe("ran");
+  });
+
+  it("an approval a failure handed back runs again only on an approver's Retry", async () => {
+    const store = new MemoryApprovalStore();
+    let fail = true;
+    const flaky: ToolSpec = { ...publish, run: async (input) => { if (fail) throw new Error("Jira 500"); runs.push(input); return "published"; } };
+    const asked = await runUnderPolicy(envelope, flaky, DRAFT, deps(store));
+    if (asked.kind !== "pending") throw new Error("expected pending");
+    await decideApproval(store, envelope, asked.request.id, "approved", { accountId: "pm-1" });
+    await expect(runUnderPolicy(envelope, flaky, DRAFT, deps(store))).rejects.toThrow("Jira 500");
+    fail = false;
+    // The asker mentioning the bot again is not a Retry: no run, a fresh request instead.
+    expect((await runUnderPolicy(envelope, flaky, DRAFT, deps(store))).kind).toBe("pending");
+    expect(runs).toHaveLength(0);
+    // Retry carries out THAT approval.
+    expect((await executeApproved(envelope, [flaky], asked.request.id, deps(store))).kind).toBe("ran");
+    expect(runs).toHaveLength(1);
+  });
+
   it("carrying out an approval never files a new request", async () => {
     const store = new MemoryApprovalStore();
     const pending = await runUnderPolicy(envelope, publish, DRAFT, deps(store));

@@ -793,6 +793,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/grounding.test.ts"],
   },
   {
+    control: "an approval is spent only by its asker, in its own conversation",
+    file: "packages/policy/src/approvals.ts",
+    find: "            request.key === input.key && request.requestedBy === input.requestedBy && !request.restored),",
+    replace: "            !request.restored),",
+    evals: ["evals/policy.test.ts"],
+  },
+  {
+    control: "an approval a failure handed back runs again only on an approver's Retry",
+    file: "packages/policy/src/approvals.ts",
+    find: "{ ...current, status: \"approved\", restored: true }",
+    replace: "{ ...current, status: \"approved\" }",
+    evals: ["evals/policy.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

@@ -58,7 +58,7 @@ export async function runUnderPolicy(envelope: Envelope, tool: ToolSpec, input: 
     return { kind: "ran", result };
   }
 
-  const approval = await consumeApproval(deps.store, { agent: envelope.agent, tool: tool.name, args: input, requestId: deps.approvalId });
+  const approval = await consumeApproval(deps.store, { agent: envelope.agent, tool: tool.name, args: input, requestId: deps.approvalId, key: deps.key, requestedBy: deps.requestedBy });
   if (approval) {
     let result: string;
     try {

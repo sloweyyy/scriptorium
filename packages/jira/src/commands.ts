@@ -68,6 +68,9 @@ export function plainText(body: string): string {
 export function withoutQuotedBlocks(body: string): string {
   return body
     .replace(/\{quote\}[\s\S]*?(\{quote\}|$)/gi, "")
+    // A panel is a quote with a frame: "{panel}approve{panel} is what you told me to type,
+    // but…" is about the command too.
+    .replace(/\{panel[^}]*\}[\s\S]*?(\{panel\}|$)/gi, "")
     .replace(/\{code[^}]*\}[\s\S]*?(\{code\}|$)/gi, "")
     .replace(/\{noformat[^}]*\}[\s\S]*?(\{noformat\}|$)/gi, "")
     .replace(/^\s*bq\.\s.*$/gim, "");
@@ -85,6 +88,19 @@ function commandHead(text: string): string {
     .replace(/[\s,;:—-]+(thanks|thank you|thx|ty|please|pls)\b.*$/, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** Words after the first line other than courtesy, emoji and punctuation. */
+function saysMore(text: string): boolean {
+  return text
+    .split("\n")
+    .slice(1)
+    .join(" ")
+    .toLowerCase()
+    .replace(/\p{Extended_Pictographic}|\uFE0F/gu, "")
+    .replace(/\b(thanks|thank you|thx|ty|cheers|please|pls|great work|nice work|good job)\b/g, "")
+    .replace(/[\s.,;:!?—–*_()-]+/g, "")
+    .length > 0;
 }
 
 /** Starts the way an approval does. Not a match — a reason to ask instead of acting. */
@@ -156,7 +172,16 @@ export function parseCommand(comment: JiraComment, botAccountId?: string, contex
   // A mention on its own strips to nothing: that is a wake, not an empty comment.
   if (!text) return mentioned ? { kind: "wake" } : { kind: "ignore", reason: "empty" };
 
-  const head = commandHead(plainText(withoutQuotedBlocks(body)));
+  const own = plainText(withoutQuotedBlocks(body));
+  const head = commandHead(own);
+
+  // An approval is the whole comment. Only the first line was read, so "Approve\n\nWait,
+  // not yet: legal hasn't signed off" published. Anything said after it besides thanks
+  // makes it a question, never an approval in either direction.
+  if (/^(approve|approved|publish|accept)\b/.test(head) && saysMore(own)) {
+    const id = lessonId(head);
+    return { kind: "unclear", suggestion: id ? `approve lesson ${id}` : "approve" };
+  }
 
   if (/^(approve|accept)\s+lesson\b/.test(head)) return { kind: "approve-lesson", id: lessonId(head) };
   if (/^(reject|decline|discard)\s+lesson\b/.test(head)) return { kind: "reject-lesson", id: lessonId(head) };

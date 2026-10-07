@@ -1122,6 +1122,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "an approval followed by more words is a question, not an approval",
+    file: "packages/jira/src/commands.ts",
+    find: "  if (/^(approve|approved|publish|accept)\\b/.test(head) && saysMore(own)) {",
+    replace: "  if (false) {",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "an approval inside a panel is a quote, not a command",
+    file: "packages/jira/src/commands.ts",
+    find: "    .replace(/\\{panel[^}]*\\}[\\s\\S]*?(\\{panel\\}|$)/gi, \"\")\n",
+    replace: "",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",
@@ -1175,8 +1189,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a quoted `approve` is not an approval",
     file: "packages/jira/src/commands.ts",
-    find: "const head = commandHead(plainText(withoutQuotedBlocks(body)));",
-    replace: "const head = commandHead(text);",
+    find: "  const own = plainText(withoutQuotedBlocks(body));",
+    replace: "  const own = text;",
     evals: ["evals/jira.test.ts"],
   },
   {

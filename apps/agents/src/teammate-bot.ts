@@ -154,7 +154,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const hostConfig = { ...agentConfig, tools: Object.fromEntries(Object.entries(agentConfig.tools).filter(([name]) => available.has(name))) };
   const envelope = envelopeOf(hostConfig);
   // A plan's steps are the raw connector tools: the plan's own approval is what gates them.
-  connectorTools.push(planTool(envelope, [...connectorTools]));
+  connectorTools.push(planTool(envelope, [...connectorTools], ledger));
   // Cards follow the request: its channel thread; a PR → the PR channel; a DM or Jira → notify.
   /** Triage is rate-capped per project per hour: a bulk import is not N model calls and N comments. */
   const triageRate = new HourlyCap(settings.triagePerHour ?? 20);

@@ -53,13 +53,16 @@ function base64urlOf(value: unknown): string {
 
 describe("installation tokens", () => {
   let calls: string[];
+  let mintBodies: unknown[];
 
   beforeEach(() => {
     clearInstallationTokenCache();
     calls = [];
+    mintBodies = [];
     vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
       const url = String(input);
       calls.push(`${init?.method ?? "GET"} ${new URL(url).pathname}`);
+      if (init?.method === "POST") mintBodies.push(init.body ? JSON.parse(String(init.body)) : undefined);
       if (url.includes("/repos/o/r/installation")) {
         return new Response(JSON.stringify({ id: 77 }), { status: 200 });
       }
@@ -82,6 +85,11 @@ describe("installation tokens", () => {
     expect(token).toBe("ghs_installation");
     // Installation id is derived, not configured: a derivable setting cannot be misconfigured.
     expect(calls).toEqual(["GET /repos/o/r/installation", "POST /app/installations/77/access_tokens"]);
+  });
+
+  it("mints a token for the one repository it's for, never the whole installation", async () => {
+    await installationToken({ appId: "4242", privateKey: privatePem, repo: "o/r" });
+    expect(mintBodies).toEqual([{ repositories: ["r"] }]);
   });
 
   it("caches the token instead of minting one per publish", async () => {

@@ -1444,6 +1444,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/confluence-connector.test.ts"],
   },
   {
+    control: "a GitHub App token is minted for its one repository",
+    file: "packages/publish/src/github-app.ts",
+    find: "body: JSON.stringify({ repositories: [repoName] }) });",
+    replace: "});",
+    evals: ["evals/github-app.test.ts"],
+  },
+  {
+    control: "a retried PR comment looks only at comments since the attempt",
+    file: "packages/connectors/src/github.ts",
+    find: "/comments?per_page=100&page=${page}${since}`",
+    replace: "/comments?per_page=100&page=${page}`",
+    evals: ["evals/github-connector.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

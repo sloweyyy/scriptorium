@@ -12,7 +12,7 @@ import { Vault } from "@scriptorium/core";
 
 let provider: "anthropic" | "gemini" = "anthropic";
 let finalMessage: { stop_reason?: string; content: Array<{ type: string; text?: string }> };
-let geminiResult: () => Promise<string>;
+let geminiResult: (args: { onRound?: (usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number }) => void }) => Promise<string>;
 let runnerParams: Record<string, unknown> | undefined;
 /** Models that answer with this HTTP status instead of a message. */
 let failFor: Record<string, number> = {};
@@ -32,7 +32,7 @@ vi.mock("@scriptorium/core", async (importOriginal) => ({
       },
     },
   }),
-  runGeminiToolLoop: () => geminiResult(),
+  runGeminiToolLoop: (args: Parameters<typeof geminiResult>[0]) => geminiResult(args),
 }));
 
 const { runSession, SessionError } = await import("@scriptorium/runtime");
@@ -142,6 +142,42 @@ describe("what a session cost", () => {
     expect(await runSession({ ...options, onUsage: (usage) => (reported = usage) })).toBe("Done.");
     expect(reported).toMatchObject({ rounds: 2, input: 1_822, cacheRead: 900, cacheWrite: 900, output: 45 });
     expect(params?.cache_control).toEqual({ type: "ephemeral" });
+    spy.mockRestore();
+  });
+});
+
+describe("every round is counted, on both providers", () => {
+  it("a Gemini turn reports its rounds' tokens, even when it then fails", async () => {
+    provider = "gemini";
+    geminiResult = async ({ onRound }) => {
+      onRound?.({ input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 50 });
+      onRound?.({ input_tokens: 120, output_tokens: 30, cache_read_input_tokens: 0 });
+      throw new Error("Gemini tool loop hit its 2-round cap without producing an answer.");
+    };
+    let reported: unknown;
+    await expect(runSession({ ...options, onUsage: (usage) => (reported = usage) })).rejects.toThrow();
+    // A turn that failed still spent its rounds: the budget sees them.
+    expect(reported).toMatchObject({ provider: "gemini", rounds: 2, input: 270, cacheRead: 50, output: 50 });
+  });
+
+  it("a Claude turn that throws mid-loop still reports the rounds it spent", async () => {
+    const core = await import("@scriptorium/core");
+    const spy = vi.spyOn(core, "anthropic").mockReturnValue({
+      beta: {
+        messages: {
+          toolRunner: () => ({
+            async *[Symbol.asyncIterator]() {
+              yield { stop_reason: "tool_use", usage: { input_tokens: 40, output_tokens: 8 }, content: [] };
+              throw Object.assign(new Error("HTTP 400"), { status: 400 });
+            },
+            done: async () => undefined,
+          }),
+        },
+      },
+    } as never);
+    let reported: unknown;
+    await expect(runSession({ ...options, onUsage: (usage) => (reported = usage) })).rejects.toThrow();
+    expect(reported).toMatchObject({ rounds: 1, input: 40, output: 8 });
     spy.mockRestore();
   });
 });

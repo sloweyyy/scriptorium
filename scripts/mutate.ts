@@ -807,6 +807,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/policy.test.ts"],
   },
   {
+    control: "a Gemini turn's tokens count against the budget",
+    file: "packages/runtime/src/session.ts",
+    find: "  } finally {\n    options.onUsage?.(sumUsage(\"gemini\", usages));\n  }",
+    replace: "  } finally {\n  }",
+    evals: ["evals/session.test.ts"],
+  },
+  {
+    control: "a Claude turn that fails mid-loop still counts its rounds",
+    file: "packages/runtime/src/session.ts",
+    find: "  } finally {\n    options.onUsage?.(sumUsage(provider, usages));\n  }",
+    replace: "  } finally {\n  }",
+    evals: ["evals/session.test.ts"],
+  },
+  {
+    control: "Gemini reports what each round cost",
+    file: "packages/core/src/gemini.ts",
+    find: "    onRound?.({",
+    replace: "    void ({",
+    evals: ["evals/gemini-transport.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

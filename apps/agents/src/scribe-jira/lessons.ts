@@ -7,9 +7,11 @@ import {
   lessonBodyHash,
   lessonDecisionCheck,
   listLessons,
+  markLessonWithdrawn,
   rejectLesson,
   revokeLesson,
   saveLesson,
+  withdrawnLessons,
 } from "@scriptorium/scribe";
 import { pushInternalPlane } from "../docs-repo";
 import { mayApproveOnJira, say, type Ctx } from "./context";
@@ -99,7 +101,7 @@ export async function runLessonDecision(
     await say(ctx, key, allowed.reason.replace("publish from this ticket", "decide house rules"));
     return;
   }
-  const current = (await listLessons(ctx.vault)).find((candidate) => candidate.id === id);
+  const current = (await listLessons(ctx.vault, { withdrawn: await withdrawnLessons(ctx.config.jira.stateDir) })).find((candidate) => candidate.id === id);
   if (current) {
     const check = lessonDecisionCheck(current, decision, ctx.client.issueUrl(key));
     if (!check.ok) {
@@ -152,6 +154,9 @@ export async function runLessonDecision(
   }
 
   if (decision === "revoke") {
+    // Recorded where the vault can't undo it, before the note changes: a failed push or a
+    // rolled-back vault branch must not bring the rule back.
+    await markLessonWithdrawn(ctx.config.jira.stateDir, id);
     const revoked = await revokeLesson(ctx.vault, id, actor);
     if (!revoked) {
       await say(ctx, key, `I can't find lesson \`${id}\` in the vault.`);
@@ -164,6 +169,7 @@ export async function runLessonDecision(
     return;
   }
 
+  await markLessonWithdrawn(ctx.config.jira.stateDir, id);
   const lesson = await rejectLesson(ctx.vault, id, actor);
   if (!lesson) {
     await say(ctx, key, `I can't find lesson \`${id}\` in the vault.`);

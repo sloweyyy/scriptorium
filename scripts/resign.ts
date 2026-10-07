@@ -9,6 +9,7 @@
  */
 import path from "node:path";
 import { loadConfig, previousSigningKeys, resignApproval, signedWith, Vault } from "@scriptorium/core";
+import { withdrawnLessons } from "@scriptorium/scribe";
 
 const config = loadConfig();
 const dryRun = process.argv.includes("--dry-run");
@@ -20,6 +21,8 @@ if (!current) {
 }
 
 const vault = new Vault(config.vaultDir);
+// A rule a human withdrew is never moved onto the new key, whatever its note says now.
+const withdrawn = await withdrawnLessons(config.jira.stateDir);
 let moved = 0;
 let already = 0;
 const refused: string[] = [];
@@ -27,6 +30,10 @@ for (const dir of ["_lessons", "_memory"]) {
   for (const relPath of await vault.listNotes(dir)) {
     const note = await vault.readNote(relPath);
     if (note.frontmatter.status !== "approved") continue;
+    if (dir === "_lessons" && typeof note.frontmatter.id === "string" && withdrawn.has(note.frontmatter.id)) {
+      refused.push(relPath);
+      continue;
+    }
     const signer = signedWith(note.frontmatter, note.body, [current, ...previous]);
     if (signer === current) {
       already += 1;

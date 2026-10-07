@@ -935,6 +935,20 @@ describe("a lesson learned on one ticket shapes the next (TODO #6)", () => {
     await learnOnDoc1("reject lesson");
     expect(await draftDoc2()).not.toContain(RULE);
   });
+
+  it("a revoked rule stays revoked when the vault brings back its signed, approved copy", async () => {
+    const { listLessons } = await import("@scriptorium/scribe");
+    await learnOnDoc1("approve lesson");
+    const approved = (await listLessons(vault)).find((lesson) => lesson.id === "L-001")!;
+    const signedCopy = await vault.readNote(approved.relPath);
+    comments.push(human("rv", "revoke lesson L-001"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T21:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect((await vault.readNote(approved.relPath)).frontmatter.approval_sig).toBeUndefined();
+    // A boot restore (or a revert on the vault branch) writes the approved copy back.
+    await vault.writeNote(approved.relPath, signedCopy.body, signedCopy.frontmatter);
+    expect(await draftDoc2()).not.toContain(RULE);
+  });
 });
 
 describe("designs the model cannot take", () => {

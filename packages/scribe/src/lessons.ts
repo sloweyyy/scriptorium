@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { approvalSignature, approvalSigningKey, approvalTerms, approvalVerified, docSlug, type Vault } from "@scriptorium/core";
 
@@ -65,7 +66,40 @@ function readStatus(raw: unknown): LessonStatus {
   return raw === "approved" ? "approved" : raw === "rejected" ? "rejected" : raw === "revoked" ? "revoked" : "proposed";
 }
 
-export async function listLessons(vault: Vault, options: { status?: LessonStatus } = {}): Promise<Lesson[]> {
+/**
+ * Lesson ids a human withdrew (rejected or revoked), kept in the deployment's state
+ * directory, never in the vault. A revoked note keeps the signature it was approved with,
+ * and the vault can be rolled back: a failed push followed by a boot restore, or a revert on
+ * the vault branch, brought back an `approved` copy whose signature still verified, and the
+ * withdrawn rule shaped drafts again. Nothing in the vault can undo an entry here.
+ */
+export function withdrawnLessonsFile(stateDir: string): string {
+  return path.join(stateDir, "withdrawn-lessons.json");
+}
+
+export async function withdrawnLessons(stateDir: string): Promise<Set<string>> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(withdrawnLessonsFile(stateDir), "utf8")) as { ids?: unknown };
+    return new Set(Array.isArray(parsed.ids) ? parsed.ids.filter((id): id is string => typeof id === "string") : []);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Set();
+    // Unreadable is not "nothing withdrawn": every rule waits until a human looks.
+    throw new Error(`withdrawn-lessons.json is unreadable, so no house rule can be trusted: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function markLessonWithdrawn(stateDir: string, id: string): Promise<void> {
+  const ids = await withdrawnLessons(stateDir);
+  if (ids.has(id)) return;
+  ids.add(id);
+  const file = withdrawnLessonsFile(stateDir);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify({ ids: [...ids].sort() }, null, 2));
+  await fs.rename(tmp, file);
+}
+
+export async function listLessons(vault: Vault, options: { status?: LessonStatus; withdrawn?: ReadonlySet<string> } = {}): Promise<Lesson[]> {
   const lessons: Lesson[] = [];
   for (const relPath of await vault.listNotes(LESSONS_DIR)) {
     const note = await vault.readNote(relPath);
@@ -76,7 +110,13 @@ export async function listLessons(vault: Vault, options: { status?: LessonStatus
       scope: String(note.frontmatter.scope ?? "global"),
       // Approved only if the approval verifies (when a key is configured): an unsigned or
       // tampered "approved" rule is a proposal, whatever route it took into the vault.
-      status: readStatus(note.frontmatter.status) === "approved" && !approvalVerified(note.frontmatter, note.body) ? "proposed" : readStatus(note.frontmatter.status),
+      // A withdrawn id is withdrawn, whatever its note says now.
+      status:
+        options.withdrawn?.has(id) && !["rejected", "revoked"].includes(readStatus(note.frontmatter.status))
+          ? "revoked"
+          : readStatus(note.frontmatter.status) === "approved" && !approvalVerified(note.frontmatter, note.body)
+            ? "proposed"
+            : readStatus(note.frontmatter.status),
       text: note.body,
       relPath,
       author: typeof note.frontmatter.author === "string" ? note.frontmatter.author : undefined,
@@ -174,8 +214,10 @@ export async function rejectLesson(vault: Vault, id: string, rejectedBy: string)
   const lesson = (await listLessons(vault)).find((candidate) => candidate.id === id);
   if (!lesson) return undefined;
   const note = await vault.readNote(lesson.relPath);
+  // The signature goes with the yes it recorded: a no must not carry a verifiable approval.
+  const { approval_sig: _sig, ...frontmatter } = note.frontmatter;
   await vault.writeNote(lesson.relPath, note.body, {
-    ...note.frontmatter,
+    ...frontmatter,
     status: "rejected",
     rejected_by: rejectedBy,
     rejected_at: new Date().toISOString(),
@@ -229,7 +271,8 @@ export async function revokeLesson(vault: Vault, id: string, revokedBy: string):
   const lesson = (await listLessons(vault)).find((candidate) => candidate.id === id);
   if (!lesson) return undefined;
   const note = await vault.readNote(lesson.relPath);
-  await vault.writeNote(lesson.relPath, note.body, { ...note.frontmatter, status: "revoked", revoked_by: revokedBy, revoked_at: new Date().toISOString() });
+  const { approval_sig: _sig, ...frontmatter } = note.frontmatter;
+  await vault.writeNote(lesson.relPath, note.body, { ...frontmatter, status: "revoked", revoked_by: revokedBy, revoked_at: new Date().toISOString() });
   return { ...lesson, status: "revoked" };
 }
 

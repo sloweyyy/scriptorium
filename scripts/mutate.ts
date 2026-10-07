@@ -870,6 +870,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/lessons.test.ts"],
   },
   {
+    control: "a withdrawn lesson id stays withdrawn whatever its note says",
+    file: "packages/scribe/src/lessons.ts",
+    find: "        options.withdrawn?.has(id) && !",
+    replace: "        false && !",
+    evals: ["evals/lessons.test.ts", "evals/jira-board.test.ts"],
+  },
+  {
+    control: "revoking a rule records it where the vault can't undo it",
+    file: "apps/agents/src/scribe-jira/lessons.ts",
+    find: "    await markLessonWithdrawn(ctx.config.jira.stateDir, id);\n    const revoked",
+    replace: "    const revoked",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "an unreadable withdrawn-lessons record trusts no rule",
+    file: "packages/scribe/src/lessons.ts",
+    find: "    if ((error as NodeJS.ErrnoException).code === \"ENOENT\") return new Set();\n",
+    replace: "    return new Set();\n",
+    evals: ["evals/lessons.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",
@@ -916,8 +937,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "only approved lessons shape a draft",
     file: "packages/scribe/src/pipeline.ts",
-    find: 'const lessons = await listLessons(vault, { status: "approved" });\n  const markdown = await generateText({\n    system: DOC_SYSTEM_PROMPT,\n    prompt: buildDraftPrompt(',
-    replace: "const lessons = await listLessons(vault);\n  const markdown = await generateText({\n    system: DOC_SYSTEM_PROMPT,\n    prompt: buildDraftPrompt(",
+    find: 'const lessons = await listLessons(vault, { status: "approved", withdrawn: options.withdrawn });\n  const markdown = await generateText({\n    system: DOC_SYSTEM_PROMPT,\n    prompt: buildDraftPrompt(',
+    replace: "const lessons = await listLessons(vault, { withdrawn: options.withdrawn });\n  const markdown = await generateText({\n    system: DOC_SYSTEM_PROMPT,\n    prompt: buildDraftPrompt(",
     evals: ["evals/lesson-gate.test.ts"],
   },
   {

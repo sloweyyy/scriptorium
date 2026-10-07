@@ -905,6 +905,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/gaps.test.ts"],
   },
   {
+    control: "a retried Jira create finds the issue that landed instead of filing another",
+    file: "packages/connectors/src/jira.ts",
+    find: "                return found ? { key: found.key, url: settings.client.issueUrl(found.key) } : undefined;",
+    replace: "                return undefined;",
+    evals: ["evals/jira-connector.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

@@ -176,3 +176,36 @@ describe("a sprint bigger than one read", () => {
     expect(out.at(-1)?.note).toMatch(/first 100 issues/);
   });
 });
+
+describe("creating an issue, exactly once", () => {
+  it("a create whose response was lost is found by its op label on the retry, not filed again", async () => {
+    const created: Array<{ key: string; labels: string[] }> = [];
+    let loseNextResponse = true;
+    vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+      const url = decodeURIComponent(String(input).replace(/\+/g, " "));
+      const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+      if (url.endsWith("/rest/api/2/issue") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { fields: { labels?: string[] } };
+        created.push({ key: `DOC-${100 + created.length}`, labels: body.fields.labels ?? [] });
+        if (loseNextResponse) {
+          loseNextResponse = false;
+          throw new TypeError("fetch failed: socket hang up"); // Jira stored it; the answer never came back
+        }
+        return json({ key: created.at(-1)!.key }, 201);
+      }
+      if (url.includes("/search")) {
+        const label = url.match(/labels = "([^"]+)"/)?.[1];
+        return json({ issues: created.filter((issue) => label && issue.labels.includes(label)).map((issue) => ({ id: "1", key: issue.key, fields: { summary: "s" } })) });
+      }
+      return json({});
+    });
+    const ledger = new MemoryEffectLedger();
+    const create = jiraTools({ client: client(), allowedProjects: ["DOC"], ledger, createProject: "DOC" }).find((tool) => tool.name === "jira_create_issue")!;
+    const args = { summary: "Digest emails ignore the workspace timezone", description: "Seen on DOC-7." };
+    await expect(create.run(args, { approval: { id: "a1" } })).rejects.toThrow();
+    // The approver clicks Retry: the issue that landed is found, not created twice.
+    expect(await create.run(args, { approval: { id: "a1" } })).toMatch(/^Already created jira:DOC-100/);
+    expect(created).toHaveLength(1);
+    expect(created[0]?.labels[0]).toMatch(/^scriptorium-op-[0-9a-f]{12}$/);
+  });
+});

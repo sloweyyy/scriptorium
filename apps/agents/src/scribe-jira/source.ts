@@ -194,24 +194,34 @@ export async function loadSource(ctx: Ctx, issue: JiraIssue): Promise<PrdSource>
   const designs = await loadDesignImages(ctx, issue);
   const source: PrdSource = { images: designs.images, imageNames: designs.names, skipped: [...designs.skipped] };
 
+  // Set once the newest PRD-shaped file is refused: an older one is the version it replaced,
+  // and drafting from it ("v1: 30 days" while v2 says 90) is worse than drafting from none.
+  let newestRefused: string | undefined;
   for (const attachment of newestFirst(issue.fields.attachment ?? [])) {
     // Images were read above; this pass is only looking for the PRD.
     if (VISION_TYPES[attachment.mimeType?.toLowerCase() ?? ""]) continue;
     // Never its own output: the agent attaches every draft as `draft-<slug>.md`, and a
     // later re-draft that reads one back as "the PRD" refuses on missing frontmatter —
-    // the agent asking the PM for fields its own draft never carries.
-    if (DRAFT_ATTACHMENT.test(attachment.filename)) {
+    // the agent asking the PM for fields its own draft never carries. Only ITS OWN, though:
+    // a PM's PRD that happens to be named `draft-….md` was skipped without a word.
+    if (DRAFT_ATTACHMENT.test(attachment.filename) && attachment.author?.accountId === ctx.botAccountId) {
       continue;
     }
     if (!source.markdown && PRD_EXTENSIONS.has(path.extname(attachment.filename).toLowerCase())) {
+      if (newestRefused) {
+        source.skipped.push(`${attachment.filename} (older than ${newestRefused}, which replaced it, so not read)`);
+        continue;
+      }
       const tooBig = `${attachment.filename} (over ${MAX_PRD_BYTES / 1000} KB, too long to be a PRD — trim it, or link the Confluence page)`;
       if ((attachment.size ?? 0) > MAX_PRD_BYTES) {
         source.skipped.push(tooBig);
+        newestRefused = attachment.filename;
         continue;
       }
       const bytes = await ctx.client.downloadAttachment(attachment);
       if (bytes.length > MAX_PRD_BYTES) {
         source.skipped.push(tooBig);
+        newestRefused = attachment.filename;
         continue;
       }
       source.markdown = bytes.toString("utf8");
@@ -376,7 +386,9 @@ export async function seedVault(ctx: Ctx, slug: string, feature: string, source:
       source_ticket: ctx.client.issueUrl(issueKey),
     });
   }
-  for (const [index, image] of source.images.entries()) {
+  // Oldest first, so where two uploads share a name (v1 and v2 of `wireframe.png`), the newest
+  // is the copy the vault keeps; newest-first left v1 on top.
+  for (const [index, image] of [...source.images.entries()].reverse()) {
     const name = safeDesignName(source.imageNames[index], image.mediaType, `${slug}-design-${index + 1}`);
     await fs.writeFile(ctx.vault.abs(`_inbox/${name}`), Buffer.from(image.base64, "base64"));
   }

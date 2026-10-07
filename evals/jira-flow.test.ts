@@ -600,6 +600,7 @@ describe("re-draft with the agent's own attachments present", () => {
             filename: "draft-incident-timeline-embed.md",
             mimeType: "text/markdown",
             content: "https://example.atlassian.net/rest/api/2/attachment/content/att-draft",
+            author: { accountId: "bot-1" },
           },
         ],
       },

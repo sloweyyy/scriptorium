@@ -213,7 +213,9 @@ export async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: bo
       key,
       source.confluenceError
         ? "**This ticket points at a Confluence page I can't read** — it may be restricted, or deleted. Grant my account view access to it (or attach the PRD as a `.md` file), then comment `draft`."
-        : NO_PRD,
+        : // Why each file wasn't the PRD: "I can't find a PRD" beside a PRD the PM attached
+          // (too long, say) left them nothing to fix.
+          [NO_PRD, ...(source.skipped.length ? ["", `Not read: ${source.skipped.join(", ")}`] : [])].join("\n"),
     );
     return;
   }

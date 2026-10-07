@@ -1514,6 +1514,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "an oversized newest PRD is never replaced by the older one it superseded",
+    file: "apps/agents/src/scribe-jira/source.ts",
+    find: "      if (newestRefused) {\n        source.skipped.push(",
+    replace: "      if (false) {\n        source.skipped.push(",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a PM's file named draft-\u2026.md is still read as their PRD",
+    file: "apps/agents/src/scribe-jira/source.ts",
+    find: "    if (DRAFT_ATTACHMENT.test(attachment.filename) && attachment.author?.accountId === ctx.botAccountId) {",
+    replace: "    if (DRAFT_ATTACHMENT.test(attachment.filename)) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "the vault keeps the newest of two same-named designs",
+    file: "apps/agents/src/scribe-jira/source.ts",
+    find: "  for (const [index, image] of [...source.images.entries()].reverse()) {",
+    replace: "  for (const [index, image] of source.images.entries()) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

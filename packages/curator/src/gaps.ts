@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { audit, docSlug, type Vault } from "@scriptorium/core";
+import { audit, docSlug, inertMarkdown, type Vault } from "@scriptorium/core";
 import { updateMoc } from "./organizer";
 
 export interface GapTicket {
@@ -160,9 +160,11 @@ async function fileGapNoteNow(vault: Vault, input: GapInput, key: string): Promi
     "",
     // Every line quoted: quoting only the first let "Q?\n# Beacon supports SSO" become a
     // heading of the note, and the index's title for it.
-    ...input.question.split(/\r?\n/).map((line) => `> ${line}`),
+    // Inert too: the internal site renders the vault, and a question someone typed (or a
+    // summary a model wrote) carrying `<img onerror=…>` ran as script there.
+    ...input.question.split(/\r?\n/).map((line) => `> ${inertMarkdown(line)}`),
     "",
-    `Missing documentation: ${input.missing.replace(/\s+/g, " ").trim()}`,
+    `Missing documentation: ${inertMarkdown(input.missing.replace(/\s+/g, " ").trim())}`,
     "",
     "_Filed by Curator. Scribe should treat this as a documentation request._",
   ].join("\n");

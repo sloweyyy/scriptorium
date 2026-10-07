@@ -1,3 +1,5 @@
+import { unsafeMarkup } from "@scriptorium/core";
+
 export interface LintFinding {
   code: string;
   severity: "error" | "warn";
@@ -36,6 +38,16 @@ export function lintDoc(markdown: string): LintFinding[] {
   const placeholder = markdown.match(PLACEHOLDER_PATTERN);
   if (placeholder) {
     findings.push({ code: "placeholder", severity: "error", message: `Placeholder text found: "${placeholder[0]}"` });
+  }
+
+  // What a published page would run: raw HTML, and links that don't go to the web. The
+  // Jira reviewer sees only a link's label, so a `javascript:` target was approved unseen.
+  const unsafe = unsafeMarkup(markdown);
+  if (unsafe.html.length) {
+    findings.push({ code: "raw-html", severity: "error", message: `Raw HTML isn't allowed in a doc: ${unsafe.html.join(", ")}. Write it as markdown.` });
+  }
+  if (unsafe.links.length) {
+    findings.push({ code: "unsafe-link", severity: "error", message: `Links must go to http(s) or mailto, not ${unsafe.links.map((scheme) => `${scheme}:`).join(", ")}.` });
   }
 
   for (const [banned, preferred] of Object.entries(GLOSSARY)) {

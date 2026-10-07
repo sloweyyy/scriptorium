@@ -1458,6 +1458,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/github-connector.test.ts"],
   },
   {
+    control: "forgetting a memory removes every copy that carries its id",
+    file: "packages/runtime/src/memory.ts",
+    find: "  for (const copy of copies) await vault.deleteFile(copy.relPath);",
+    replace: "  await vault.deleteFile(first.relPath);",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "forgetting a memory empties the request that saved it",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "          await store.update(request.id, (current) => ({ ...current, args: undefined, summary: \"(forgotten on request)\" }));",
+    replace: "",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

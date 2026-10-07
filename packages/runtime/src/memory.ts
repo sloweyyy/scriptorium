@@ -57,16 +57,22 @@ export async function forgetMemory(
   vault: Vault,
   id: string,
   who: { accountId: string; mayCurate: boolean },
-): Promise<{ ok: true; memory: { id: string; scope: string } } | { ok: false; reason: string }> {
+): Promise<{ ok: true; memory: { id: string; scope: string; text: string } } | { ok: false; reason: string }> {
   if (!/^M-[0-9a-f]{8}$/i.test(id)) return { ok: false, reason: "that isn't a memory id (they look like M-1a2b3c4d)" };
-  const relPath = `${MEMORY_DIR}/${id}.md`;
-  if (!(await vault.exists(relPath))) return { ok: false, reason: `there is no memory ${id}` };
-  const note = await vault.readNote(relPath);
-  const scope = typeof note.frontmatter.scope === "string" ? note.frontmatter.scope : "";
-  const own = scope === `person:${who.accountId}`;
-  if (!own && !who.mayCurate) return { ok: false, reason: `${id} isn't yours to forget (it's ${scope || "unscoped"}); an admin can remove it` };
-  await vault.deleteFile(relPath);
-  return { ok: true, memory: { id, scope } };
+  // Every note carrying the id, wherever it sits: memories are loaded by their stored id,
+  // so a copy under `_memory/imported/` still applied after `_memory/<id>.md` was deleted.
+  const copies: Array<{ relPath: string; scope: string; text: string }> = [];
+  for (const relPath of await vault.listNotes(MEMORY_DIR)) {
+    const note = await vault.readNote(relPath);
+    if (note.frontmatter.id !== id) continue;
+    copies.push({ relPath, scope: typeof note.frontmatter.scope === "string" ? note.frontmatter.scope : "", text: note.body.trim() });
+  }
+  const first = copies[0];
+  if (!first) return { ok: false, reason: `there is no memory ${id}` };
+  const own = copies.every((copy) => copy.scope === `person:${who.accountId}`);
+  if (!own && !who.mayCurate) return { ok: false, reason: `${id} isn't yours to forget (it's ${first.scope || "unscoped"}); an admin can remove it` };
+  for (const copy of copies) await vault.deleteFile(copy.relPath);
+  return { ok: true, memory: { id, scope: first.scope, text: first.text } };
 }
 
 export function renderMemories(memories: readonly Memory[]): string {

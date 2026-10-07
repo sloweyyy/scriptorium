@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Vault, type AppConfig } from "@scriptorium/core";
+import { FileApprovalStore } from "@scriptorium/policy";
 
 /**
  * The Teammate end to end: Slack mention in, reply out; approval card in, action carried
@@ -541,6 +542,23 @@ describe("your memories", () => {
     expect(await core.onSlashCommand({ channel: "C1", user: "UADMIN", text: "forget M-0000bbbb", commandId: "m5" })).toMatch(/^Forgotten/);
     expect(await fs.readFile(path.join(tmpRoot, "audit.jsonl"), "utf8")).toContain('"type":"memory.forgotten"');
     expect(posted).toEqual([]);
+  });
+});
+
+describe("forgetting leaves no copy", () => {
+  it("a copy under another folder goes too, and so does the text in the request that saved it", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    const text = "I'm on medical leave until 2026-11-30.";
+    await vault.writeNote("_memory/M-0000dddd.md", text, { id: "M-0000dddd", scope: "person:slack:U1", status: "approved", approved_by: "Priya" });
+    await vault.writeNote("_memory/imported/M-0000dddd.md", text, { id: "M-0000dddd", scope: "person:slack:U1", status: "approved", approved_by: "Priya" });
+    const store = new FileApprovalStore(path.join(tmpRoot, "state", "approvals.json"));
+    await store.save({ id: "R-mem", agent: "Teammate", tool: "memory_save", args: { text, scope: "person:slack:U1" }, argsHash: "h", summary: `Remember: ${text}`, key: "k", requestedBy: "slack:U1", requestedAt: "2026-10-01T00:00:00Z", expiresAt: "2026-10-08T00:00:00Z", status: "consumed" });
+
+    expect(await core.onSlashCommand({ channel: "C1", user: "U1", text: "forget M-0000dddd", commandId: "f1" })).toMatch(/^Forgotten/);
+    expect(await vault.listNotes("_memory")).toEqual([]);
+    const request = (await store.all()).find((entry) => entry.id === "R-mem");
+    expect(request?.args).toBeUndefined();
+    expect(request?.summary).not.toContain("medical leave");
   });
 });
 

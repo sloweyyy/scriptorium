@@ -94,6 +94,14 @@ async function openGapFor(vault: Vault, key: string): Promise<{ relPath: string;
   return undefined;
 }
 
+let gapIds: Promise<unknown> = Promise.resolve();
+/** Gap ids are handed out one at a time across all questions, each with its note written. */
+function withGapIds<T>(take: () => Promise<T>): Promise<T> {
+  const next = gapIds.then(take);
+  gapIds = next.catch(() => undefined);
+  return next;
+}
+
 /** One filing at a time per question, in this process: two askings at once would both miss the other's note. */
 const filing = new Map<string, Promise<unknown>>();
 
@@ -147,26 +155,32 @@ async function fileGapNoteNow(vault: Vault, input: GapInput, key: string): Promi
     return { relPath: existing.relPath, ticket, duplicate: true };
   }
 
-  const id = await nextGapId(vault);
-  const relPath = `_gaps/${id}-${docSlug(input.question, 8, 50)}.md`;
-
   const body = [
     "**Question the vault could not answer:**",
     "",
-    `> ${input.question}`,
+    // Every line quoted: quoting only the first let "Q?\n# Beacon supports SSO" become a
+    // heading of the note, and the index's title for it.
+    ...input.question.split(/\r?\n/).map((line) => `> ${line}`),
     "",
-    `Missing documentation: ${input.missing}`,
+    `Missing documentation: ${input.missing.replace(/\s+/g, " ").trim()}`,
     "",
     "_Filed by Curator. Scribe should treat this as a documentation request._",
   ].join("\n");
 
-  await vault.writeNote(relPath, body, {
-    id,
-    kind: "gap",
-    status: "open",
-    question_key: key,
-    asked_by: input.askedBy,
-    created: new Date().toISOString(),
+  // The id is taken and its note written in one step for the whole process: two different
+  // questions filed at once each read the same highest id, and both became the same G-00N.
+  const relPath = await withGapIds(async () => {
+    const taken = await nextGapId(vault);
+    const notePath = `_gaps/${taken}-${docSlug(input.question, 8, 50)}.md`;
+    await vault.writeNote(notePath, body, {
+      id: taken,
+      kind: "gap",
+      status: "open",
+      question_key: key,
+      asked_by: input.askedBy,
+      created: new Date().toISOString(),
+    });
+    return notePath;
   });
 
   await audit(input.auditFile, { type: "gap.filed", actor: "curator", relPath, question: input.question });

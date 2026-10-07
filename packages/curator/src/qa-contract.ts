@@ -1,6 +1,6 @@
 import { extractWikilinks, type ToolSpec, type Vault } from "@scriptorium/core";
 import { z } from "zod";
-import { fenceNote, isPrivateNote, normalizeVaultPath, rejectionNotice, type VaultIndex } from "./search";
+import { fenceNote, isPrivateNote, normalizeVaultPath, PRIVATE_FOLDERS, rejectionNotice, type VaultIndex } from "./search";
 
 /**
  * Curator's grounded-Q&A contract — the whole of it, in one file.
@@ -175,7 +175,9 @@ export function qaTools(vault: Vault, index: VaultIndex): ToolSpec[] {
       name: "search_vault",
       description:
         "Full-text search over the knowledge vault. Returns note paths, titles, and matching snippets. Call this before answering any question about the product.",
-      inputSchema: z.object({ query: z.string().describe("Search terms — keywords, not a full sentence.") }),
+      // Bounded: fuzzy, prefix search costs grow with term length, and a 1 MB query from a
+      // client pinned the CPU. Keywords fit in far less.
+      inputSchema: z.object({ query: z.string().max(500).describe("Search terms — keywords, not a full sentence.") }),
       run: async ({ query }) => JSON.stringify(index.searchAsync ? await index.searchAsync(query) : index.search(query)),
       records: (_input, output) => {
         const hits = ownJson(output);
@@ -185,7 +187,7 @@ export function qaTools(vault: Vault, index: VaultIndex): ToolSpec[] {
     tool({
       name: "read_note",
       description: "Read one note's full content by its vault-relative path exactly as returned by search_vault.",
-      inputSchema: z.object({ path: z.string().describe("Vault-relative path, with or without the .md suffix.") }),
+      inputSchema: z.object({ path: z.string().max(300).describe("Vault-relative path, with or without the .md suffix.") }),
       run: async ({ path: relPath }) => {
         if (isPrivateNote(relPath)) return `NOT_ALLOWED: ${relPath} is not readable through retrieval.`;
         try {
@@ -253,7 +255,7 @@ const EXTERNAL_CITATION = /^(confluence:\d+|jira:[A-Z][A-Z0-9_]*-\d+|github:[a-z
 const REFUSAL = /^\s*(NOT_ALLOWED|DENIED|NOT_DONE|APPROVAL_PENDING|REFUSED)\b/;
 
 /** Queues, drafts and private memory, not knowledge: never evidence for a claim about the product. */
-const NOT_CITABLE = ["_gaps/", "_inbox/", "_memory/"];
+const NOT_CITABLE: readonly string[] = PRIVATE_FOLDERS;
 
 /**
  * No citation, no claim — enforced on the answer, not only requested in the prompt.

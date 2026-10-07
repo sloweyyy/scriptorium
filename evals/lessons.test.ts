@@ -161,6 +161,14 @@ describe("deciding a lesson", () => {
     // Withdrawing an approved rule is always allowed.
     expect(lessonDecisionCheck({ ...lesson, status: "approved" }, "reject", "https://x/browse/DOC-1").ok).toBe(true);
   });
+
+  it("a lesson with no record of where it was proposed can't be approved from any ticket", async () => {
+    const { lessonDecisionCheck } = await import("@scriptorium/scribe");
+    const unsourced = { id: "L-009", scope: "global", status: "proposed" as const, text: "x", relPath: "_lessons/L-009.md" };
+    expect(lessonDecisionCheck(unsourced, "approve", "https://x/browse/DOC-1")).toMatchObject({ ok: false, reason: expect.stringContaining("no record of where it was proposed") });
+    // Saying no is still allowed.
+    expect(lessonDecisionCheck(unsourced, "reject", "https://x/browse/DOC-1").ok).toBe(true);
+  });
 });
 
 describe("revoking a lesson", () => {

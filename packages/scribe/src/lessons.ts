@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { approvalSignature, approvalSigningKey, approvalTerms, approvalVerified, docSlug, type Vault } from "@scriptorium/core";
 
@@ -134,11 +135,26 @@ export async function saveLesson(vault: Vault, input: NewLesson): Promise<Lesson
   return { id, scope: input.scope ?? "global", status, text: input.text, relPath, author: input.author, sourceThread: input.sourceThread };
 }
 
-/** Lessons are gated too — a human decides what the system is allowed to learn. */
-export async function approveLesson(vault: Vault, id: string, approvedBy: string, signingKey = approvalSigningKey()): Promise<Lesson | undefined> {
+/** The rule text changed after it was proposed: what would be signed is not what was shown. */
+export class LessonChangedError extends Error {}
+
+/** The sha256 a proposal binds: the rule's text as stored, trimmed. */
+export function lessonBodyHash(body: string): string {
+  return createHash("sha256").update(body.replace(/\r\n/g, "\n").trim()).digest("hex");
+}
+
+/**
+ * Lessons are gated too — a human decides what the system is allowed to learn. With
+ * `expectedBodyHash`, the note is signed only if its text is still the text that was shown
+ * for approval: checked on the very body that gets signed, not a copy read earlier.
+ */
+export async function approveLesson(vault: Vault, id: string, approvedBy: string, signingKey = approvalSigningKey(), expectedBodyHash?: string): Promise<Lesson | undefined> {
   const lesson = (await listLessons(vault)).find((candidate) => candidate.id === id);
   if (!lesson) return undefined;
   const note = await vault.readNote(lesson.relPath);
+  if (expectedBodyHash !== undefined && lessonBodyHash(note.body) !== expectedBodyHash) {
+    throw new LessonChangedError(`Lesson ${id} changed after it was proposed.`);
+  }
   const terms = approvalTerms(note.frontmatter);
   await vault.writeNote(lesson.relPath, note.body, {
     ...note.frontmatter,
@@ -188,6 +204,11 @@ export function lessonDecisionCheck(
     return lesson.status === "approved" ? { ok: true } : { ok: false, reason: `Lesson ${lesson.id} is ${lesson.status}, not in force, so there is nothing to revoke.` };
   }
   if (lesson.status === "revoked") return { ok: false, reason: `Lesson ${lesson.id} was revoked. If it should apply again, give the feedback again and it will be proposed fresh.` };
+  // No record of where it was proposed is no proof it was proposed here: the check below
+  // was skipped for such a note, so any ticket could approve it.
+  if (decision === "approve" && !lesson.sourceThread) {
+    return { ok: false, reason: `Lesson ${lesson.id} has no record of where it was proposed, so it can't be approved from a comment. Give the feedback again and it will be proposed fresh.` };
+  }
   if (lesson.sourceThread && lesson.sourceThread !== whereDecided) {
     return { ok: false, reason: `Lesson ${lesson.id} was proposed on ${lesson.sourceThread}. Decide it there.` };
   }

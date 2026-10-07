@@ -849,6 +849,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "an approval older than the lesson proposal approves nothing",
+    file: "apps/agents/src/scribe-jira/lessons.ts",
+    find: "    if (!shown.postedAt || (decidedAt && Date.parse(decidedAt) < Date.parse(shown.postedAt))) {",
+    replace: "    if (false) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a lesson is signed only if its text is what the proposal showed",
+    file: "packages/scribe/src/lessons.ts",
+    find: "  if (expectedBodyHash !== undefined && lessonBodyHash(note.body) !== expectedBodyHash) {",
+    replace: "  if (false) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a lesson with no proposal record can't be approved",
+    file: "packages/scribe/src/lessons.ts",
+    find: "  if (decision === \"approve\" && !lesson.sourceThread) {",
+    replace: "  if (false) {",
+    evals: ["evals/lessons.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

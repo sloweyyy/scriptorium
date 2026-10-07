@@ -111,6 +111,12 @@ export interface IssueState {
    */
   docsPushed?: boolean;
   pendingLessonId?: string;
+  /**
+   * Each lesson proposed on this ticket: the sha256 of the rule text the proposal comment
+   * showed, and when that comment was posted. `approve lesson` signs only that text, and
+   * only when the approving comment came after the proposal it approves.
+   */
+  proposedLessons?: Record<string, { bodyHash: string; postedAt?: string }>;
 }
 
 interface StateFile {

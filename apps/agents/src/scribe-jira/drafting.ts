@@ -324,7 +324,7 @@ export async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: bo
   });
 }
 
-export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]): Promise<void> {
+export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[], authors: Array<string | undefined> = []): Promise<void> {
   const key = issue.key;
   const draft = await ctx.state.readDraft(key);
   if (!draft) {
@@ -346,7 +346,7 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]):
   const known0 = ctx.state.get(key);
   if (known0?.revisedFrom === fromThis && known0.postedDraftHash !== hashDraft(draft)) {
     const recorded = known0.feedback ?? [];
-    for (const item of feedback) if (!recorded.includes(item)) await ctx.state.appendFeedback(key, item);
+    for (const [index, item] of feedback.entries()) if (!recorded.includes(item)) await ctx.state.appendFeedback(key, item, authors[index]);
     await repostDraft(ctx, key, draft);
     await ctx.state.patch(key, { revisedFrom: undefined });
     await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
@@ -368,7 +368,7 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]):
   await ctx.state.patch(key, { draftPublished: false, revisedFrom: fromThis });
   await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
   await handBack(ctx, key, issue);
-  for (const item of feedback) await ctx.state.appendFeedback(key, item);
+  for (const [index, item] of feedback.entries()) await ctx.state.appendFeedback(key, item, authors[index]);
 
   const known = ctx.state.get(key);
   const slug = known?.docSlug ?? docSlug(issue.fields.summary);

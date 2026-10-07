@@ -95,6 +95,11 @@ export interface IssueState {
   appliedLessons?: string[];
   feedback?: string[];
   /**
+   * Who wrote each `feedback` item (Jira account id), index for index. Kept so an erasure
+   * can drop what a person wrote, not only what happens to name them.
+   */
+  feedbackAuthors?: Array<string | null>;
+  /**
    * False when a revision landed after the last publish — the current draft is newer
    * than the vault copy, so `approve` must republish rather than report "already
    * published". Undefined (older ledgers, restart recovery) reads as "published",
@@ -211,9 +216,12 @@ export class JiraState {
     await this.patch(key, { processedComments: [...merged] });
   }
 
-  async appendFeedback(key: string, feedback: string): Promise<void> {
+  async appendFeedback(key: string, feedback: string, author?: string): Promise<void> {
     const current = this.data.issues[key];
-    await this.patch(key, { feedback: [...(current?.feedback ?? []), feedback] });
+    const items = current?.feedback ?? [];
+    // Padded for items recorded before authors were: index i stays item i's author.
+    const authors = [...(current?.feedbackAuthors ?? []), ...Array<null>(Math.max(0, items.length - (current?.feedbackAuthors?.length ?? 0))).fill(null)].slice(0, items.length);
+    await this.patch(key, { feedback: [...items, feedback], feedbackAuthors: [...authors, author ?? null] });
   }
 
   draftPath(key: string): string {

@@ -32,7 +32,7 @@ export interface ErasurePlan {
   requestsScrubbed: number;
   /** Reminders they asked for, or whose text names them: cancelled if not yet sent, text removed. */
   reminders: number;
-  /** Doc-ticket feedback held for the next lesson that names them: dropped. */
+  /** Doc-ticket feedback held for the next lesson that they wrote or that names them: dropped. */
   feedback: number;
   delegations: number;
   /** Vault notes that mention them and aren't removed by this (docs, house rules): review by hand. */
@@ -99,10 +99,12 @@ export async function eraseSubject(
     .filter(([, record]) => (record.meta?.id && requestIds.has(record.meta.id)) || names(record.meta?.text))
     .map(([op]) => op);
 
-  // Doc-ticket feedback waiting to be distilled into a lesson: the items that name them.
+  // Doc-ticket feedback waiting to be distilled into a lesson: what they wrote, and what names them.
   const jiraStateFile = path.join(config.jira.stateDir, "jira-state.json");
-  const jiraState = await readJson<{ issues?: Record<string, { feedback?: string[] }> }>(jiraStateFile);
-  const feedback = Object.values(jiraState?.issues ?? {}).reduce((count, issue) => count + (issue.feedback ?? []).filter((item) => names(item)).length, 0);
+  const jiraState = await readJson<{ issues?: Record<string, { feedback?: string[]; feedbackAuthors?: Array<string | null> }> }>(jiraStateFile);
+  const theirFeedback = (issue: { feedback?: string[]; feedbackAuthors?: Array<string | null> }, index: number) =>
+    names(issue.feedback?.[index]) || matches(issue.feedbackAuthors?.[index] ?? undefined);
+  const feedback = Object.values(jiraState?.issues ?? {}).reduce((count, issue) => count + (issue.feedback ?? []).filter((_, index) => theirFeedback(issue, index)).length, 0);
 
   // Delegations to or from them end. The control file is signed, so it is rewritten through writeControl.
   const controlFile = path.join(config.jira.stateDir, "control.json");
@@ -182,7 +184,12 @@ export async function eraseSubject(
     await writeJson(remindersFile, reminderRecords);
   }
   if (jiraState?.issues && feedback) {
-    for (const issue of Object.values(jiraState.issues)) if (issue.feedback) issue.feedback = issue.feedback.filter((item) => !names(item));
+    for (const issue of Object.values(jiraState.issues)) {
+      if (!issue.feedback) continue;
+      const keep = issue.feedback.map((_, index) => !theirFeedback(issue, index));
+      issue.feedback = issue.feedback.filter((_, index) => keep[index]);
+      if (issue.feedbackAuthors) issue.feedbackAuthors = issue.feedbackAuthors.filter((_, index) => keep[index]);
+    }
     await writeJson(jiraStateFile, jiraState);
   }
   if (delegations) await writeControl(controlFile, { ...control, delegations: keptDelegations }, config.signingKey);
@@ -213,7 +220,7 @@ export function formatErasure(plan: ErasurePlan, dryRun: boolean): string {
     `- their requests: ${verb} cancel ${plan.pendingCancelled.length} not yet carried out, and replace the requester on ${plan.requestsPseudonymized}`,
     `- requests naming them: ${verb} empty the arguments and card text of ${plan.requestsScrubbed} (who approved stays)`,
     `- reminders they asked for or that name them: ${verb} cancel or empty ${plan.reminders}`,
-    `- doc-ticket feedback waiting for a lesson that names them: ${verb} drop ${plan.feedback} (feedback is held without its author, so read jira-state.json for anything else they wrote)`,
+    `- doc-ticket feedback waiting for a lesson that they wrote or that names them: ${verb} drop ${plan.feedback}`,
     `- delegations to or from them: ${verb} end ${plan.delegations}`,
     ...(plan.mentions.length ? [`- review by hand, not changed: ${plan.mentions.join(", ")}`] : []),
     "",

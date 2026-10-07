@@ -155,10 +155,13 @@ describe("privacy erase: the whole deployment", () => {
       "reminder:B9": { op: "reminder:B9", status: "done", startedAt: "t", result: "sent", meta: { kind: "teammate.reminder", id: "B9", channel: "C1", at: "2026-10-01T09:00:00Z", text: "ping <@UALICE> about the demo" } },
       "reminder:C1": { op: "reminder:C1", status: "in-progress", startedAt: "t", meta: { kind: "teammate.reminder", id: "C1", channel: "C1", at: "2026-10-09T09:00:00Z", text: "stand-up" } },
     }));
-    await fs.writeFile(path.join(root, "state", "jira-state.json"), JSON.stringify({ version: 1, issues: { "DOC-1": { feedback: ["say UALICE owns this", "state the timezone"] } } }));
+    await fs.writeFile(
+      path.join(root, "state", "jira-state.json"),
+      JSON.stringify({ version: 1, issues: { "DOC-1": { feedback: ["say UALICE owns this", "state the timezone", "shorter intro, please"], feedbackAuthors: ["acc-bob", "acc-bob", "5b10alice"] } } }),
+    );
 
     const plan = await eraseSubject(config(), vault, "slack:UALICE", { by: "ops" });
-    expect(plan).toMatchObject({ pendingCancelled: ["A1"], requestsScrubbed: 2, reminders: 2, feedback: 1 });
+    expect(plan).toMatchObject({ pendingCancelled: ["A1"], requestsScrubbed: 2, reminders: 2, feedback: 2 });
     const requests = Object.fromEntries((await store.all()).map((entry) => [entry.id, entry]));
     // Approved but not carried out: it would still run her words. Cancelled, emptied.
     expect(requests.A1).toMatchObject({ status: "expired", requestedBy: plan.pseudonym, summary: "(erased on request)" });
@@ -171,7 +174,9 @@ describe("privacy erase: the whole deployment", () => {
     expect(reminders["reminder:B9"].meta.text).toBe("(erased on request)");
     expect(reminders["reminder:C1"]).toMatchObject({ status: "in-progress", meta: { text: "stand-up" } });
     const jiraState = JSON.parse(await fs.readFile(path.join(root, "state", "jira-state.json"), "utf8"));
+    // What names her, and what she wrote (her linked Jira account), go; the authors stay aligned.
     expect(jiraState.issues["DOC-1"].feedback).toEqual(["state the timezone"]);
+    expect(jiraState.issues["DOC-1"].feedbackAuthors).toEqual(["acc-bob"]);
     expect(JSON.stringify([await fs.readFile(path.join(root, "state", "approvals.json"), "utf8"), reminders, jiraState])).not.toMatch(/UALICE|Alice's review/);
   });
 

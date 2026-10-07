@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { audit, eraseFromAudit, type AppConfig, type Vault } from "@scriptorium/core";
+import { appendAuditLine, eraseFromAudit, withAuditLock, type AppConfig, type Vault } from "@scriptorium/core";
 import { FileApprovalStore } from "@scriptorium/policy";
 import { MEMORY_DIR } from "@scriptorium/runtime";
 import { readControl, writeControl } from "./teammate-bot/control";
@@ -105,13 +105,29 @@ export async function eraseSubject(
   };
   if (options.dryRun) return plan;
 
-  if (erased.redacted) {
+  // On the record, without the person: who ran it, a hash for the subject, what it did, and
+  // the digest of every tombstone it wrote. Written in the SAME rename as the tombstones: a
+  // failure between the two used to leave erased lines no record accounted for, and a rerun
+  // could not repair it (the lines were already tombstones, so it erased 0 and recorded 0).
+  await withAuditLock(auditFile, async () => {
     const current = await fs.readFile(auditFile, "utf8").catch(() => "");
     if (current !== before) throw new Error("the audit log changed while erasing (is the service running?): nothing was written; stop it and run again");
+    const record = {
+      type: "privacy.erased",
+      actor: "operator",
+      by: options.by,
+      subject: digest,
+      lines: erased.redacted,
+      tombstones: erased.tombstones,
+      memories: memories.length,
+      requests: theirs.length,
+      delegations,
+    };
     const tmp = `${auditFile}.${process.pid}.erase.tmp`;
-    await fs.writeFile(tmp, erased.text);
+    await fs.mkdir(path.dirname(auditFile), { recursive: true });
+    await fs.writeFile(tmp, appendAuditLine(erased.text, record));
     await fs.rename(tmp, auditFile);
-  }
+  });
   for (const relPath of memories) await vault.deleteFile(relPath);
   for (const request of theirs) {
     await store.update(request.id, (current) => ({
@@ -121,18 +137,6 @@ export async function eraseSubject(
     }));
   }
   if (delegations) await writeControl(controlFile, { ...control, delegations: keptDelegations }, config.signingKey);
-  // On the record, without the person: who ran it, a hash for the subject, and what it did.
-  // `lines` is what verifyAudit accounts erased lines against.
-  await audit(config.auditFile, {
-    type: "privacy.erased",
-    actor: "operator",
-    by: options.by,
-    subject: digest,
-    lines: erased.redacted,
-    memories: memories.length,
-    requests: theirs.length,
-    delegations,
-  });
   return plan;
 }
 

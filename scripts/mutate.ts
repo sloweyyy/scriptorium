@@ -109,8 +109,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "an erased audit line must be accounted for by a privacy.erased record",
     file: "packages/core/src/audit.ts",
-    find: "  if (redacted > accounted) return",
-    replace: "  if (false) return",
+    find: "      if (unrecorded > counted) return",
+    replace: "      if (false) return",
     evals: ["evals/privacy-erase.test.ts"],
   },
   {
@@ -959,6 +959,41 @@ export const MUTANTS: Mutant[] = [
     find: "  const next = gapIds.then(take);",
     replace: "  const next = take();",
     evals: ["evals/gaps.test.ts"],
+  },
+  {
+    control: "an audit line longer than a read window still chains whole",
+    file: "packages/core/src/audit.ts",
+    find: "        if (newline >= 0 || start === 0) return line;",
+    replace: "        return line;",
+    evals: ["evals/audit-chain.test.ts"],
+  },
+  {
+    control: "a tombstone edited after the erasure is found",
+    file: "packages/core/src/audit.ts",
+    find: "      if (recorded.has(tombstone.digest)) continue;",
+    replace: "      if (recorded.size) continue;",
+    evals: ["evals/privacy-erase.test.ts"],
+  },
+  {
+    control: "an erasure's own record is never erased",
+    file: "packages/core/src/audit.ts",
+    find: "    if (parsed.redacted === true || parsed.type === \"privacy.erased\") return line;",
+    replace: "    if (parsed.redacted === true) return line;",
+    evals: ["evals/privacy-erase.test.ts"],
+  },
+  {
+    control: "an extract verifies from the anchor it was exported with",
+    file: "packages/core/src/audit.ts",
+    find: "(options.anchor ?? \"genesis\")",
+    replace: "\"genesis\"",
+    evals: ["evals/audit-chain.test.ts"],
+  },
+  {
+    control: "an extract of a log that doesn't verify is refused",
+    file: "scripts/audit.ts",
+    find: "  if (!verdict.ok) {\n    console.error(`\u2717 ${file}: line ${verdict.line} ${verdict.reason}. Not exporting",
+    replace: "  if (false) {\n    console.error(`\u2717 ${file}: line ${verdict.line} ${verdict.reason}. Not exporting",
+    evals: ["evals/audit-chain.test.ts"],
   },
   {
     control: "a delegation ends by itself",

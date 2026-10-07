@@ -77,6 +77,27 @@ describe("privacy erase: the audit log", () => {
     rows[0] = JSON.stringify({ ...tomb, prev: "0".repeat(64) });
     expect(verifyAudit(record(rows.join("\n")))).toMatchObject({ ok: false, line: 1 });
   });
+
+  it("a tombstone edited after the erasure is found: its record names every tombstone it wrote", async () => {
+    const { appendAuditLine } = await import("@scriptorium/core");
+    const erased = eraseFromAudit((await lines()).join("\n"), subjectIds("UALICE", config().teammate.people));
+    const logged = appendAuditLine(erased.text, { type: "privacy.erased", by: "ops", lines: erased.redacted, tombstones: erased.tombstones });
+    expect(verifyAudit(logged)).toMatchObject({ ok: true, redacted: 3 });
+    // Change who the kept fields say did it, on a tombstone: nothing else moves.
+    const rows = logged.split("\n");
+    const index = rows.findIndex((row) => row.includes('"redacted":true'));
+    rows[index] = (rows[index] as string).replace('"actor":"teammate"', '"actor":"someone-else"');
+    expect(verifyAudit(rows.join("\n"))).toMatchObject({ ok: false, line: index + 1, reason: expect.stringContaining("edited after it was erased") });
+  });
+
+  it("erasing the operator who ran an erasure keeps that erasure's record, so the log still verifies", async () => {
+    const { appendAuditLine } = await import("@scriptorium/core");
+    const erased = eraseFromAudit((await lines()).join("\n"), ["UALICE"]);
+    const logged = appendAuditLine(erased.text, { type: "privacy.erased", by: "UOPS", lines: erased.redacted, tombstones: erased.tombstones });
+    const again = eraseFromAudit(logged, ["UOPS"]);
+    expect(again.redacted).toBe(0);
+    expect(verifyAudit(appendAuditLine(again.text, { type: "privacy.erased", by: "UOTHER", lines: 0, tombstones: [] })).ok).toBe(true);
+  });
 });
 
 describe("privacy erase: the whole deployment", () => {

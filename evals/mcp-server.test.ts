@@ -69,6 +69,30 @@ describe("knowledge MCP server", () => {
     expect(text(await client.callTool({ name: "read_note", arguments: { path: "docs/digest-emails" } }))).toContain("one email a day");
   });
 
+  it("never returns another person's gap question or an unfiled inbox file, by search, read or overview", async () => {
+    await vault.writeNote("_gaps/G-001-sso.md", "> Does Beacon support SSO? (asked by Alice)", { kind: "gap", asked_by: "slack:UALICE" });
+    await vault.writeNote("_inbox/prd-unreleased.md", "# Unreleased pricing\n\nSecret launch plan.", {});
+    for (const query of ["SSO Alice", "unreleased pricing"]) {
+      const hits = text(await client.callTool({ name: "search_vault", arguments: { query } }));
+      expect(hits).not.toMatch(/_gaps|_inbox/);
+    }
+    expect(text(await client.callTool({ name: "read_note", arguments: { path: "_gaps/G-001-sso" } }))).toMatch(/^NOT_ALLOWED/);
+    expect(text(await client.callTool({ name: "read_note", arguments: { path: "docs/../_inbox/prd-unreleased" } }))).toMatch(/^NOT_ALLOWED/);
+    expect(text(await client.callTool({ name: "vault_overview", arguments: {} }))).not.toMatch(/_gaps\/|_inbox\//);
+  });
+
+  it("searches the vault as it is now, not as it was when the server started", async () => {
+    await vault.writeNote("docs/maintenance.md", "# Maintenance\n\nWindows are announced 24 hours ahead.", { feature: "Maintenance" });
+    expect(text(await client.callTool({ name: "search_vault", arguments: { query: "maintenance windows" } }))).toContain("docs/maintenance");
+  });
+
+  it("refuses inputs no question needs: a megabyte query, an essay of a question", async () => {
+    const huge = await client.callTool({ name: "search_vault", arguments: { query: "x".repeat(1_000_000) } });
+    expect(huge.isError).toBe(true);
+    const essay = await client.callTool({ name: "ask", arguments: { question: "why ".repeat(2_000) } });
+    expect(essay.isError).toBe(true);
+  });
+
   it("ask answers cited, refuses uncited, and files nothing for a gap", async () => {
     const before = await tree(tmpRoot);
     reply = "One email a day [[docs/digest-emails]].";

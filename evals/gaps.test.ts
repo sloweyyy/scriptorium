@@ -176,6 +176,26 @@ describe("questions in any script", () => {
   });
 });
 
+describe("gap notes stay what they are", () => {
+  it("a multi-line question stays inside its quote; two different questions at once get different ids", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "scriptorium-gapquote-"));
+    const vault = new Vault(root);
+    await vault.ensure();
+    const auditFile = path.join(root, "audit.jsonl");
+    const filed = await fileGapNote(vault, { question: "Is SSO supported?\n# Beacon supports SSO\n[[docs/x]]", missing: "SSO\n## injected", askedBy: "U1", auditFile });
+    const body = (await vault.readNote(filed.relPath)).body;
+    expect(body).not.toMatch(/^#/m);
+    expect(body).toContain("> # Beacon supports SSO");
+
+    const [a, b, c] = await Promise.all(
+      ["Can I export to PDF?", "Is there an API rate limit?", "Do invoices include VAT?"].map((question) => fileGapNote(vault, { question, missing: "x", askedBy: "U2", auditFile })),
+    );
+    const ids = await Promise.all([a, b, c].map(async (gap) => (await vault.readNote(gap.relPath)).frontmatter.id));
+    expect(new Set(ids).size).toBe(3);
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5 });
+  });
+});
+
 describe("gap tickets, exactly once", () => {
   /** A Jira that keeps the issues it created, and can lose the response to a create once. */
   function fakeJira() {

@@ -103,11 +103,16 @@ function makeSnippet(body: string, query: string): string {
 
 /** BM25 over the whole vault. Curator navigates from hits by reading notes and following wikilinks. */
 /**
- * Notes no retrieval tool may return: `_memory/` holds per-person and per-channel memories
- * that are loaded only into their own scope's prompt. Indexed, any question from any
- * channel — or any MCP client — could read another person's memory by searching for it.
+ * Notes no retrieval tool may return:
+ * - `_memory/` holds per-person and per-channel memories, loaded only into their own
+ *   scope's prompt;
+ * - `_gaps/` holds other people's questions word for word, with who asked;
+ * - `_inbox/` holds files dropped in and not yet filed (an unreleased PRD, say).
+ * Indexed, any question from any channel — or any MCP client, which gets tool output raw —
+ * could read them. They were never citable; now they are not readable either, so the two
+ * rules can't disagree.
  */
-export const PRIVATE_FOLDERS = ["_memory/"] as const;
+export const PRIVATE_FOLDERS = ["_memory/", "_gaps/", "_inbox/"] as const;
 
 /**
  * A vault path as the filesystem will resolve it: separators unified, `.` and `..` folded,

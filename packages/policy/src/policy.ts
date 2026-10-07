@@ -34,6 +34,13 @@ export interface Envelope {
    * accounts: asking as `jira:abc` and approving as `slack:U1` is still approving yourself.
    */
   people?: ReadonlyArray<ReadonlyArray<string>>;
+  /**
+   * Who an approver stands in for (a delegation): `{ "slack:UALT": ["slack:UPM"] }`. One way,
+   * for separation of duties: the stand-in may not approve what the person they stand in for
+   * asked, from any of that person's accounts, while that person may still approve what the
+   * stand-in asked.
+   */
+  standingIn?: Readonly<Record<string, readonly string[]>>;
 }
 
 /** Are these two accounts the same person, as far as the envelope knows? */
@@ -85,6 +92,10 @@ export function mayApprove(
   }
   if (rule.separateDuties && requestedBy && samePerson(envelope, requestedBy, approver.accountId)) {
     return { ok: false, reason: "the person who asked for this cannot also approve it" };
+  }
+  const standingInFor = envelope.standingIn?.[approver.accountId] ?? [];
+  if (rule.separateDuties && requestedBy && standingInFor.some((away) => samePerson(envelope, requestedBy, away))) {
+    return { ok: false, reason: "a stand-in cannot approve what the person they stand in for asked" };
   }
   return { ok: true };
 }

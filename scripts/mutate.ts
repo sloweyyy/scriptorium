@@ -1313,7 +1313,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a stand-in can't approve the requests of the person they stand in for",
     file: "apps/agents/src/teammate-bot/control.ts",
-    find: "  return { ...envelope, tools, people };",
+    find: "  return { ...envelope, tools, standingIn };",
     replace: "  return { ...envelope, tools };",
     evals: ["evals/control.test.ts"],
   },
@@ -1757,6 +1757,27 @@ export const MUTANTS: Mutant[] = [
     find: "  const text = inertMarkdown(input.text);",
     replace: "  const text = input.text;",
     evals: ["evals/publish.test.ts"],
+  },
+  {
+    control: "forgetting empties only the request that saved it",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "          if (request.tool !== \"memory_save\" || !result.memory.approvals.includes(request.id)) continue;",
+    replace: "          if (request.tool !== \"memory_save\") continue;",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "a stand-in is held to the person they stand in for, on any of their accounts",
+    file: "packages/policy/src/policy.ts",
+    find: "standingInFor.some((away) => samePerson(envelope, requestedBy, away))",
+    replace: "standingInFor.includes(requestedBy)",
+    evals: ["evals/control.test.ts"],
+  },
+  {
+    control: "a delegation is one way: the person away may approve their stand-in's requests",
+    file: "apps/agents/src/teammate-bot/control.ts",
+    find: "  for (const entry of active) (standingIn[`slack:${entry.to}`] ??= []).push(`slack:${entry.from}`);",
+    replace: "  for (const entry of active) { (standingIn[`slack:${entry.to}`] ??= []).push(`slack:${entry.from}`); (standingIn[`slack:${entry.from}`] ??= []).push(`slack:${entry.to}`); }",
+    evals: ["evals/control.test.ts"],
   },
   {
     control: "a delegation ends by itself",

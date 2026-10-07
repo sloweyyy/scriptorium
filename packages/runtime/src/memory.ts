@@ -57,22 +57,26 @@ export async function forgetMemory(
   vault: Vault,
   id: string,
   who: { accountId: string; mayCurate: boolean },
-): Promise<{ ok: true; memory: { id: string; scope: string; text: string } } | { ok: false; reason: string }> {
+): Promise<{ ok: true; memory: { id: string; scope: string; text: string; approvals: string[] } } | { ok: false; reason: string }> {
   if (!/^M-[0-9a-f]{8}$/i.test(id)) return { ok: false, reason: "that isn't a memory id (they look like M-1a2b3c4d)" };
   // Every note carrying the id, wherever it sits: memories are loaded by their stored id,
   // so a copy under `_memory/imported/` still applied after `_memory/<id>.md` was deleted.
-  const copies: Array<{ relPath: string; scope: string; text: string }> = [];
+  const copies: Array<{ relPath: string; scope: string; text: string; approval?: string }> = [];
   for (const relPath of await vault.listNotes(MEMORY_DIR)) {
     const note = await vault.readNote(relPath);
     if (note.frontmatter.id !== id) continue;
-    copies.push({ relPath, scope: typeof note.frontmatter.scope === "string" ? note.frontmatter.scope : "", text: note.body.trim() });
+    const approval = typeof note.frontmatter.approval === "string" ? note.frontmatter.approval : undefined;
+    copies.push({ relPath, scope: typeof note.frontmatter.scope === "string" ? note.frontmatter.scope : "", text: note.body.trim(), ...(approval ? { approval } : {}) });
   }
   const first = copies[0];
   if (!first) return { ok: false, reason: `there is no memory ${id}` };
   const own = copies.every((copy) => copy.scope === `person:${who.accountId}`);
   if (!own && !who.mayCurate) return { ok: false, reason: `${id} isn't yours to forget (it's ${first.scope || "unscoped"}); an admin can remove it` };
   for (const copy of copies) await vault.deleteFile(copy.relPath);
-  return { ok: true, memory: { id, scope: first.scope, text: first.text } };
+  // The requests that saved it, by id: matched by text, someone else's request to remember
+  // the same words was emptied too.
+  const approvals = [...new Set(copies.flatMap((copy) => (copy.approval ? [copy.approval] : [])))];
+  return { ok: true, memory: { id, scope: first.scope, text: first.text, approvals } };
 }
 
 export function renderMemories(memories: readonly Memory[]): string {

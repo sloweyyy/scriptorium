@@ -54,9 +54,12 @@ export function newestFirst(attachments: readonly JiraAttachment[]): JiraAttachm
   return [...attachments].sort((a, b) => (b.created ?? "").localeCompare(a.created ?? ""));
 }
 
-export function lastDraftAttachment(issue: JiraIssue): { attachment: JiraAttachment; slug: string } | undefined {
+export function lastDraftAttachment(issue: JiraIssue, botAccountId: string): { attachment: JiraAttachment; slug: string } | undefined {
   return (issue.fields.attachment ?? [])
     .flatMap((attachment) => {
+      // Only one the agent uploaded: anyone can attach a file named `draft-<slug>.md`, and
+      // after a lost ledger it was taken for the agent's own draft and published.
+      if (attachment.author?.accountId !== botAccountId) return [];
       const slug = attachment.filename.match(DRAFT_ATTACHMENT)?.[1];
       // Only a name we could have written: "draft-../_lessons/L-001.md" is not our draft,
       // and its "slug" would have become the path the doc is published to.

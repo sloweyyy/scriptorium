@@ -14,6 +14,8 @@ export interface JiraAttachment {
   content: string;
   size?: number;
   created?: string;
+  /** Who uploaded it. Only the agent's own `draft-*.md` is its draft. */
+  author?: { accountId?: string };
 }
 
 /**

@@ -169,11 +169,23 @@ export class JiraState {
     await fs.mkdir(draftsDir, { recursive: true });
 
     let data: StateFile = { ...EMPTY, issues: {} };
+    let raw: string | undefined;
     try {
-      const parsed = JSON.parse(await fs.readFile(file, "utf8")) as Partial<StateFile>;
+      raw = await fs.readFile(file, "utf8");
+    } catch (error) {
+      // No state yet: start clean; every issue is then treated as first-sight.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (raw !== undefined) {
+      // There, but unreadable: refuse to start, never start clean. A clean start overwrote the
+      // real ledger at the first write and re-judged every ticket as if seen for the first time.
+      let parsed: Partial<StateFile>;
+      try {
+        parsed = JSON.parse(raw) as Partial<StateFile>;
+      } catch (error) {
+        throw new Error(`${file} is unreadable (${error instanceof Error ? error.message : String(error)}); fix it or move it aside to start clean.`);
+      }
       if (parsed && typeof parsed === "object" && parsed.issues) data = { version: 1, issues: parsed.issues };
-    } catch {
-      // No state yet (or unreadable) — start clean; every issue is then treated as first-sight.
     }
     return new JiraState(file, draftsDir, data);
   }
@@ -229,7 +241,10 @@ export class JiraState {
   }
 
   async saveDraft(key: string, markdown: string): Promise<void> {
-    await fs.writeFile(this.draftPath(key), markdown.trim() + "\n");
+    // Written whole or not at all, like the state file: a torn draft is a draft nobody wrote.
+    const temporary = `${this.draftPath(key)}.${process.pid}.tmp`;
+    await fs.writeFile(temporary, markdown.trim() + "\n");
+    await fs.rename(temporary, this.draftPath(key));
   }
 
   async readDraft(key: string): Promise<string | undefined> {
@@ -243,12 +258,16 @@ export class JiraState {
   /** Serialized atomic write — polls overlap, and a torn state file loses the comment ledger. */
   private async flush(): Promise<void> {
     const snapshot = JSON.stringify(this.data, null, 2);
-    this.queue = this.queue.then(async () => {
+    const write = this.queue.then(async () => {
       const temporary = `${this.file}.tmp`;
       await fs.mkdir(path.dirname(this.file), { recursive: true });
       await fs.writeFile(temporary, snapshot + "\n");
       await fs.rename(temporary, this.file);
     });
-    await this.queue;
+    // The queue keeps a tail that can't reject: one failed write (a full disk for a moment)
+    // used to fail every later write until restart, on every ticket, while memory and disk
+    // drifted apart. The next write carries the whole state, so disk catches up.
+    this.queue = write.catch(() => undefined);
+    await write;
   }
 }

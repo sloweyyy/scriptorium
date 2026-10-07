@@ -1164,6 +1164,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-e2e.test.ts"],
   },
   {
+    control: "a Confluence container macro's body is content",
+    file: "packages/jira/src/confluence.ts",
+    find: "inner.match(/<ac:rich-text-body>([\\s\\S]*?)<\\/ac:rich-text-body>/i)?.[1] ?? \"\"",
+    replace: "\"\"",
+    evals: ["evals/confluence.test.ts"],
+  },
+  {
+    control: "a PR note can't hide its AI-generated label",
+    file: "packages/connectors/src/github.ts",
+    find: "${parsed.body.replace(/<!--/g, \"&lt;!--\").replace(/-->/g, \"--&gt;\")}",
+    replace: "${parsed.body}",
+    evals: ["evals/github-connector.test.ts"],
+  },
+  {
+    control: "a Confluence macro match never spans another macro's start",
+    file: "packages/jira/src/confluence.ts",
+    find: "const innermost = /<ac:structured-macro\\b[^>]*>((?:(?!<ac:structured-macro\\b)[\\s\\S])*?)<\\/ac:structured-macro>/gi;",
+    replace: "const innermost = /<ac:structured-macro\\b[^>]*>([\\s\\S]*?)<\\/ac:structured-macro>/gi;",
+    evals: ["evals/confluence.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

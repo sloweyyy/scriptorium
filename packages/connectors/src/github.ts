@@ -185,7 +185,9 @@ export function githubTools(settings: GitHubToolSettings): ToolSpec[] {
             async () =>
               (await call(repo, `/repos/${repo}/issues/${parsed.number}/comments`, z.object({ id: z.number() }), {
                 method: "POST",
-                body: JSON.stringify({ body: `${parsed.body}\n\n_AI-generated review note — verify before acting._\n${OP_MARKER(op)}` }),
+                // The note's own `<!--`/`-->` are neutralised: a body ending in `<!--` opened an
+                // HTML comment that ran to the op marker and hid the disclosure from readers.
+                body: JSON.stringify({ body: `${parsed.body.replace(/<!--/g, "&lt;!--").replace(/-->/g, "--&gt;")}\n\n_AI-generated review note — verify before acting._\n${OP_MARKER(op)}` }),
               })).id,
             { probe: find, meta: { tool: "github_pr_comment", repo, number: parsed.number } },
           );

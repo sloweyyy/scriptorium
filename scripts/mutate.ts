@@ -1402,6 +1402,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/mcp-server.test.ts"],
   },
   {
+    control: "a plan's Retry skips the steps already done",
+    file: "packages/policy/src/plan.ts",
+    find: "        if (recorded?.status === \"done\") {",
+    replace: "        if (false) {",
+    evals: ["evals/plan.test.ts"],
+  },
+  {
+    control: "a plan records each step it finishes",
+    file: "packages/policy/src/plan.ts",
+    find: "        if (stepOp) await steps!.put(",
+    replace: "        if (false) await steps!.put(",
+    evals: ["evals/plan.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

@@ -78,7 +78,16 @@ export function checkPlan(envelope: Envelope, tools: readonly ToolSpec[], input:
   return undefined;
 }
 
-export function planTool(envelope: Envelope, tools: readonly ToolSpec[]): ToolSpec {
+/**
+ * Where a plan remembers which of its steps are done, per approval. Structural, so any
+ * effects ledger fits (the runtime's FileEffectLedger is what production passes).
+ */
+export interface PlanStepLedger {
+  get(op: string): Promise<{ status: string; result?: unknown } | undefined>;
+  put(record: { op: string; status: "done"; startedAt: string; completedAt: string; result: unknown }): Promise<void>;
+}
+
+export function planTool(envelope: Envelope, tools: readonly ToolSpec[], steps?: PlanStepLedger): ToolSpec {
   return {
     name: PLAN_TOOL,
     description:
@@ -87,32 +96,43 @@ export function planTool(envelope: Envelope, tools: readonly ToolSpec[]): ToolSp
     run: async (input: unknown, context?: ToolRunContext) => {
       const problem = checkPlan(envelope, tools, input);
       if (problem) return `NOT_ALLOWED: ${problem}`;
-      const { title, steps } = Plan.parse(input);
+      const { title, steps: planSteps } = Plan.parse(input);
       const lines: string[] = [];
       let done = 0;
-      for (const [index, step] of steps.entries()) {
+      for (const [index, step] of planSteps.entries()) {
         const tool = tools.find((candidate) => candidate.name === step.tool) as ToolSpec;
         const approval = context?.approval ? { ...context.approval, id: `${context.approval.id}#${index + 1}` } : undefined;
+        // A step done before a Retry stays done. Rerun, it met its own effect as a changed
+        // world ("no waiting reminder has that id", "that time has passed") and the plan
+        // reported "nothing was done" after it had done things, and spent the approval.
+        const stepOp = approval && steps ? `plan.step:${approval.id}` : undefined;
+        const recorded = stepOp ? await steps!.get(stepOp) : undefined;
+        if (recorded?.status === "done") {
+          done += 1;
+          lines.push(`${index + 1}. ${String(recorded.result ?? "done")}`);
+          continue;
+        }
         // A throw propagates: the guard gives the approval back and a retry resumes here.
         let result: string;
         try {
           result = await tool.run(step.args, approval ? { approval } : undefined);
         } catch (error) {
-          if (done) throw new PlanPartialError(done, steps.length, index + 1, error);
+          if (done) throw new PlanPartialError(done, planSteps.length, index + 1, error);
           throw error;
         }
         const first = result.split("\n")[0] ?? "";
         if (/^NOT_ALLOWED\b/.test(result)) {
           const reason = first.replace(/^NOT_ALLOWED:\s*/, "");
           const head = done
-            ? `PARTIAL: plan “${title}”: ${done} of ${steps.length} steps done; step ${index + 1} was refused (${reason}), so nothing after it was run.`
+            ? `PARTIAL: plan “${title}”: ${done} of ${planSteps.length} steps done; step ${index + 1} was refused (${reason}), so nothing after it was run.`
             : `NOT_ALLOWED: plan “${title}” stopped at step 1 (${reason}); nothing was done.`;
           return [head, ...lines].join("\n");
         }
         done += 1;
         lines.push(`${index + 1}. ${first}`);
+        if (stepOp) await steps!.put({ op: stepOp, status: "done", startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), result: first });
       }
-      return [`Plan “${title}”: all ${steps.length} steps done.`, ...lines].join("\n");
+      return [`Plan “${title}”: all ${planSteps.length} steps done.`, ...lines].join("\n");
     },
   };
 }

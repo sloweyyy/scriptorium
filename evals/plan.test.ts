@@ -116,6 +116,27 @@ describe("a plan", () => {
     expect((outcome as { result: string }).result.split("\n")).toEqual(["Plan “Meeting follow-ups”: all 3 steps done.", "1. Created jira:DOC-1", "2. Created jira:DOC-2", "3. Created jira:DOC-3"]);
   });
 
+  it("a Retry skips the steps already done, even ones that would now refuse", async () => {
+    // A step like cancel_reminder can't run twice: the second time, the reminder is gone and it
+    // refuses. Rerun on a Retry, it stopped the plan at step 1 with "nothing was done", after
+    // it had done things, and the approval was spent.
+    let cancelled = false;
+    const cancelOnce: ToolSpec = {
+      name: "jira_labels",
+      description: "cancel",
+      inputSchema: z.object({ key: z.string() }).passthrough(),
+      run: async () => (cancelled ? "NOT_ALLOWED: no waiting reminder in this channel has that id" : ((cancelled = true), "Cancelled reminder r1.")),
+    };
+    let failOnce = true;
+    const createOnce: ToolSpec = { ...createIssue, run: async (input, context) => { if (failOnce) { failOnce = false; throw new Error("Jira 502"); } return createIssue.run(input, context); } };
+    const ledger = new MemoryEffectLedger();
+    const resumable = planTool(envelope, [cancelOnce, createOnce, memory], ledger);
+    const input = { title: "Wrap up", steps: [{ tool: "jira_labels", args: { key: "DOC-1" } }, { tool: "jira_create_issue", args: { summary: "Follow-up" } }] };
+    await expect(resumable.run(input, { approval: { id: "ap-9" } })).rejects.toThrow("PARTIAL: 1 of 2 steps done");
+    const retried = await resumable.run(input, { approval: { id: "ap-9" } });
+    expect(retried.split("\n")).toEqual(["Plan “Wrap up”: all 2 steps done.", "1. Cancelled reminder r1.", "2. Created jira:DOC-1"]);
+  });
+
   it("stops at a refusal, and says what was and wasn't done", async () => {
     const partial = await plan.run(steps("A", "refuse me", "C"), { approval: { id: "ap-1" } });
     expect(partial.split("\n")[0]).toBe("PARTIAL: plan “Meeting follow-ups”: 1 of 3 steps done; step 2 was refused (HR is outside the Jira projects this agent may use.), so nothing after it was run.");

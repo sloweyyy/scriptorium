@@ -339,6 +339,7 @@ describe("restart with no ledger", () => {
             mimeType: "text/markdown",
             content: "https://example.atlassian.net/rest/api/2/attachment/content/a1",
             created: "2026-08-20T09:30:00.000+0000",
+            author: { accountId: "bot-1" },
           },
         ],
       },
@@ -348,11 +349,13 @@ describe("restart with no ledger", () => {
     stop.stop();
 
     const posted = comments.slice(3);
-    // Exactly one reply: the wake after its last word. No second HELP, no redraft, and the
-    // pre-restart feedback stayed history instead of replaying as a duplicate revision
-    // (which would have needed the model and surfaced as an error comment).
-    expect(posted).toHaveLength(1);
+    // The wake after its last word, and the recovered draft posted again: nothing on the
+    // ticket proves which version a reviewer read, so an approval must follow this repost.
+    // No second HELP, no redraft, and the pre-restart feedback stayed history instead of
+    // replaying as a duplicate revision (which would have needed the model).
+    expect(posted).toHaveLength(2);
     expect(posted[0]?.body).toContain("draft-incident-timeline-embed.md");
+    expect(posted[1]?.body).toContain("Draft (posted again)");
     expect(posted[0]?.body).not.toContain("How to work with me");
     expect(posted[0]?.body).not.toContain("hit an error");
   });

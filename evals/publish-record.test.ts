@@ -83,8 +83,11 @@ describe("a publish writes a file in docs/, and nowhere else", () => {
 
   it("a crafted draft attachment name is not taken for the agent's own draft", async () => {
     const { lastDraftAttachment } = await import("@scriptorium/agents");
-    const attachment = (filename: string, created: string) => ({ id: filename, filename, mimeType: "text/markdown", content: "https://x", created });
+    const attachment = (filename: string, created: string, author = "bot-1") => ({ id: filename, filename, mimeType: "text/markdown", content: "https://x", created, author: { accountId: author } });
     const issue = { id: "1", key: "DOC-1", fields: { summary: "s", attachment: [attachment("draft-digest-emails.md", "2026-09-29T10:00:00Z"), attachment("draft-../_lessons/L-001.md", "2026-09-30T10:00:00Z")] } };
-    expect(lastDraftAttachment(issue as never)?.slug).toBe("digest-emails");
+    expect(lastDraftAttachment(issue as never, "bot-1")?.slug).toBe("digest-emails");
+    // A newer one with a fine name, uploaded by a person, is not the agent's draft either.
+    const planted = { ...issue, fields: { ...issue.fields, attachment: [...issue.fields.attachment, attachment("draft-billing-export.md", "2026-10-01T10:00:00Z", "someone")] } };
+    expect(lastDraftAttachment(planted as never, "bot-1")?.slug).toBe("digest-emails");
   });
 });

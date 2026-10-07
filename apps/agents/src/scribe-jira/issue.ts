@@ -11,7 +11,7 @@ import {
   say,
   type Ctx,
 } from "./context";
-import { hashDraft, repostDraft, runDraft, runRevise } from "./drafting";
+import { repostDraft, runDraft, runRevise } from "./drafting";
 import { runLessonDecision } from "./lessons";
 import { runPublish } from "./publishing";
 import { dueForRemoteLinkCheck, lastDraftAttachment, remoteLinkFingerprint, sourceFingerprint } from "./source";
@@ -85,7 +85,7 @@ async function runWake(ctx: Ctx, issue: JiraIssue): Promise<void> {
 /** Rebuild what the ledger lost from the evidence that outlives it: the ticket itself and the vault. */
 async function recoverState(ctx: Ctx, issue: JiraIssue): Promise<IssueState> {
   const key = issue.key;
-  const attached = lastDraftAttachment(issue);
+  const attached = lastDraftAttachment(issue, ctx.botAccountId);
   // The inputs it has already judged. Without this the tail retry re-posts NO_PRD or the
   // same contract questions on a ticket it greeted but could not draft — a duplicate, not
   // a retry. A wake still answers (it forces the draft), and if the PRD actually changed
@@ -106,9 +106,10 @@ async function recoverState(ctx: Ctx, issue: JiraIssue): Promise<IssueState> {
       // can actually see, rather than quietly starting a different one.
       const bytes = await ctx.client.downloadAttachment(attached.attachment);
       await ctx.state.saveDraft(key, bytes.toString("utf8"));
-      // It came off the ticket, so it IS the draft on the ticket: approvable as it stands.
-      patch.postedDraftHash = hashDraft(bytes.toString("utf8"));
-      if (attached.attachment.created) patch.draftPostedAt = attached.attachment.created;
+      // Not approvable as it stands: an attachment can exist without the comment that showed
+      // it (its post failed), and nothing here proves which draft a reviewer read. It is
+      // posted again, and an approval must come after that.
+      patch.draftUnposted = true;
     } catch {
       // The attachment is still proof that a draft exists; runRevise force-drafts when the
       // local copy is missing, so a failed download degrades to a redraft, not to silence.

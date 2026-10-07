@@ -237,6 +237,26 @@ describe("poller state", () => {
     await fs.rm(stateDir, { recursive: true, force: true, maxRetries: 5 });
   });
 
+  it("one failed write doesn't fail every write after it, and the next one carries the whole state", async () => {
+    const state = await JiraState.open(stateDir);
+    await state.markProcessed("DOC-1", ["c-1"]);
+    // The file's path is briefly a directory: the write fails.
+    const file = path.join(stateDir, "jira-state.json");
+    await fs.rm(file);
+    await fs.mkdir(`${file}.tmp`);
+    await expect(state.markProcessed("DOC-1", ["c-2"])).rejects.toThrow();
+    await fs.rm(`${file}.tmp`, { recursive: true });
+    // The cause is gone: writes work again, and the disk has everything, c-2 included.
+    await state.markProcessed("DOC-1", ["c-3"]);
+    const reopened = await JiraState.open(stateDir);
+    expect(reopened.get("DOC-1")?.processedComments).toEqual(expect.arrayContaining(["c-1", "c-2", "c-3"]));
+  });
+
+  it("an unreadable ledger refuses to start, instead of starting clean and overwriting it", async () => {
+    await fs.writeFile(path.join(stateDir, "jira-state.json"), "{ half a file");
+    await expect(JiraState.open(stateDir)).rejects.toThrow(/unreadable/);
+  });
+
   it("seeds an issue's status on first sight instead of acting on it", async () => {
     const state = await JiraState.open(stateDir);
     await state.seed("DOC-1", "Approved");

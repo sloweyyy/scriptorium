@@ -143,8 +143,9 @@ on the site. To pick up a later edit to the page, comment `draft`.
 3. **Install to workspace** and copy the *Bot User OAuth Token* (`xoxb-…`). Under *Basic
    Information → App-Level Tokens*, create one with `connections:write` (`xapp-…`). Put them
    in `CURATOR_SLACK_BOT_TOKEN` and `CURATOR_SLACK_APP_TOKEN` in `.env`.
-4. List the channel ids Curator may answer in as `CURATOR_SLACK_CHANNELS` (with none listed it
-   answers nowhere), and optionally cap spend with `CURATOR_DAILY_TOKENS`.
+4. List the channel ids Curator may answer in as `CURATOR_SLACK_CHANNELS`. Unset, it answers
+   only in the notify channel (`SLACK_NOTIFY_CHANNEL`), and with neither set, nowhere. You can
+   cap spend with `CURATOR_DAILY_TOKENS`.
 5. Run `pnpm dev`, invite Curator to one of those channels, then ask `@Curator <question>`. You
    get a grounded answer with citations, or a gap note **plus a new Jira doc request**.
 

@@ -33,4 +33,13 @@ describe("notify-channel cards", () => {
     const text = JSON.stringify(posted);
     expect(text).not.toMatch(/<!channel>|<!here>|<https:\/\/evil\.example/);
   });
+
+  it("invites questions only where Curator will answer them", async () => {
+    await announcePublished(config, { issueKey: "DOC-3", issueUrl: "https://x/DOC-3", feature: "Digest", approvedBy: "PM", relPath: "docs/digest.md" });
+    expect(JSON.stringify(posted)).toContain("Ask me about it");
+    posted.length = 0;
+    const elsewhere = { ...config, curator: { ...config.curator, channels: ["CQA"] } } as AppConfig;
+    await announcePublished(elsewhere, { issueKey: "DOC-3", issueUrl: "https://x/DOC-3", feature: "Digest", approvedBy: "PM", relPath: "docs/digest.md" });
+    expect(JSON.stringify(posted)).not.toContain("Ask me about it");
+  });
 });

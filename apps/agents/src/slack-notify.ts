@@ -1,4 +1,5 @@
 import { approvalButtonValue } from "./slack-approval";
+import { curatorChannels } from "./curator-bot";
 import type { AppConfig } from "@scriptorium/core";
 import { escapeMrkdwn } from "@scriptorium/connectors";
 import { WebClient } from "@slack/web-api";
@@ -43,7 +44,8 @@ export async function announcePublished(config: AppConfig, input: PublishedAnnou
     `• Note: \`${input.relPath}\``,
     input.pullRequestUrl ? `• Pull request: <${input.pullRequestUrl}|merge to publish to the site>` : undefined,
     input.appliedLessons?.length ? `• House rules applied: ${escapeMrkdwn(input.appliedLessons.join(", "))}` : undefined,
-    "Ask me about it and I'll answer from this note, with the citation.",
+    // Only where Curator will answer: an invitation it then refuses is worse than none.
+    curatorChannels(config).includes(channel) ? "Ask me about it and I'll answer from this note, with the citation." : undefined,
   ].filter((line): line is string => Boolean(line));
 
   try {

@@ -27,25 +27,44 @@ function listPrefix(marker: string, indent: string): string {
   return marker.repeat(depth);
 }
 
+/** Characters that open a Jira macro or link, escaped. (`|` stays: body tables use it.) */
+function escapeMacro(text: string): string {
+  return text.replace(/([{}[\]])/g, "\\$1");
+}
+
+/**
+ * A link whose label and target are what they look like. The label is escaped (a `|` in it
+ * made its second half the real target, and macros in it stayed live) and a `|` in the
+ * target is percent-encoded.
+ */
+function jiraLink(label: string, href: string): string {
+  return `[${escapeMacro(label).replace(/\|/g, "\\|")}|${href.replace(/\|/g, "%7C").replace(/[{}[\]]/g, encodeURIComponent)}]`;
+}
+
 /** Markdown -> Jira wiki markup. Code, images and links are protected before anything else runs. */
 export function markdownToJira(markdown: string): string {
   const blocks: string[] = [];
   let text = markdown.replace(/\r\n/g, "\n");
 
-  // 1. Fenced code first: nothing inside it may be transformed or escaped.
+  // 1. Fenced code first: nothing inside it may be transformed or escaped, except the one
+  //    thing that ends it. A `{code}` (or `{noformat}`) in the code closed the macro early,
+  //    and everything after it ran live: mentions notified, macros rendered.
   text = text.replace(/```([\w-]*)\n?([\s\S]*?)```/g, (_match, language: string, code: string) =>
-    protect(blocks, `{code${language ? `:${language}` : ""}}\n${code.replace(/\n+$/, "")}\n{code}`),
+    protect(blocks, `{code${language ? `:${language}` : ""}}\n${code.replace(/\n+$/, "").replace(/\{(code|noformat)/gi, "{\u200b$1")}\n{code}`),
   );
-  // 2. Inline code.
-  text = text.replace(/`([^`\n]+)`/g, (_match, code: string) => protect(blocks, `{{${code}}}`));
-  // 3. Images and links, before bracket escaping would eat them.
-  text = text.replace(/!\[[^\]]*\]\(([^)\s]+)[^)]*\)/g, (_match, source: string) => protect(blocks, `!${source}!`));
-  text = text.replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, (_match, label: string, href: string) =>
-    protect(blocks, `[${label}|${href}]`),
+  // 2. Inline code, braces escaped: `x}}` ended the monospace and let the rest out.
+  text = text.replace(/`([^`\n]+)`/g, (_match, code: string) => protect(blocks, `{{${escapeMacro(code)}}}`));
+  // 3. Images and links, before bracket escaping would eat them. An image is embedded only
+  //    when it is an attachment on the page; one at a URL becomes a link, or every reader's
+  //    browser would fetch it (an address that carries data out is a leak).
+  text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, (_match, alt: string, source: string) =>
+    protect(blocks, /^[a-z][a-z0-9+.-]*:|^\/\//i.test(source) ? jiraLink(alt || source, source) : `!${source.replace(/[!|]/g, "")}!`),
   );
+  text = text.replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, (_match, label: string, href: string) => protect(blocks, jiraLink(label, href)));
 
-  // 4. Escape the characters that would otherwise open a Jira macro or link.
-  text = text.replace(/([{}[\]])/g, "\\$1");
+  // 4. Escape the characters that would otherwise open a Jira macro or link, or an image:
+  //    `!https://…!` in plain text embedded it too.
+  text = escapeMacro(text).replace(/!(?=[^\s!][^!\n]*!)/g, "\\!");
 
   // 5. Block structure, line by line.
   text = text

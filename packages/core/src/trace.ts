@@ -123,12 +123,22 @@ export function auditMetrics(lines: readonly AuditLine[]): string {
   return `${out.join("\n")}\n`;
 }
 
+/**
+ * One audit line for a terminal. Strings come from people and models, so control characters
+ * are shown, never sent: a newline in a question printed a forged `policy.ran … approvedBy=`
+ * line, and ESC/BEL bytes reached the terminal as escape sequences (erase line, hyperlinks).
+ */
 export function formatLine(line: AuditLine): string {
   const { ts, run: _run, type, ...rest } = line;
   const detail = Object.entries(rest)
-    .map(([key, value]) => `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`)
+    .map(([key, value]) => `${printable(key)}=${typeof value === "string" ? printable(value) : JSON.stringify(value)}`)
     .join(" ");
-  return `${ts}  ${type.padEnd(28)} ${detail}`;
+  return `${printable(String(ts))}  ${printable(String(type)).padEnd(28)} ${detail}`;
+}
+
+/** Control characters as visible escapes (`\n`, `\u001b`); everything else as it is. */
+function printable(text: string): string {
+  return text.replace(/[\p{Cc}\u2028\u2029]/gu, (char) => JSON.stringify(char).slice(1, -1));
 }
 
 const HTML_ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };

@@ -294,8 +294,10 @@ describe("run viewer", () => {
     const at = `http://127.0.0.1:${(viewer.address() as AddressInfo).port}`;
     try {
       expect((await fetch(`${at}/runs/3f2a9c1b`)).status).toBe(404);
-      expect((await fetch(`${at}/runs/3f2a9c1b?token=wrong`)).status).toBe(404);
-      const page = await fetch(`${at}/runs/3f2a9c1b?token=tok-123`);
+      expect((await fetch(`${at}/runs/3f2a9c1b`, { headers: { Authorization: "Bearer wrong" } })).status).toBe(404);
+      // The operator's key in the query string would be written to every request log: refused.
+      expect((await fetch(`${at}/runs/3f2a9c1b?token=tok-123`)).status).toBe(404);
+      const page = await fetch(`${at}/runs/3f2a9c1b`, { headers: { Authorization: "Bearer tok-123" } });
       expect(page.status).toBe(200);
       expect(page.headers.get("content-security-policy")).toContain("default-src 'none'");
       const html = await page.text();
@@ -304,7 +306,7 @@ describe("run viewer", () => {
       expect(html).toContain("&lt;script&gt;");
       expect(html).not.toContain("other.run");
       // A short prefix is not "show me everything".
-      expect((await fetch(`${at}/runs/f?token=tok-123`)).status).toBe(404);
+      expect((await fetch(`${at}/runs/f`, { headers: { Authorization: "Bearer tok-123" } })).status).toBe(404);
     } finally {
       await new Promise<void>((resolve) => viewer.close(() => resolve()));
     }
@@ -335,8 +337,8 @@ describe("run viewer: signed links", () => {
       expect((await fetch(`${at}/runs/${B}?sig=${runLinkSignature("tok-123", A)}`)).status).toBe(404);
       expect((await fetch(`${at}/runs/3f2a9c1b?sig=${runLinkSignature("tok-123", "3f2a9c1b")}`)).status).toBe(404);
       expect((await fetch(`${at}/runs/${A}?sig=${runLinkSignature("wrong-secret", A)}`)).status).toBe(404);
-      // The operator's own token still opens any run.
-      expect((await fetch(`${at}/runs/${B}?token=tok-123`)).status).toBe(200);
+      // The operator's own token still opens any run, from the header.
+      expect((await fetch(`${at}/runs/${B}`, { headers: { Authorization: "Bearer tok-123" } })).status).toBe(200);
     } finally {
       await new Promise<void>((resolve) => viewer.close(() => resolve()));
     }

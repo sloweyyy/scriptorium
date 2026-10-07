@@ -219,7 +219,8 @@ export interface WebhookSettings {
    */
   jiraHmacSecret?: string;
   /**
-   * Opens the run viewer (`/runs/<id>?token=…`). Unset: no viewer. The page shows a run's
+   * Opens any run in the viewer (`/runs/<id>` with `Authorization: Bearer …`; a reply's own
+   * link is signed for its run instead). Unset: no viewer. The page shows a run's
    * audit trail — questions, tool calls, approvals — so it is a credential, not a nicety.
    */
   traceToken?: string;

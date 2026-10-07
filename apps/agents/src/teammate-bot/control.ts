@@ -154,23 +154,26 @@ export function applyAdminCommand(current: Control, args: string, admin: string,
  * wherever the away approver is listed. Nothing else changes — denials, tiers and
  * separation of duties are the envelope's own.
  */
-export function withDelegations<E extends { tools: Readonly<Record<string, { approvers?: readonly string[] }>>; standingIn?: Readonly<Record<string, readonly string[]>> }>(envelope: E, control: Control, now = Date.now()): E {
+export function withDelegations<E extends { tools: Readonly<Record<string, { approvers?: readonly string[]; standingIn?: Readonly<Record<string, readonly string[]>> }>> }>(envelope: E, control: Control, now = Date.now()): E {
   const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);
   if (!active.length) return envelope;
   const tools = Object.fromEntries(
     Object.entries(envelope.tools).map(([name, rule]) => {
       const approvers = rule.approvers ?? [];
-      const added = active.filter((entry) => approvers.includes(`slack:${entry.from}`)).map((entry) => `slack:${entry.to}`);
-      return [name, added.length ? { ...rule, approvers: [...new Set([...approvers, ...added])] } : rule];
+      // Only where the delegation makes them an approver: where they already were one (or
+      // "*" lets anyone), their own right stays theirs, and the delegation takes nothing.
+      const delegated = active.filter((entry) => approvers.includes(`slack:${entry.from}`) && !approvers.includes(`slack:${entry.to}`));
+      if (!delegated.length) return [name, rule];
+      // There, a stand-in is the away approver for separation of duties too: without this,
+      // an approver who delegated to a second account of their own could approve their own
+      // requests from it, a right the delegator never had. One way: listing them as one
+      // person also stopped the delegator approving what the stand-in asked.
+      const standingIn: Record<string, string[]> = Object.fromEntries(Object.entries(rule.standingIn ?? {}).map(([to, from]) => [to, [...from]]));
+      for (const entry of delegated) (standingIn[`slack:${entry.to}`] ??= []).push(`slack:${entry.from}`);
+      return [name, { ...rule, approvers: [...new Set([...approvers, ...delegated.map((entry) => `slack:${entry.to}`)])], standingIn }];
     }),
   );
-  // A stand-in is the away approver, for separation of duties too: without this, an approver
-  // who delegated to a second account of their own could approve their own requests from it,
-  // a right the delegator never had. One way: listing them as one person also stopped the
-  // delegator approving what the stand-in asked.
-  const standingIn: Record<string, string[]> = Object.fromEntries(Object.entries(envelope.standingIn ?? {}).map(([to, from]) => [to, [...from]]));
-  for (const entry of active) (standingIn[`slack:${entry.to}`] ??= []).push(`slack:${entry.from}`);
-  return { ...envelope, tools, standingIn };
+  return { ...envelope, tools };
 }
 
 export function describeControl(control: Control): string {

@@ -95,7 +95,9 @@ export function toSlackMrkdwn(markdown: string): string {
 /** Slack's three control characters, as entities: what's left of `<` can't open a mention or link. */
 function escapeSlack(text: string): string {
   // A `>` that starts a line is a block quote, and can't open anything: it stays.
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/^(\s*)&gt;/gm, "$1>");
+  // An entity already there stays one: the vault stores `&lt;` for a literal `<`, and Slack
+  // delivers `&amp;`, so escaping them again showed readers `&lt;Enter&gt;` and `R&amp;D`.
+  return text.replace(/&(?!(?:amp|lt|gt);)/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/^(\s*)&gt;/gm, "$1>");
 }
 
 /** Slack rejects an mrkdwn text object over this. */

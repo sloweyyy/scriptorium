@@ -949,7 +949,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "every line of a gap question stays quoted",
     file: "packages/curator/src/gaps.ts",
-    find: "    ...input.question.split(/\\r?\\n/).map((line) => `> ${inertMarkdown(line)}`),",
+    find: "    ...inertMarkdown(input.question).split(/\\r?\\n/).map((line) => `> ${line}`),",
     replace: "    `> ${inertMarkdown(input.question)}`,",
     evals: ["evals/gaps.test.ts"],
   },
@@ -1234,27 +1234,6 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/slack-approval.test.ts"],
   },
   {
-    control: "a tag in untrusted vault text can't open",
-    file: "packages/core/src/inert.ts",
-    find: "    .replace(/<(?=[A-Za-z!/?])(?!(?:https?|mailto):)/gi, \"&lt;\")\n",
-    replace: "",
-    evals: ["evals/inert.test.ts"],
-  },
-  {
-    control: "a link that doesn't go to the web loses its target",
-    file: "packages/core/src/inert.ts",
-    find: "(SAFE_SCHEMES.has(scheme.toLowerCase()) ? match : \"](#unsafe-link-removed:\")",
-    replace: "match",
-    evals: ["evals/inert.test.ts"],
-  },
-  {
-    control: "code in vault text is left exactly as written",
-    file: "packages/core/src/inert.ts",
-    find: "    .map((part) => (part.code ? part.text : inertProse(part.text)))",
-    replace: "    .map((part) => inertProse(part.text))",
-    evals: ["evals/inert.test.ts"],
-  },
-  {
     control: "lint sends back raw HTML",
     file: "packages/scribe/src/lint.ts",
     find: "  if (unsafe.html.length) {",
@@ -1264,8 +1243,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a gap note's question is written inert",
     file: "packages/curator/src/gaps.ts",
-    find: "map((line) => `> ${inertMarkdown(line)}`)",
-    replace: "map((line) => `> ${line}`)",
+    find: "    ...inertMarkdown(input.question).split(/\\r?\\n/).map((line) => `> ${line}`),",
+    replace: "    ...input.question.split(/\\r?\\n/).map((line) => `> ${line}`),",
     evals: ["evals/inert.test.ts"],
   },
   {
@@ -1344,6 +1323,34 @@ export const MUTANTS: Mutant[] = [
     find: "  return process.env.SCRIPTORIUM_SIGNING_KEY?.trim() || undefined;",
     replace: "  return process.env.SCRIPTORIUM_SIGNING_KEY || undefined;",
     evals: ["evals/approval-signing.test.ts"],
+  },
+  {
+    control: "a tag in untrusted vault text can't open",
+    file: "packages/core/src/inert.ts",
+    find: "      for (let index = start; index < end; index += 1) if (markdown[index] === \"<\") lessThan.add(index);\n",
+    replace: "",
+    evals: ["evals/inert.test.ts"],
+  },
+  {
+    control: "a link that doesn't go to the web loses its target",
+    file: "packages/core/src/inert.ts",
+    find: "    if (found >= 0) schemes.push({ start: start + found, end: start + found + scheme.length + 1 });",
+    replace: "",
+    evals: ["evals/inert.test.ts"],
+  },
+  {
+    control: "code in vault text is left exactly as written",
+    file: "packages/core/src/inert.ts",
+    find: "    if (node.type === \"html\") {\n      for (let index = start;",
+    replace: "    if (node.type === \"html\" || node.type === \"code\" || node.type === \"inlineCode\") {\n      for (let index = start;",
+    evals: ["evals/inert.test.ts"],
+  },
+  {
+    control: "Slack escaping leaves an entity that is already there",
+    file: "apps/agents/src/slack-format.ts",
+    find: "text.replace(/&(?!(?:amp|lt|gt);)/g, \"&amp;\")",
+    replace: "text.replace(/&/g, \"&amp;\")",
+    evals: ["evals/slack-format.test.ts"],
   },
   {
     control: "a delegation ends by itself",

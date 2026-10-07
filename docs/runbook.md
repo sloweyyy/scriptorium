@@ -76,9 +76,13 @@ Every line is hash-chained to the one before it, so an edited, removed or reorde
 detectable:
 
 - `pnpm auditlog verify [file]` checks the chain and names the first line that breaks it.
-- `pnpm auditlog export --from 2026-09-01 --to 2026-09-30 [file]` writes that range as JSONL,
-  with a digest on stderr (an HMAC with `SCRIPTORIUM_SIGNING_KEY` when set), so an extract
-  handed to a reviewer can be checked against it.
+- `pnpm auditlog export --from 2026-09-01 --to 2026-09-30 [file]` writes that range as JSONL.
+  It refuses a log that doesn't verify. On stderr it prints the **anchor** (the hash the
+  extract's first line chains onto) and a digest over the anchor and the extract.
+- The reviewer checks the extract on its own with `pnpm auditlog verify --anchor <anchor> extract.jsonl`.
+- When `SCRIPTORIUM_SIGNING_KEY` is set, the digest is an HMAC under a key derived from it.
+  Give the reviewer `pnpm auditlog export-key`, never the signing key: the derived key
+  checks exports and can't sign an approval.
 
 Set `AUDIT_FILE` to a path on the persistent state volume (for example
 `/state/audit/log.jsonl`). The default, `audit/log.jsonl` in the working directory, does not

@@ -1,12 +1,15 @@
 /**
- * `pnpm auditlog verify [file]` — does the audit log's hash chain hold?
+ * `pnpm auditlog verify [--anchor <hash>] [file]` — does the audit log's hash chain hold? With
+ *   `--anchor`, the file is an extract whose first line follows that hash.
  * `pnpm auditlog export --from YYYY-MM-DD --to YYYY-MM-DD [file]` — the lines in that range, as
- * JSONL on stdout, with a digest on stderr (HMAC-signed with SCRIPTORIUM_SIGNING_KEY if set),
- * so an exported extract can be checked against what was handed over.
+ *   JSONL on stdout; on stderr, the anchor the extract starts from and a digest, HMAC-signed
+ *   when SCRIPTORIUM_SIGNING_KEY is set. Refused when the log itself doesn't verify.
+ * `pnpm auditlog export-key` — the key that checks an export's HMAC, to hand to whoever
+ *   checks it. Derived from the signing key, so it can't sign an approval.
  */
 import { createHash, createHmac } from "node:crypto";
 import fs from "node:fs/promises";
-import { loadConfig, verifyAudit } from "@scriptorium/core";
+import { auditExportKey, auditLineHash, loadConfig, verifyAudit } from "@scriptorium/core";
 
 const [command, ...rest] = process.argv.slice(2);
 const flag = (name: string) => {
@@ -21,7 +24,8 @@ if (text === undefined) {
 }
 
 if (command === "verify") {
-  const verdict = verifyAudit(text);
+  const anchor = flag("anchor");
+  const verdict = verifyAudit(text, anchor ? { anchor } : {});
   if (verdict.ok) {
     console.log(`✓ ${file}: ${verdict.lines} lines, ${verdict.chained} chained${verdict.redacted ? `, ${verdict.redacted} erased (privacy:erase)` : ""}, chain intact.`);
   } else {
@@ -29,9 +33,16 @@ if (command === "verify") {
     process.exitCode = 1;
   }
 } else if (command === "export") {
+  // An extract of a log that doesn't verify proves nothing, however well it is signed.
+  const verdict = verifyAudit(text);
+  if (!verdict.ok) {
+    console.error(`✗ ${file}: line ${verdict.line} ${verdict.reason}. Not exporting: an extract of a broken log proves nothing.`);
+    process.exit(1);
+  }
   const from = flag("from") ?? "0000";
   const to = `${flag("to") ?? "9999"}￿`;
-  const lines = text.split("\n").filter((line) => {
+  const all = text.split("\n").filter((line) => line.trim());
+  const lines = all.filter((line) => {
     const ts = (() => {
       try {
         return String((JSON.parse(line) as { ts?: unknown }).ts ?? "");
@@ -43,10 +54,21 @@ if (command === "verify") {
   });
   const body = lines.map((line) => `${line}\n`).join("");
   process.stdout.write(body);
-  const key = process.env.SCRIPTORIUM_SIGNING_KEY;
-  const digest = key ? `hmac-sha256 ${createHmac("sha256", key).update(body).digest("hex")}` : `sha256 ${createHash("sha256").update(body).digest("hex")}`;
-  console.error(`${lines.length} lines · ${digest}`);
+  // The hash the extract's first line chains onto, so `verify --anchor` can check it alone.
+  const firstIndex = lines.length ? all.indexOf(lines[0] as string) : -1;
+  const anchor = firstIndex > 0 ? auditLineHash(all[firstIndex - 1] as string) : "genesis";
+  const key = auditExportKey(process.env.SCRIPTORIUM_SIGNING_KEY);
+  const digest = key ? `hmac-sha256 ${createHmac("sha256", key).update(`${anchor}\n${body}`).digest("hex")}` : `sha256 ${createHash("sha256").update(`${anchor}\n${body}`).digest("hex")}`;
+  console.error(`${lines.length} lines · anchor ${anchor} · ${digest} (over the anchor line and the extract)`);
+} else if (command === "export-key") {
+  const key = auditExportKey(process.env.SCRIPTORIUM_SIGNING_KEY);
+  if (!key) {
+    console.error("SCRIPTORIUM_SIGNING_KEY is not set, so exports carry a plain sha256 and need no key.");
+    process.exitCode = 1;
+  } else {
+    console.log(key);
+  }
 } else {
-  console.error("usage: pnpm auditlog verify [file] | pnpm auditlog export --from YYYY-MM-DD --to YYYY-MM-DD [file]");
+  console.error("usage: pnpm auditlog verify [--anchor <hash>] [file] | pnpm auditlog export --from YYYY-MM-DD --to YYYY-MM-DD [file] | pnpm auditlog export-key");
   process.exitCode = 2;
 }

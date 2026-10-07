@@ -38,3 +38,37 @@ describe("the audit chain", () => {
     expect(verifyAudit(await fs.readFile(file, "utf8"))).toMatchObject({ ok: false, line: 3 });
   });
 });
+
+describe("the audit chain at its edges", () => {
+  it("a line longer than any read window still chains: the next line follows all of it", async () => {
+    // One revision's feedback batch, in a script that takes 3 bytes a character.
+    await audit(file, { type: "jira.draft.revised", feedback: ["タイムゾーン".repeat(10_000), "もっと短く".repeat(10_000)] });
+    await audit(file, { type: "after" });
+    await audit(file, { type: "and after" });
+    expect(verifyAudit(await fs.readFile(file, "utf8"))).toMatchObject({ ok: true, lines: 3 });
+  });
+
+  it("an extract verifies on its own from the anchor it was exported with, and not without it", async () => {
+    const { auditLineHash } = await import("@scriptorium/core");
+    for (const i of [1, 2, 3, 4, 5]) await audit(file, { type: "t", i });
+    const lines = (await fs.readFile(file, "utf8")).trim().split("\n");
+    const extract = lines.slice(2).join("\n");
+    expect(verifyAudit(extract, { anchor: auditLineHash(lines[1]!) })).toMatchObject({ ok: true, lines: 3 });
+    expect(verifyAudit(extract).ok).toBe(false);
+    expect(verifyAudit(extract, { anchor: auditLineHash(lines[0]!) }).ok).toBe(false);
+  });
+
+  it("export refuses a log that doesn't verify, and signs with a key that isn't the signing key", async () => {
+    const { auditExportKey } = await import("@scriptorium/core");
+    expect(auditExportKey("k")).toMatch(/^[0-9a-f]{64}$/);
+    expect(auditExportKey("k")).not.toBe("k");
+    expect(auditExportKey(undefined)).toBeUndefined();
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    for (const i of [1, 2]) await audit(file, { type: "t", i });
+    const broken = (await fs.readFile(file, "utf8")).replace('"i":1', '"i":9');
+    await fs.writeFile(file, broken);
+    const run = promisify(execFile)("npx", ["tsx", "scripts/audit.ts", "export", file], { env: { ...process.env, SCRIPTORIUM_SIGNING_KEY: "" } });
+    await expect(run).rejects.toMatchObject({ stderr: expect.stringContaining("Not exporting") });
+  });
+});

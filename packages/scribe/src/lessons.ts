@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { approvalSignature, approvalSigningKey, approvalTerms, approvalVerified, docSlug, type Vault } from "@scriptorium/core";
 
@@ -64,7 +66,40 @@ function readStatus(raw: unknown): LessonStatus {
   return raw === "approved" ? "approved" : raw === "rejected" ? "rejected" : raw === "revoked" ? "revoked" : "proposed";
 }
 
-export async function listLessons(vault: Vault, options: { status?: LessonStatus } = {}): Promise<Lesson[]> {
+/**
+ * Lesson ids a human withdrew (rejected or revoked), kept in the deployment's state
+ * directory, never in the vault. A revoked note keeps the signature it was approved with,
+ * and the vault can be rolled back: a failed push followed by a boot restore, or a revert on
+ * the vault branch, brought back an `approved` copy whose signature still verified, and the
+ * withdrawn rule shaped drafts again. Nothing in the vault can undo an entry here.
+ */
+export function withdrawnLessonsFile(stateDir: string): string {
+  return path.join(stateDir, "withdrawn-lessons.json");
+}
+
+export async function withdrawnLessons(stateDir: string): Promise<Set<string>> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(withdrawnLessonsFile(stateDir), "utf8")) as { ids?: unknown };
+    return new Set(Array.isArray(parsed.ids) ? parsed.ids.filter((id): id is string => typeof id === "string") : []);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return new Set();
+    // Unreadable is not "nothing withdrawn": every rule waits until a human looks.
+    throw new Error(`withdrawn-lessons.json is unreadable, so no house rule can be trusted: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+export async function markLessonWithdrawn(stateDir: string, id: string): Promise<void> {
+  const ids = await withdrawnLessons(stateDir);
+  if (ids.has(id)) return;
+  ids.add(id);
+  const file = withdrawnLessonsFile(stateDir);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify({ ids: [...ids].sort() }, null, 2));
+  await fs.rename(tmp, file);
+}
+
+export async function listLessons(vault: Vault, options: { status?: LessonStatus; withdrawn?: ReadonlySet<string> } = {}): Promise<Lesson[]> {
   const lessons: Lesson[] = [];
   for (const relPath of await vault.listNotes(LESSONS_DIR)) {
     const note = await vault.readNote(relPath);
@@ -75,7 +110,13 @@ export async function listLessons(vault: Vault, options: { status?: LessonStatus
       scope: String(note.frontmatter.scope ?? "global"),
       // Approved only if the approval verifies (when a key is configured): an unsigned or
       // tampered "approved" rule is a proposal, whatever route it took into the vault.
-      status: readStatus(note.frontmatter.status) === "approved" && !approvalVerified(note.frontmatter, note.body) ? "proposed" : readStatus(note.frontmatter.status),
+      // A withdrawn id is withdrawn, whatever its note says now.
+      status:
+        options.withdrawn?.has(id) && !["rejected", "revoked"].includes(readStatus(note.frontmatter.status))
+          ? "revoked"
+          : readStatus(note.frontmatter.status) === "approved" && !approvalVerified(note.frontmatter, note.body)
+            ? "proposed"
+            : readStatus(note.frontmatter.status),
       text: note.body,
       relPath,
       author: typeof note.frontmatter.author === "string" ? note.frontmatter.author : undefined,
@@ -134,11 +175,26 @@ export async function saveLesson(vault: Vault, input: NewLesson): Promise<Lesson
   return { id, scope: input.scope ?? "global", status, text: input.text, relPath, author: input.author, sourceThread: input.sourceThread };
 }
 
-/** Lessons are gated too — a human decides what the system is allowed to learn. */
-export async function approveLesson(vault: Vault, id: string, approvedBy: string, signingKey = approvalSigningKey()): Promise<Lesson | undefined> {
+/** The rule text changed after it was proposed: what would be signed is not what was shown. */
+export class LessonChangedError extends Error {}
+
+/** The sha256 a proposal binds: the rule's text as stored, trimmed. */
+export function lessonBodyHash(body: string): string {
+  return createHash("sha256").update(body.replace(/\r\n/g, "\n").trim()).digest("hex");
+}
+
+/**
+ * Lessons are gated too — a human decides what the system is allowed to learn. With
+ * `expectedBodyHash`, the note is signed only if its text is still the text that was shown
+ * for approval: checked on the very body that gets signed, not a copy read earlier.
+ */
+export async function approveLesson(vault: Vault, id: string, approvedBy: string, signingKey = approvalSigningKey(), expectedBodyHash?: string): Promise<Lesson | undefined> {
   const lesson = (await listLessons(vault)).find((candidate) => candidate.id === id);
   if (!lesson) return undefined;
   const note = await vault.readNote(lesson.relPath);
+  if (expectedBodyHash !== undefined && lessonBodyHash(note.body) !== expectedBodyHash) {
+    throw new LessonChangedError(`Lesson ${id} changed after it was proposed.`);
+  }
   const terms = approvalTerms(note.frontmatter);
   await vault.writeNote(lesson.relPath, note.body, {
     ...note.frontmatter,
@@ -158,8 +214,10 @@ export async function rejectLesson(vault: Vault, id: string, rejectedBy: string)
   const lesson = (await listLessons(vault)).find((candidate) => candidate.id === id);
   if (!lesson) return undefined;
   const note = await vault.readNote(lesson.relPath);
+  // The signature goes with the yes it recorded: a no must not carry a verifiable approval.
+  const { approval_sig: _sig, ...frontmatter } = note.frontmatter;
   await vault.writeNote(lesson.relPath, note.body, {
-    ...note.frontmatter,
+    ...frontmatter,
     status: "rejected",
     rejected_by: rejectedBy,
     rejected_at: new Date().toISOString(),
@@ -188,6 +246,11 @@ export function lessonDecisionCheck(
     return lesson.status === "approved" ? { ok: true } : { ok: false, reason: `Lesson ${lesson.id} is ${lesson.status}, not in force, so there is nothing to revoke.` };
   }
   if (lesson.status === "revoked") return { ok: false, reason: `Lesson ${lesson.id} was revoked. If it should apply again, give the feedback again and it will be proposed fresh.` };
+  // No record of where it was proposed is no proof it was proposed here: the check below
+  // was skipped for such a note, so any ticket could approve it.
+  if (decision === "approve" && !lesson.sourceThread) {
+    return { ok: false, reason: `Lesson ${lesson.id} has no record of where it was proposed, so it can't be approved from a comment. Give the feedback again and it will be proposed fresh.` };
+  }
   if (lesson.sourceThread && lesson.sourceThread !== whereDecided) {
     return { ok: false, reason: `Lesson ${lesson.id} was proposed on ${lesson.sourceThread}. Decide it there.` };
   }
@@ -208,7 +271,8 @@ export async function revokeLesson(vault: Vault, id: string, revokedBy: string):
   const lesson = (await listLessons(vault)).find((candidate) => candidate.id === id);
   if (!lesson) return undefined;
   const note = await vault.readNote(lesson.relPath);
-  await vault.writeNote(lesson.relPath, note.body, { ...note.frontmatter, status: "revoked", revoked_by: revokedBy, revoked_at: new Date().toISOString() });
+  const { approval_sig: _sig, ...frontmatter } = note.frontmatter;
+  await vault.writeNote(lesson.relPath, note.body, { ...frontmatter, status: "revoked", revoked_by: revokedBy, revoked_at: new Date().toISOString() });
   return { ...lesson, status: "revoked" };
 }
 

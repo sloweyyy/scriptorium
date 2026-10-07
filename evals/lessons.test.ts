@@ -161,6 +161,26 @@ describe("deciding a lesson", () => {
     // Withdrawing an approved rule is always allowed.
     expect(lessonDecisionCheck({ ...lesson, status: "approved" }, "reject", "https://x/browse/DOC-1").ok).toBe(true);
   });
+
+  it("a withdrawn id is withdrawn, whatever its note says, and an unreadable record trusts no rule", async () => {
+    const { listLessons, markLessonWithdrawn, saveLesson, withdrawnLessons, withdrawnLessonsFile } = await import("@scriptorium/scribe");
+    const stateDir = path.join(tmpRoot, "state");
+    const lesson = await saveLesson(vault, { text: "Quote windows in UTC.", status: "approved" });
+    await markLessonWithdrawn(stateDir, lesson.id);
+    const withdrawn = await withdrawnLessons(stateDir);
+    expect((await listLessons(vault, { withdrawn })).find((candidate) => candidate.id === lesson.id)?.status).toBe("revoked");
+    expect(await listLessons(vault, { status: "approved", withdrawn })).toEqual([]);
+    await fs.writeFile(withdrawnLessonsFile(stateDir), "{not json");
+    await expect(withdrawnLessons(stateDir)).rejects.toThrow(/unreadable/);
+  });
+
+  it("a lesson with no record of where it was proposed can't be approved from any ticket", async () => {
+    const { lessonDecisionCheck } = await import("@scriptorium/scribe");
+    const unsourced = { id: "L-009", scope: "global", status: "proposed" as const, text: "x", relPath: "_lessons/L-009.md" };
+    expect(lessonDecisionCheck(unsourced, "approve", "https://x/browse/DOC-1")).toMatchObject({ ok: false, reason: expect.stringContaining("no record of where it was proposed") });
+    // Saying no is still allowed.
+    expect(lessonDecisionCheck(unsourced, "reject", "https://x/browse/DOC-1").ok).toBe(true);
+  });
 });
 
 describe("revoking a lesson", () => {

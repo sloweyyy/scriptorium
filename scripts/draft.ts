@@ -6,7 +6,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { docSlug, geminiModel, loadConfig, Vault, type ImageInput } from "@scriptorium/core";
-import { checkContract, draftDoc, formatContractQuestions, formatLintFindings } from "@scriptorium/scribe";
+import { checkContract, draftDoc, formatContractQuestions, formatLintFindings, withdrawnLessons } from "@scriptorium/scribe";
 
 const [prdPath, ...imagePaths] = process.argv.slice(2);
 if (!prdPath) {
@@ -46,7 +46,7 @@ for (const imagePath of imagePaths) {
 }
 console.log(`drafting via ${config.provider} with ${config.provider === "gemini" ? geminiModel() : config.model}, ${images.length} design image(s) attached…`);
 
-const result = await draftDoc(vault, prdRaw, images);
+const result = await draftDoc(vault, prdRaw, images, { withdrawn: await withdrawnLessons(config.jira.stateDir) });
 
 console.log("\n----- lint -----");
 console.log(formatLintFindings(result.lint));

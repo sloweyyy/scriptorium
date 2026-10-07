@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { audit, docSlug, type Vault } from "@scriptorium/core";
 import { updateMoc } from "./organizer";
 
@@ -65,9 +66,16 @@ export async function nextGapId(vault: Vault): Promise<string> {
  * An unanswerable question becomes a gap note — Agent B's misses feed Agent A's queue.
  * The note is written first: if ticketing is down, the gap is still recorded.
  */
-/** The same question, however it was punctuated or capitalised. */
+/**
+ * The same question, however it was punctuated or capitalised. Letters and digits of any
+ * script count: keeping only a-z0-9 turned every Japanese, Russian or Arabic question into
+ * the empty key, so none was deduplicated, and all of them shared one Jira label and so one
+ * ticket. A question with no letters at all is keyed by its own text, never by "".
+ */
 export function questionKey(question: string): string {
-  return question.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const words = question.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  if (words || !question.trim()) return words;
+  return `q-${createHash("sha256").update(question.normalize("NFKC").trim()).digest("hex").slice(0, 16)}`;
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   formatLintFindings,
   lintOk,
   reviseDoc,
+  withdrawnLessons,
 } from "@scriptorium/scribe";
 import { announceDraftForApproval } from "../slack-notify";
 import { assignTo, handBack, moveTo, say, type Ctx } from "./context";
@@ -261,13 +262,16 @@ export async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: bo
   await moveTo(ctx, key, ctx.config.jira.inProgressStatus, issueStatus(issue));
   await assignTo(ctx, key, ctx.botAccountId);
 
-  let result = await draftDoc(ctx.vault, source.markdown, source.images);
+  const withdrawn = await withdrawnLessons(ctx.config.jira.stateDir);
+  let result = await draftDoc(ctx.vault, source.markdown, source.images, { withdrawn });
   if (!lintOk(result.lint)) {
     // Deterministic checks get one machine round-trip before a human is asked to read anything.
     result = await reviseDoc(
       ctx.vault,
       result.markdown,
       result.lint.map((finding) => `[${finding.code}] ${finding.message}`),
+      [],
+      { withdrawn },
     );
   }
 
@@ -358,7 +362,7 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[]):
   // a design: see REFERS_TO_DESIGN for why the default is text-only.
   const pointsAtDesign = feedback.some((item) => REFERS_TO_DESIGN.test(item));
   const designs = pointsAtDesign ? await loadDesignImages(ctx, issue) : { images: [], names: [] };
-  const result = await reviseDoc(ctx.vault, draft, feedback, designs.images);
+  const result = await reviseDoc(ctx.vault, draft, feedback, designs.images, { withdrawn: await withdrawnLessons(ctx.config.jira.stateDir) });
   await ctx.state.saveDraft(key, result.markdown);
   // The vault copy is now stale relative to this draft: the next approve republishes.
   await ctx.state.patch(key, { draftPublished: false, revisedFrom: fromThis });

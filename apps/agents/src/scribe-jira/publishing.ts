@@ -45,13 +45,17 @@ export async function runPublish(
   // dragging the ticket to Approved must be told why nothing happened.
   let relPath = known?.publishedPath;
 
-  if (alreadyPublished && relPath) {
+  // A push-only retry needs the approved body's hash to check against. A ticket without one
+  // (published before the hash was recorded, or state rebuilt by recoverState after a lost
+  // ledger) goes back through the draft gate below instead: republished from the draft the
+  // approver saw, never from whatever the vault copy says now.
+  if (alreadyPublished && relPath && known?.publishedBodyHash) {
     // A retry republishes the vault note as it is NOW, under the original approval. The
     // vault takes edits from the vault repo between the failed push and this retry (the
     // webhook sync, the boot restore), and none of them was approved: sending one to a
     // public PR titled "approved by <them>" would put words in the approver's mouth.
     const current = await ctx.vault.readNote(relPath).catch(() => undefined);
-    if (known?.publishedBodyHash && (!current || hashDraft(current.body) !== known.publishedBodyHash)) {
+    if (!current || hashDraft(current.body) !== known.publishedBodyHash) {
       await audit(ctx.config.auditFile, { type: "docs.push.held", actor: "scribe", issue: key, relPath, reason: "vault-note-changed-since-approval" });
       await say(
         ctx,

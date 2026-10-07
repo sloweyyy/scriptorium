@@ -3,11 +3,15 @@ import {
   approveLesson,
   distillLesson,
   findLessonByText,
+  LessonChangedError,
+  lessonBodyHash,
   lessonDecisionCheck,
   listLessons,
+  markLessonWithdrawn,
   rejectLesson,
   revokeLesson,
   saveLesson,
+  withdrawnLessons,
 } from "@scriptorium/scribe";
 import { pushInternalPlane } from "../docs-repo";
 import { mayApproveOnJira, say, type Ctx } from "./context";
@@ -50,13 +54,14 @@ export async function proposeLesson(ctx: Ctx, key: string, approvedBy: string): 
     sourceThread: ctx.client.issueUrl(key),
     status: "proposed",
   });
-  await ctx.state.patch(key, { pendingLessonId: lesson.id });
+  const bodyHash = lessonBodyHash((await ctx.vault.readNote(lesson.relPath)).body);
+  await ctx.state.patch(key, { pendingLessonId: lesson.id, proposedLessons: { ...ctx.state.get(key)?.proposedLessons, [lesson.id]: { bodyHash } } });
   await audit(ctx.config.auditFile, { type: "lesson.proposed", actor: "scribe", issue: key, id: lesson.id, text: rule });
   // Durable the moment it exists: a proposal that lives only in this container is one
   // redeploy away from vanishing — and its id being reissued to a different rule.
   await pushInternalPlane(ctx.config, ctx.vault, `lessons: propose ${lesson.id} (${key})`);
 
-  await say(
+  const posted = await say(
     ctx,
     key,
     [
@@ -68,6 +73,8 @@ export async function proposeLesson(ctx: Ctx, key: string, approvedBy: string): 
       "It stays a proposal until you say so — the system doesn't get to decide what it learns.",
     ].join("\n"),
   );
+  // Only now has anyone been shown it: an approval needs this time, and must be newer.
+  await ctx.state.patch(key, { proposedLessons: { ...ctx.state.get(key)?.proposedLessons, [lesson.id]: { bodyHash, postedAt: posted.created } } });
 }
 
 export async function runLessonDecision(
@@ -77,6 +84,8 @@ export async function runLessonDecision(
   explicitId: string | undefined,
   actor: string,
   actorAccountId?: string,
+  /** When the deciding comment was written: an approval older than the proposal approves nothing. */
+  decidedAt?: string,
 ): Promise<void> {
   const known = ctx.state.get(key);
   const id = explicitId ?? known?.pendingLessonId;
@@ -92,7 +101,7 @@ export async function runLessonDecision(
     await say(ctx, key, allowed.reason.replace("publish from this ticket", "decide house rules"));
     return;
   }
-  const current = (await listLessons(ctx.vault)).find((candidate) => candidate.id === id);
+  const current = (await listLessons(ctx.vault, { withdrawn: await withdrawnLessons(ctx.config.jira.stateDir) })).find((candidate) => candidate.id === id);
   if (current) {
     const check = lessonDecisionCheck(current, decision, ctx.client.issueUrl(key));
     if (!check.ok) {
@@ -102,7 +111,28 @@ export async function runLessonDecision(
   }
 
   if (decision === "approve") {
-    const lesson = await approveLesson(ctx.vault, id, actor, ctx.config.signingKey);
+    // Approved is what was shown: the rule text the proposal comment quoted, approved by a
+    // comment written after that proposal. `approve` and `approve lesson` landing in one poll
+    // used to sign the rule the publish had just proposed, which nobody had read; and the
+    // note was signed as it stood, so a proposal edited in the vault repo was signed too.
+    const shown = known?.proposedLessons?.[id];
+    if (!shown) {
+      await say(ctx, key, `Lesson ${id} wasn't proposed on this ticket, so there is nothing here to approve. Give the feedback again and it will be proposed fresh.`);
+      return;
+    }
+    if (!shown.postedAt || (decidedAt && Date.parse(decidedAt) < Date.parse(shown.postedAt))) {
+      await say(ctx, key, `That approval was written before lesson ${id} was proposed, so it can't be for this rule. Read the proposal above, then comment \`approve lesson ${id}\` if it should apply.`);
+      return;
+    }
+    let lesson: Awaited<ReturnType<typeof approveLesson>>;
+    try {
+      lesson = await approveLesson(ctx.vault, id, actor, ctx.config.signingKey, shown.bodyHash);
+    } catch (error) {
+      if (!(error instanceof LessonChangedError)) throw error;
+      await audit(ctx.config.auditFile, { type: "lesson.approve.held", actor, issue: key, id, reason: "changed-since-proposed" });
+      await say(ctx, key, `Lesson ${id}'s text changed after it was proposed here, so I won't sign it: what you'd approve isn't what was shown. Reject it, and give the feedback again for a fresh proposal.`);
+      return;
+    }
     if (!lesson) {
       await say(ctx, key, `I can't find lesson \`${id}\` in the vault.`);
       return;
@@ -124,6 +154,9 @@ export async function runLessonDecision(
   }
 
   if (decision === "revoke") {
+    // Recorded where the vault can't undo it, before the note changes: a failed push or a
+    // rolled-back vault branch must not bring the rule back.
+    await markLessonWithdrawn(ctx.config.jira.stateDir, id);
     const revoked = await revokeLesson(ctx.vault, id, actor);
     if (!revoked) {
       await say(ctx, key, `I can't find lesson \`${id}\` in the vault.`);
@@ -136,6 +169,7 @@ export async function runLessonDecision(
     return;
   }
 
+  await markLessonWithdrawn(ctx.config.jira.stateDir, id);
   const lesson = await rejectLesson(ctx.vault, id, actor);
   if (!lesson) {
     await say(ctx, key, `I can't find lesson \`${id}\` in the vault.`);

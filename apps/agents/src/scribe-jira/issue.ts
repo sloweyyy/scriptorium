@@ -349,7 +349,7 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
           break;
         }
         case "approve-lesson":
-          await runLessonDecision(ctx, key, "approve", command.id, authorName(comment), comment.author?.accountId);
+          await runLessonDecision(ctx, key, "approve", command.id, authorName(comment), comment.author?.accountId, comment.created);
           break;
         case "reject-lesson":
           await runLessonDecision(ctx, key, "reject", command.id, authorName(comment), comment.author?.accountId);

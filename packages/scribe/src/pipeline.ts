@@ -33,8 +33,8 @@ function judge(markdown: string, lessons: readonly Lesson[]): Pick<DraftResult, 
 }
 
 /** PRD (+ designs) -> first draft. Caller must have passed the input contract first. */
-export async function draftDoc(vault: Vault, prdRaw: string, images: ImageInput[] = []): Promise<DraftResult> {
-  const lessons = await listLessons(vault, { status: "approved" });
+export async function draftDoc(vault: Vault, prdRaw: string, images: ImageInput[] = [], options: { withdrawn?: ReadonlySet<string> } = {}): Promise<DraftResult> {
+  const lessons = await listLessons(vault, { status: "approved", withdrawn: options.withdrawn });
   const markdown = await generateText({
     system: DOC_SYSTEM_PROMPT,
     prompt: buildDraftPrompt({ prdRaw, lessonsBlock: renderLessonsForPrompt(lessons) }),
@@ -55,8 +55,9 @@ export async function reviseDoc(
   currentDraft: string,
   feedback: string[],
   images: ImageInput[] = [],
+  options: { withdrawn?: ReadonlySet<string> } = {},
 ): Promise<DraftResult> {
-  const lessons = await listLessons(vault, { status: "approved" });
+  const lessons = await listLessons(vault, { status: "approved", withdrawn: options.withdrawn });
   const markdown = await generateText({
     system: DOC_SYSTEM_PROMPT,
     prompt: buildRevisePrompt({

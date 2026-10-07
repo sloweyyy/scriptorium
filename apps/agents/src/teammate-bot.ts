@@ -296,7 +296,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
             void update.finally(() => inFlight.delete(update));
           };
           const reply = await runTeammateTurn(
-            { question: text, askedBy: event.actor.id, channel, threadTs, context },
+            { question: text, askedBy: event.actor.id, channel, threadTs, context, private: channel.startsWith("D") },
             { ...turnDeps(key), ...spendAgainst(channel), onTool },
           );
           const textOut = formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken });
@@ -338,7 +338,10 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     const scope = `jira:${issueKey.split("-")[0]}`;
     const reply = await (await overBudget(key, scope)
       ? Promise.resolve({ kind: "refused" as const, text: LIMIT_NOTICE })
-      : runTeammateTurn({ question: `${question}\n\n(Asked on jira:${issueKey}.)`, askedBy: event.actor.id, budgetScope: scope }, { ...turnDeps(key), ...spendAgainst(scope) })
+      : runTeammateTurn(
+          { question: `${question}\n\n(Asked on jira:${issueKey}.)`, askedBy: event.actor.id, budgetScope: scope, private: Boolean(restriction.visibility || restriction.internal) },
+          { ...turnDeps(key), ...spendAgainst(scope) },
+        )
     ).catch(
       // The exception belongs in the audit log, not on a ticket other people read.
       async (error: unknown) => {

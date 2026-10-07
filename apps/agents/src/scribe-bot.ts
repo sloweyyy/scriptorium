@@ -1,4 +1,4 @@
-import { mayApproveInSlack, parseApprovalButtonValue } from "./slack-approval";
+import { cardNamesItsDraft, mayApproveInSlack, parseApprovalButtonValue } from "./slack-approval";
 import type { AppConfig, Vault } from "@scriptorium/core";
 import { checkContract, formatContractQuestions } from "@scriptorium/scribe";
 import { App } from "@slack/bolt";
@@ -53,6 +53,11 @@ export async function startScribeBot(config: AppConfig, _vault: Vault, jira?: Sc
 
     if (!target || !jira) {
       await respond({ text: "I can't publish from here — the Jira surface isn't running on this host.", replace_original: false });
+      return;
+    }
+    const bound = cardNamesItsDraft(target);
+    if (!bound.ok) {
+      await respond({ text: bound.reason, response_type: "ephemeral", replace_original: false });
       return;
     }
 

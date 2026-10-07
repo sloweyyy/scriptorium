@@ -29,6 +29,17 @@ export function parseApprovalButtonValue(value: string | undefined): { issueKey:
 export type SlackApprovalCheck = { ok: true } | { ok: false; reason: string };
 
 /**
+ * A card that doesn't name its draft can't say which text a click approves: it was posted
+ * before cards were bound, and its draft may have been revised twice since. Approving it
+ * published whatever was current, "approved by" someone who saw an earlier version.
+ */
+export function cardNamesItsDraft(target: { draft?: string }): SlackApprovalCheck {
+  return target.draft
+    ? { ok: true }
+    : { ok: false, reason: "This card was posted before cards were tied to their draft, so I can't tell which version you'd be approving. Comment `approve` on the ticket instead." };
+}
+
+/**
  * Who may press it. No list configured means nobody: a channel's membership is not an
  * approver list, and the ticket's own `approve` comment remains open to its reviewers.
  */

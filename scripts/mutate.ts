@@ -1213,6 +1213,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-e2e.test.ts"],
   },
   {
+    control: "the draft-approval card shows PRD text inert",
+    file: "apps/agents/src/slack-notify.ts",
+    find: "              `*Draft ready* \u2014 <${input.issueUrl}|${input.issueKey}>: ${escapeMrkdwn(input.feature)}`,",
+    replace: "              `*Draft ready* \u2014 <${input.issueUrl}|${input.issueKey}>: ${input.feature}`,",
+    evals: ["evals/slack-notify.test.ts"],
+  },
+  {
+    control: "the publish announcement shows the approver's name inert",
+    file: "apps/agents/src/slack-notify.ts",
+    find: "approved by ${escapeMrkdwn(input.approvedBy)} on",
+    replace: "approved by ${input.approvedBy} on",
+    evals: ["evals/slack-notify.test.ts"],
+  },
+  {
+    control: "a Slack card that doesn't name its draft can't approve one",
+    file: "apps/agents/src/slack-approval.ts",
+    find: "  return target.draft\n    ? { ok: true }",
+    replace: "  return true\n    ? { ok: true }",
+    evals: ["evals/slack-approval.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

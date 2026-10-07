@@ -125,3 +125,19 @@ describe("rotating the signing key", () => {
     }
   });
 });
+
+describe("the signing key as deployments set it", () => {
+  it("a trailing newline in the secret is the same key, not a different one", async () => {
+    const { approvalSigningKey } = await import("@scriptorium/core");
+    const previous = process.env.SCRIPTORIUM_SIGNING_KEY;
+    try {
+      process.env.SCRIPTORIUM_SIGNING_KEY = "k3y-from-secret-manager\n";
+      expect(approvalSigningKey()).toBe("k3y-from-secret-manager");
+      process.env.SCRIPTORIUM_SIGNING_KEY = "  \n";
+      expect(approvalSigningKey()).toBeUndefined();
+    } finally {
+      if (previous === undefined) delete process.env.SCRIPTORIUM_SIGNING_KEY;
+      else process.env.SCRIPTORIUM_SIGNING_KEY = previous;
+    }
+  });
+});

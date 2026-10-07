@@ -1332,6 +1332,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/manifests.test.ts"],
   },
   {
+    control: "a stand-in can't approve the requests of the person they stand in for",
+    file: "apps/agents/src/teammate-bot/control.ts",
+    find: "  return { ...envelope, tools, people };",
+    replace: "  return { ...envelope, tools };",
+    evals: ["evals/control.test.ts"],
+  },
+  {
+    control: "the signing key is read the way config reads it, trimmed",
+    file: "packages/core/src/signing.ts",
+    find: "  return process.env.SCRIPTORIUM_SIGNING_KEY?.trim() || undefined;",
+    replace: "  return process.env.SCRIPTORIUM_SIGNING_KEY || undefined;",
+    evals: ["evals/approval-signing.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

@@ -154,7 +154,7 @@ export function applyAdminCommand(current: Control, args: string, admin: string,
  * wherever the away approver is listed. Nothing else changes — denials, tiers and
  * separation of duties are the envelope's own.
  */
-export function withDelegations<E extends { tools: Readonly<Record<string, { approvers?: readonly string[] }>> }>(envelope: E, control: Control, now = Date.now()): E {
+export function withDelegations<E extends { tools: Readonly<Record<string, { approvers?: readonly string[] }>>; people?: ReadonlyArray<ReadonlyArray<string>> }>(envelope: E, control: Control, now = Date.now()): E {
   const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);
   if (!active.length) return envelope;
   const tools = Object.fromEntries(
@@ -164,7 +164,11 @@ export function withDelegations<E extends { tools: Readonly<Record<string, { app
       return [name, added.length ? { ...rule, approvers: [...new Set([...approvers, ...added])] } : rule];
     }),
   );
-  return { ...envelope, tools };
+  // A stand-in is the away approver, for separation of duties too: without this, an approver
+  // who delegated to a second account of their own could approve their own requests from it,
+  // a right the delegator never had.
+  const people = [...(envelope.people ?? []), ...active.map((entry) => [`slack:${entry.from}`, `slack:${entry.to}`])];
+  return { ...envelope, tools, people };
 }
 
 export function describeControl(control: Control): string {

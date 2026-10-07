@@ -36,7 +36,9 @@ export function approvalSignature(key: string, approval: SignedApproval): string
  * memories verifies, so no caller can forget to. Unset: approvals are unsigned and trusted.
  */
 export function approvalSigningKey(): string | undefined {
-  return process.env.SCRIPTORIUM_SIGNING_KEY || undefined;
+  // Trimmed, as config trims it: a trailing newline in the secret signed every memory with
+  // one key and verified with another, so all of them silently stopped applying.
+  return process.env.SCRIPTORIUM_SIGNING_KEY?.trim() || undefined;
 }
 
 /**

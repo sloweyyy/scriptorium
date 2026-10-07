@@ -28,7 +28,13 @@ describe("slack approval button", () => {
   it("rejects a button value that is not an issue key", () => {
     expect(parseApprovalButtonValue(undefined)).toBeUndefined();
     expect(parseApprovalButtonValue("../../etc|abc")).toBeUndefined();
-    // Cards posted before this change carry the key alone: still parsed, no fingerprint.
+    // Cards posted before this change carry the key alone: still parsed, no fingerprint…
     expect(parseApprovalButtonValue("DOC-3")).toEqual({ issueKey: "DOC-3", draft: undefined });
+  });
+
+  it("…and a card that doesn't name its draft can't approve one", async () => {
+    const { cardNamesItsDraft } = await import("@scriptorium/agents");
+    expect(cardNamesItsDraft(parseApprovalButtonValue("DOC-3")!)).toMatchObject({ ok: false, reason: expect.stringContaining("Comment `approve` on the ticket") });
+    expect(cardNamesItsDraft(parseApprovalButtonValue("DOC-3|abcdef0123456789")!).ok).toBe(true);
   });
 });

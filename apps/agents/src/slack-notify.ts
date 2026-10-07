@@ -1,5 +1,6 @@
 import { approvalButtonValue } from "./slack-approval";
 import type { AppConfig } from "@scriptorium/core";
+import { escapeMrkdwn } from "@scriptorium/connectors";
 import { WebClient } from "@slack/web-api";
 
 /**
@@ -35,11 +36,13 @@ export async function announcePublished(config: AppConfig, input: PublishedAnnou
   const channel = config.slack.notifyChannel;
   if (!slack || !channel) return false;
 
+  // Escaped: the feature name comes from a PRD and the approver's name from a profile. Raw,
+  // `<!channel>` in either pinged the whole notify channel.
   const lines = [
-    `*${input.feature}* is in the vault — approved by ${input.approvedBy} on <${input.issueUrl}|${input.issueKey}>.`,
+    `*${escapeMrkdwn(input.feature)}* is in the vault — approved by ${escapeMrkdwn(input.approvedBy)} on <${input.issueUrl}|${input.issueKey}>.`,
     `• Note: \`${input.relPath}\``,
     input.pullRequestUrl ? `• Pull request: <${input.pullRequestUrl}|merge to publish to the site>` : undefined,
-    input.appliedLessons?.length ? `• House rules applied: ${input.appliedLessons.join(", ")}` : undefined,
+    input.appliedLessons?.length ? `• House rules applied: ${escapeMrkdwn(input.appliedLessons.join(", "))}` : undefined,
     "Ask me about it and I'll answer from this note, with the citation.",
   ].filter((line): line is string => Boolean(line));
 
@@ -77,16 +80,18 @@ export async function announceDraftForApproval(config: AppConfig, input: DraftAn
   try {
     await new WebClient(token).chat.postMessage({
       channel,
-      text: `Draft ready for ${input.issueKey}: ${input.feature}`,
+      text: `Draft ready for ${input.issueKey}: ${escapeMrkdwn(input.feature)}`,
       blocks: [
         {
           type: "section",
           text: {
             type: "mrkdwn",
             text: [
-              `*Draft ready* — <${input.issueUrl}|${input.issueKey}>: ${input.feature}`,
-              `Lint: ${input.lintSummary}`,
-              input.appliedLessons?.length ? `House rules applied: ${input.appliedLessons.join(", ")}` : "House rules applied: none yet",
+              // The PRD's text, escaped: a feature named `<!channel> <https://evil|Review the draft>`
+              // pinged the channel and put a disguised link right above "Approve & publish".
+              `*Draft ready* — <${input.issueUrl}|${input.issueKey}>: ${escapeMrkdwn(input.feature)}`,
+              `Lint: ${escapeMrkdwn(input.lintSummary)}`,
+              input.appliedLessons?.length ? `House rules applied: ${escapeMrkdwn(input.appliedLessons.join(", "))}` : "House rules applied: none yet",
             ].join("\n"),
           },
         },

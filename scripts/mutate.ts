@@ -1535,6 +1535,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "a column a person picks while Scribe drafts stays theirs",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "    if (live && known.length && !known.includes(live.toLowerCase())) {",
+    replace: "    if (false) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "Scribe hands a ticket back to whoever had it before",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "  if (current && current !== ctx.botAccountId) await ctx.state.patch(key, { handBackTo: current });\n",
+    replace: "",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

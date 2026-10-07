@@ -116,6 +116,8 @@ export interface IssueState {
    */
   docsPushed?: boolean;
   pendingLessonId?: string;
+  /** Who had the ticket before the agent took it to draft: the one it is handed back to. */
+  handBackTo?: string;
   /**
    * Each lesson proposed on this ticket: the sha256 of the rule text the proposal comment
    * showed, and when that comment was posted. `approve lesson` signs only that text, and

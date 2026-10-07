@@ -136,6 +136,15 @@ export async function moveTo(ctx: Ctx, key: string, statusName: string, currentS
       console.warn(`[scribe] ${key}: someone moved it to "${ctx.config.jira.approvedStatus}" while I worked, so I'm not moving it to "${statusName}"`);
       return;
     }
+    // Any column a person chose while the agent worked stays theirs: only Approved was
+    // protected, so a ticket moved to "Won't Do" mid-draft was pulled back into In Progress
+    // and In Review, and into the poller's query. Moved only from a status the agent knows:
+    // the one it last saw, or the one it last set.
+    const known = [currentStatus, ctx.state.get(key)?.lastStatus].filter((name): name is string => Boolean(name)).map((name) => name.toLowerCase());
+    if (live && known.length && !known.includes(live.toLowerCase())) {
+      console.warn(`[scribe] ${key}: someone moved it to "${live}" while I worked, so I'm not moving it to "${statusName}"`);
+      return;
+    }
     const moved = await ctx.client.transitionTo(key, statusName);
     if (moved) await ctx.state.patch(key, { lastStatus: statusName });
     // A workflow that does not offer the column is a legitimate configuration, but silence
@@ -183,8 +192,19 @@ function reporterId(issue: JiraIssue): string | undefined {
  * correctly as "unassigned, free for someone to pick up".
  */
 export async function handBack(ctx: Ctx, key: string, issue: JiraIssue): Promise<void> {
+  // To whoever had it before the agent took it (a writer assigned to the ticket), and only
+  // otherwise to its reporter: always the reporter replaced the person doing the work.
+  const before = ctx.state.get(key)?.handBackTo;
   const reporter = reporterId(issue);
-  await assignTo(ctx, key, reporter && reporter !== ctx.botAccountId ? reporter : null);
+  const to = before && before !== ctx.botAccountId ? before : reporter && reporter !== ctx.botAccountId ? reporter : null;
+  await assignTo(ctx, key, to);
+}
+
+/** Take the ticket to draft it, remembering whose it was so it goes back to them. */
+export async function takeTicket(ctx: Ctx, key: string, issue: JiraIssue): Promise<void> {
+  const current = issue.fields.assignee?.accountId;
+  if (current && current !== ctx.botAccountId) await ctx.state.patch(key, { handBackTo: current });
+  await assignTo(ctx, key, ctx.botAccountId);
 }
 
 /** Post a markdown comment as Jira wiki markup, and remember it so it never reads as feedback. */

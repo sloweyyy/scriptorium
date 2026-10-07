@@ -35,9 +35,77 @@ describe("inert markdown", () => {
       expect(inertMarkdown(normal), normal).toBe(normal);
       expect(unsafeMarkup(normal), normal).toEqual({ html: [], links: [] });
     }
-    // Every shape of a non-web target loses it: inline, autolink, definition.
+    // Every shape of a non-web target loses it: inline, autolink (kept as text), definition.
     const links = "[p](javascript:alert(1)) <javascript:alert(2)>\n\n[d]: javascript:evil()";
-    expect(inertMarkdown(links)).not.toMatch(/javascript:/i);
+    expect(inertMarkdown(links)).toBe("[p](#unsafe-link-removed) &lt;javascript:alert(2)>\n\n[d]: #unsafe-link-removed");
+  });
+
+  it("a target is read as the browser reads it, wherever the title puts its own scheme", () => {
+    for (const hostile of [
+      '[x](javascript:alert(1) "javascript:")',
+      "[x](java&#115;cript:alert(1))",
+      "[x](javascript&colon;alert(1))",
+      "[x](javascript\\:alert(1))",
+      "[x](<java\tscript:alert(1)>)",
+      "[x](< javascript:alert(1)>)",
+      "![i](data:text/html,x)",
+    ]) {
+      const out = inertMarkdown(hostile);
+      expect(out, hostile).toContain("#unsafe-link-removed");
+      expect(unsafeMarkup(out), hostile).toEqual({ html: [], links: [] });
+    }
+    expect(inertMarkdown('[x](javascript:alert(1) "javascript:")')).toBe('[x](#unsafe-link-removed "javascript:")');
+  });
+
+  it("runs again until nothing is left, and a second run changes nothing", () => {
+    // Escaped, an HTML block is a paragraph, and its link is live. A backtick inside an
+    // escaped tag pairs with the one that kept a tag inside code.
+    for (const hostile of ["<div>\n[x](javascript:alert(1))\n</div>", '<a title="`">`<a title="`">`<img src=x onerror=alert(1)>`']) {
+      const out = inertMarkdown(hostile);
+      expect(out, hostile).not.toMatch(/^```/);
+      expect(unsafeMarkup(out), hostile).toEqual({ html: [], links: [] });
+      expect(inertMarkdown(out), hostile).toBe(out);
+    }
+    // A chain longer than the passes allow is kept whole as code, where nothing renders.
+    const chain = '<a title="`">`<a title="`">`<a title="`">`<img src=x onerror=alert(1)>`';
+    const kept = inertMarkdown(chain);
+    expect(kept).toBe(`\`\`\`\n${chain}\n\`\`\`\n`);
+    expect(unsafeMarkup(kept)).toEqual({ html: [], links: [] });
+  });
+
+  it("a shape too costly to parse is kept as code, unparsed", () => {
+    // micromark takes seconds over these, on the one process (`- - - …` 25,000 long: 9 s).
+    const paragraphWithSteps = `${"*_".repeat(400)}\n` + Array.from({ length: 3 }, () => `2. ${"*_".repeat(400)}`).join("\n");
+    for (const costly of [
+      "x".repeat(100_001),
+      `${"> ".repeat(21)}x`,
+      `${"- ".repeat(25_000)}x`,
+      "> x\n\n".repeat(3_001),
+      `${"*_".repeat(501)}a`,
+      "[a](".repeat(501),
+      paragraphWithSteps, // a `2.` line continues a paragraph, so its count does too
+      "````\n" + "- ".repeat(30),
+      // Code to a line counter, but a fence inside an HTML block opens nothing: still counted.
+      "<div>\n```\n\n" + "*_".repeat(1_001),
+    ]) {
+      const out = inertMarkdown(costly);
+      expect(/^(`{3,})\n[\s\S]*\n\1\n$/.test(out), costly.slice(0, 20)).toBe(true);
+      expect(inertMarkdown(out)).toBe(out);
+      expect(unsafeMarkup(costly).tooCostly, costly.slice(0, 20)).toBeTruthy();
+    }
+    expect(lintDoc(`# T\n\n## Overview\n\n${"- ".repeat(30)}x\n\n## Steps\n\n1. Go.`).map((finding) => finding.code)).toContain("too-costly");
+  });
+
+  it("long pages, lists and code samples are not costly shapes", () => {
+    const json = "```json\n" + Array.from({ length: 600 }, (_, i) => `[${i}],`).join("\n") + "\n```";
+    const psql = "```\n" + "-".repeat(60) + "+" + "-".repeat(60) + "\n```";
+    const snake = "```python\n" + Array.from({ length: 800 }, () => "user_id = load_user(org_id)").join("\n") + "\n```";
+    const list = Array.from({ length: 1_500 }, (_, i) => `- Item ${i} is **bold** with [a link](https://x.example/${i})`).join("\n");
+    const steps = Array.from({ length: 200 }, (_, i) => `${i + 1}. Step **${i}** in [the docs](https://x.example)`).join("\n");
+    for (const normal of [`# Rules\n\n${"-".repeat(120)}\n\n${" ".repeat(120)}\n\nText.`, json, psql, snake, list, steps]) {
+      expect(unsafeMarkup(normal).tooCostly, normal.slice(0, 30)).toBeUndefined();
+      expect(inertMarkdown(normal), normal.slice(0, 30)).toBe(normal);
+    }
   });
 
   it("lint sends back a draft with raw HTML or a link that doesn't go to the web", () => {
@@ -53,10 +121,14 @@ describe("inert markdown", () => {
     await vault.ensure();
     const auditFile = path.join(root, "audit.jsonl");
     const gap = await fileGapNote(vault, { question: HOSTILE, missing: "SSO <script>x</script>", askedBy: "U1", auditFile });
+    // Code on its own, live HTML once quoted: the note is made inert as the site reads it, whole.
+    const tabbed = await fileGapNote(vault, { question: "\t<img src=x onerror=alert(1)>", missing: "SSO", askedBy: "U2", auditFile });
+    // Alone, a fence whose info string is the tag; after "Missing documentation:", a live tag.
+    const fence = await fileGapNote(vault, { question: "Is SCIM supported?", missing: "``` <img src=x onerror=alert(1)>", askedBy: "U3", auditFile });
     await vault.writeNote("_inbox/sso.md", `# SSO\n\n## Requirements\n\n${HOSTILE}`, { kind: "prd", feature: "SSO" });
     const filed = await organizeInboxFile(vault, "_inbox/sso.md");
     const doc = await publishDoc({ vault, auditFile, repoRoot: root, markdown: `# SSO\n\n${HOSTILE}`, approvedBy: "PM", slug: "sso" });
-    for (const relPath of [gap.relPath, filed.to as string, doc]) {
+    for (const relPath of [gap.relPath, tabbed.relPath, fence.relPath, filed.to as string, doc]) {
       const raw = await fs.readFile(vault.abs(relPath), "utf8");
       expect(raw, relPath).not.toMatch(/<img|<script|\]\(javascript:/i);
     }

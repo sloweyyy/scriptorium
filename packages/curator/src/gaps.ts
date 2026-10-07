@@ -155,20 +155,21 @@ async function fileGapNoteNow(vault: Vault, input: GapInput, key: string): Promi
     return { relPath: existing.relPath, ticket, duplicate: true };
   }
 
-  const body = [
+  // Inert: the internal site renders the vault, and a question someone typed (or a summary a
+  // model wrote) carrying `<img onerror=…>` ran as script there. The note is made inert as
+  // the site will parse it, whole: quoting a question made inert on its own changed how it
+  // parsed (`\t<img>` is code alone, and live HTML after `> `).
+  const body = inertMarkdown([
     "**Question the vault could not answer:**",
     "",
     // Every line quoted: quoting only the first let "Q?\n# Beacon supports SSO" become a
     // heading of the note, and the index's title for it.
-    // Inert too: the internal site renders the vault, and a question someone typed (or a
-    // summary a model wrote) carrying `<img onerror=…>` ran as script there.
-    // (Inert as a whole, then quoted: line by line, a code span across the break hid live HTML.)
-    ...inertMarkdown(input.question).split(/\r?\n/).map((line) => `> ${line}`),
+    ...input.question.split(/\r?\n/).map((line) => `> ${line}`),
     "",
-    `Missing documentation: ${inertMarkdown(input.missing.replace(/\s+/g, " ").trim())}`,
+    `Missing documentation: ${input.missing.replace(/\s+/g, " ").trim()}`,
     "",
     "_Filed by Curator. Scribe should treat this as a documentation request._",
-  ].join("\n");
+  ].join("\n"));
 
   // The id is taken and its note written in one step for the whole process: two different
   // questions filed at once each read the same highest id, and both became the same G-00N.

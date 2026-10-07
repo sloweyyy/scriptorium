@@ -49,6 +49,9 @@ export function lintDoc(markdown: string): LintFinding[] {
   if (unsafe.links.length) {
     findings.push({ code: "unsafe-link", severity: "error", message: `Links must go to http(s) or mailto, not ${unsafe.links.map((scheme) => `${scheme}:`).join(", ")}.` });
   }
+  if (unsafe.tooCostly) {
+    findings.push({ code: "too-costly", severity: "error", message: `This doc would be published as a code block: ${unsafe.tooCostly}.` });
+  }
 
   for (const [banned, preferred] of Object.entries(GLOSSARY)) {
     if (new RegExp(`\\b${escapeRegex(banned)}\\b`, "i").test(markdown)) {

@@ -395,6 +395,8 @@ describe("pull request webhooks", () => {
     const pr = (action: string, draft = false) => ({ action, pull_request: { number: 12, draft, user: { login: "dev" } }, repository: { full_name: "Org/App" } });
     expect(pullRequestFrom("pull_request", pr("opened"))).toEqual({ repo: "org/app", number: 12, author: "dev" });
     expect(pullRequestFrom("pull_request", pr("ready_for_review"))).toMatchObject({ number: 12 });
+    // Keyed on the signed body, not the delivery header.
+    expect(pullRequestFrom("pull_request", { ...pr("opened"), pull_request: { number: 12, user: { login: "dev" }, head: { sha: "abc123" } } })).toMatchObject({ eventKey: "org/app#12:opened:abc123" });
     expect(pullRequestFrom("pull_request", pr("opened", true))).toBeUndefined();
     expect(pullRequestFrom("pull_request", pr("closed"))).toBeUndefined();
     expect(pullRequestFrom("push", pr("opened"))).toBeUndefined();

@@ -54,7 +54,7 @@ export interface IngressHooks {
   /** A push landed on the public docs repo's base branch; these repo-relative paths changed. */
   docsChanged?: (input: { paths: string[]; commit?: string; commitUrl?: string }) => Promise<void>;
   /** A pull request opened (or became ready for review) on a source repo. */
-  pullRequest?: (input: { repo: string; number: number; author?: string; deliveryId?: string }) => Promise<void>;
+  pullRequest?: (input: { repo: string; number: number; author?: string; deliveryId?: string; eventKey?: string }) => Promise<void>;
   /** A Jira comment was created — the Teammate answers it if it is mentioned. */
   jiraComment?: (input: JiraCommentEvent) => Promise<void>;
   /** A Jira issue was assigned to someone — the Teammate acts if it is the assignee. */
@@ -144,15 +144,18 @@ export function jiraCommentFrom(payload: unknown): JiraCommentEvent | undefined 
 }
 
 /** The pull-request events worth a review: opened, reopened, or taken out of draft. */
-export function pullRequestFrom(event: string | undefined, payload: unknown): { repo: string; number: number; author?: string } | undefined {
+export function pullRequestFrom(event: string | undefined, payload: unknown): { repo: string; number: number; author?: string; eventKey?: string } | undefined {
   if (event !== "pull_request") return undefined;
-  const body = payload as { action?: string; pull_request?: { number?: number; draft?: boolean; user?: { login?: string } }; repository?: { full_name?: string } };
+  const body = payload as { action?: string; pull_request?: { number?: number; draft?: boolean; user?: { login?: string }; head?: { sha?: string } }; repository?: { full_name?: string } };
   if (!["opened", "reopened", "ready_for_review"].includes(body.action ?? "")) return undefined;
   if (body.pull_request?.draft) return undefined;
   const repo = body.repository?.full_name?.toLowerCase();
   const number = body.pull_request?.number;
   if (!repo || !Number.isInteger(number)) return undefined;
-  return { repo, number: number as number, author: body.pull_request?.user?.login };
+  // What happened, from the signed body: the delivery header isn't covered by the HMAC, so a
+  // captured body replayed under a fresh delivery id was a new event, and a new PR check.
+  const sha = body.pull_request?.head?.sha;
+  return { repo, number: number as number, author: body.pull_request?.user?.login, ...(sha ? { eventKey: `${repo}#${number}:${body.action}:${sha}` } : {}) };
 }
 
 function readBody(request: IncomingMessage, limitBytes = 1_000_000): Promise<Buffer> {

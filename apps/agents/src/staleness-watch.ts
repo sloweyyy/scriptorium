@@ -13,7 +13,10 @@ export async function reportStaleDocs(input: {
   vault: Vault;
   ledger: EffectLedger;
   auditFile: string;
-  notify: (issueKey: string, markdown: string) => Promise<void>;
+  /** Post with this op on the comment, so `landed` can find it. */
+  notify: (issueKey: string, markdown: string, op: string) => Promise<void>;
+  /** Did a notice with this op already land on the ticket? Asked after an interrupted post. */
+  landed?: (issueKey: string, op: string) => Promise<boolean>;
 }): Promise<{ notified: string[] }> {
   const notified: string[] = [];
   for (const doc of await checkStaleness(input.vault)) {
@@ -22,18 +25,24 @@ export async function reportStaleDocs(input: {
       await audit(input.auditFile, { type: "doc.stale.unrouted", actor: "curator", doc: doc.doc, source: doc.source });
       continue;
     }
-    const { replayed } = await once(input.ledger, opKey("doc.stale", doc.doc, doc.currentHash), async () => {
+    const issueKey = doc.jiraIssue;
+    const op = opKey("doc.stale", doc.doc, doc.currentHash);
+    // Probed: a notice Jira stored before its response was lost (or before a crash) is found
+    // on the ticket, instead of being posted again at the next hourly check.
+    const probe = input.landed ? async () => ((await input.landed!(issueKey, op)) ? true : undefined) : undefined;
+    const { replayed } = await once(input.ledger, op, async () => {
       await input.notify(
-        doc.jiraIssue as string,
+        issueKey,
         [
           `**This doc may be out of date.** Its PRD (\`${doc.source}\`) has changed since \`${doc.doc}\` was approved.`,
           "",
           "Nothing was changed. If the published doc should follow the PRD, comment `draft` to revise it; the revision goes through the usual review and approval.",
         ].join("\n"),
+        op,
       );
       await audit(input.auditFile, { type: "doc.stale.notified", actor: "curator", doc: doc.doc, issue: doc.jiraIssue });
       return true;
-    });
+    }, probe ? { probe } : {});
     if (!replayed) notified.push(doc.doc);
   }
   return { notified };

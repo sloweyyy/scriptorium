@@ -1185,6 +1185,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/confluence.test.ts"],
   },
   {
+    control: "a stale-doc notice that already landed is found, not posted again",
+    file: "apps/agents/src/staleness-watch.ts",
+    find: "    }, probe ? { probe } : {});",
+    replace: "    }, {});",
+    evals: ["evals/staleness.test.ts"],
+  },
+  {
+    control: "a PR event is keyed on its signed body, not its delivery header",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "        id: eventKey ?? deliveryId ?? `${repo}#${number}`,",
+    replace: "        id: deliveryId ?? `${repo}#${number}`,",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "a PR event's key comes from the signed body",
+    file: "apps/agents/src/ingress.ts",
+    find: "...(sha ? { eventKey: `${repo}#${number}:${body.action}:${sha}` } : {})",
+    replace: "",
+    evals: ["evals/ingress.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

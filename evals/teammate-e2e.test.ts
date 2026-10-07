@@ -390,6 +390,18 @@ describe("automatic PR checks", () => {
     expect(audit).toContain("PR checks are not configured for this repo");
   });
 
+  it("a signed PR event replayed under a fresh delivery id is not checked again; a new push is", async () => {
+    const prConfig = { ...config(), teammate: { ...config().teammate, githubRepos: ["org/app"], prChannel: "CPR" } } as AppConfig;
+    const core = await createTeammate(prConfig, vault, slack as never, "UBOT");
+    script = { calls: [], reply: "No Jira key is linked to this PR." };
+    const event = { repo: "org/app", number: 12, author: "dev", eventKey: "org/app#12:opened:abc123" };
+    await core.onPullRequest({ ...event, deliveryId: "d-10" });
+    await core.onPullRequest({ ...event, deliveryId: "d-11" }); // the same signed body, a new header
+    await core.onPullRequest({ ...event, deliveryId: "d-12", eventKey: "org/app#12:reopened:def456" });
+    await settle(core);
+    expect(posted.filter((message) => message.channel === "CPR")).toHaveLength(2);
+  });
+
   it("the card a PR check raises threads under that check's summary", async () => {
     const prConfig = { ...config(), teammate: { ...config().teammate, githubRepos: ["org/app"], prChannel: "CPR" } } as AppConfig;
     const core = await createTeammate(prConfig, vault, slack as never, "UBOT");

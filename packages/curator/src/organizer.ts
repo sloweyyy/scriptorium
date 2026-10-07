@@ -1,5 +1,5 @@
 import path from "node:path";
-import { firstHeading, slugify, type Note, type Vault } from "@scriptorium/core";
+import { firstHeading, inertMarkdown, slugify, type Note, type Vault } from "@scriptorium/core";
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
 
@@ -64,7 +64,9 @@ export async function organizeInboxFile(vault: Vault, relPath: string): Promise<
     }
     const KINDS = { prd: "prd", docs: "doc", reference: "reference" } as const;
     const frontmatter = Object.fromEntries(Object.entries(note.frontmatter).filter(([key]) => !SYSTEM_FIELDS.includes(key)));
-    await vault.writeNote(to, note.body, {
+    // Filed inert: an inbox file (a PRD attached to a ticket, a dropped page) is rendered by
+    // the internal site, and nobody vouched for the HTML in it.
+    await vault.writeNote(to, inertMarkdown(note.body), {
       ...frontmatter,
       kind: KINDS[kind],
       feature,

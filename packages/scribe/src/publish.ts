@@ -1,4 +1,4 @@
-import { audit, commitVault, isSafeSlug, parseMarkdown, slugify, sourceHash, type Vault } from "@scriptorium/core";
+import { audit, commitVault, inertMarkdown, isSafeSlug, parseMarkdown, slugify, sourceHash, type Vault } from "@scriptorium/core";
 
 async function prdHash(vault: Vault, sourcePrd: string | undefined): Promise<string | undefined> {
   if (!sourcePrd) return undefined;
@@ -30,7 +30,9 @@ export interface PublishInput {
  * this function is called from the approval handler and nowhere else.
  */
 export async function publishDoc(input: PublishInput): Promise<string> {
-  const { body } = parseMarkdown(input.markdown);
+  // Inert before it reaches either site: the approved text, minus anything a page would run
+  // (a raw tag, a `javascript:` link). Lint already sends such drafts back for revision.
+  const body = inertMarkdown(parseMarkdown(input.markdown).body);
   const title = body.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "untitled";
   const slug = input.slug ?? slugify(title);
   // The last line of defence: whatever the slug came from (a ticket's attachment name, state

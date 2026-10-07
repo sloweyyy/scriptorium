@@ -199,6 +199,9 @@ function stubJira(): void {
     const stored = uploaded.get(url.split("/attachment/content/")[1] ?? "");
     if (stored) return new Response(stored, { status: 200 });
     if (url.includes("/attachment/content/fake-png")) return new Response("%PDF-1.7 not an image", { status: 200 });
+    // Two versions of one design: the bytes say which is which.
+    const version = url.match(/\/attachment\/content\/design-(v\d)/)?.[1];
+    if (version) return new Response(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from(version)]), { status: 200 });
     // A design just under the per-image cap: eight of them overflow one request.
     if (url.includes("/attachment/content/big-")) return new Response(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(3_600_000)]), { status: 200 });
     if (url.includes("/attachment/content/")) return new Response(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("PNGBYTES")]), { status: 200 });
@@ -207,7 +210,7 @@ function stubJira(): void {
       const bytes = Buffer.from(await file.arrayBuffer());
       const id = `up-${uploaded.size + 1}`;
       uploaded.set(id, bytes);
-      const attachment = { id, filename: file.name, mimeType: "text/markdown", size: bytes.length, created: new Date().toISOString(), content: `https://example.atlassian.net/rest/api/2/attachment/content/${id}` };
+      const attachment = { id, filename: file.name, mimeType: "text/markdown", size: bytes.length, created: new Date().toISOString(), content: `https://example.atlassian.net/rest/api/2/attachment/content/${id}`, author: { accountId: "bot-1" } };
       issue = { ...issue, fields: { ...(issue.fields as object), attachment: [...(((issue.fields as { attachment?: unknown[] }).attachment) ?? []), attachment] } };
       return json([attachment]);
     }
@@ -1064,6 +1067,33 @@ describe("designs the model cannot take", () => {
     const draftComment = comments.find((comment) => comment.body.includes("full-page-4k.png"));
     expect(draftComment?.body).toMatch(/over 3\.8 MB/);
     expect(comments.some((comment) => comment.body.includes("I hit an error"))).toBe(false);
+  });
+});
+
+describe("which PRD and which design", () => {
+  it("an oversized newest PRD is refused, and the older one it replaced is not read instead", async () => {
+    const md = (id: string, filename: string, created: string, size: number) => ({ id, filename, mimeType: "text/markdown", size, created, content: `https://example.atlassian.net/rest/api/2/attachment/content/${id}` });
+    issue = { ...issue, fields: { ...(issue.fields as object), description: "", attachment: [md("prd-v1", "prd-v1.md", "2026-08-20T08:00:00.000+0000", 900), md("prd-v2", "prd-v2.md", "2026-08-20T09:00:00.000+0000", 900_000)] } };
+    (await startScribeJira(config(), vault)).stop();
+    const said = comments.map((comment) => comment.body).join("\n");
+    expect(said).toContain("prd-v1.md (older than prd-v2.md, which replaced it, so not read)");
+    expect(vi.mocked(generateText)).not.toHaveBeenCalled();
+  });
+
+  it("a PM's PRD named `draft-….md` is a PRD; only the agent's own draft file is skipped", async () => {
+    const theirs = { id: "pm-draft", filename: "draft-incident-timeline-prd.md", mimeType: "text/markdown", size: 900, created: "2026-08-20T09:00:00.000+0000", content: "https://example.atlassian.net/rest/api/2/attachment/content/pm-draft", author: { accountId: "pm-1" } };
+    issue = { ...issue, fields: { ...(issue.fields as object), description: "", attachment: [theirs] } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.map((comment) => comment.body).join("\n")).not.toMatch(/can't find a PRD/i);
+  });
+
+  it("two uploads of one design name: the vault keeps the newest", async () => {
+    const design = (version: string, created: string) => ({ id: `design-${version}`, filename: "wireframe.png", mimeType: "image/png", size: 12, created, content: `https://example.atlassian.net/rest/api/2/attachment/content/design-${version}` });
+    issue = { ...issue, fields: { ...(issue.fields as object), attachment: [design("v1", "2026-08-20T08:00:00.000+0000"), design("v2", "2026-08-20T09:00:00.000+0000")] } };
+    (await startScribeJira(config(), vault)).stop();
+    const stored = (await vault.listNotes()).length >= 0 ? await fs.readdir(vault.abs("design")).catch(() => [] as string[]) : [];
+    const where = stored.includes("wireframe.png") ? "design/wireframe.png" : "_inbox/wireframe.png";
+    expect((await fs.readFile(vault.abs(where))).subarray(8).toString()).toBe("v2");
   });
 });
 

@@ -39,6 +39,19 @@ describe("markdown to slack mrkdwn", () => {
     expect(toSlackMrkdwn("~~gone~~")).toBe("~gone~");
   });
 
+  it("an answer can't ping a channel or a person, or show one address over another", () => {
+    const out = toSlackMrkdwn("Hi <!channel> see [docs.beacon.example](https://evil.example) cc <@U123> & <https://x.example|y>");
+    expect(out).not.toMatch(/<!channel>|<@U123>|<https:\/\/x\.example\|y>/);
+    expect(out).toContain("&lt;!channel&gt;");
+    expect(out).toContain("&lt;@U123&gt;");
+    // The disguised label is shown with where it really goes.
+    expect(out).toContain("docs.beacon.example (<https://evil.example>)");
+    // An honest label still renders as a link; a quote is still a quote.
+    expect(toSlackMrkdwn("See [the guide](https://docs.beacon.example/guide).")).toContain("<https://docs.beacon.example/guide|the guide>");
+    expect(toSlackMrkdwn("[docs.beacon.example](https://docs.beacon.example/x)")).toBe("<https://docs.beacon.example/x|docs.beacon.example>");
+    expect(toSlackMrkdwn("> quoted line")).toBe("> quoted line");
+  });
+
   it("renders wikilinks as paths — vault syntax means nothing to a Slack reader", () => {
     expect(toSlackMrkdwn("as documented in [[docs/scheduled-maintenance]]")).toBe(
       "as documented in `docs/scheduled-maintenance`",

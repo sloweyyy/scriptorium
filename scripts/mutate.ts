@@ -753,7 +753,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a push retry never sends a vault note edited after its approval",
     file: "apps/agents/src/scribe-jira/publishing.ts",
-    find: "    if (known?.publishedBodyHash && (!current || hashDraft(current.body) !== known.publishedBodyHash)) {",
+    find: "    if (!current || hashDraft(current.body) !== known.publishedBodyHash) {",
     replace: "    if (false) {",
     evals: ["evals/jira-board.test.ts"],
   },
@@ -840,6 +840,13 @@ export const MUTANTS: Mutant[] = [
     find: "      const mayPostIn = (channel: string) => settings.channels.includes(channel) || (settings.allowDms && channel.startsWith(\"D\"));",
     replace: "      const mayPostIn = (_channel: string) => true;",
     evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "a push-only retry needs the approved body's hash; without one it republishes the approved draft",
+    file: "apps/agents/src/scribe-jira/publishing.ts",
+    find: "  if (alreadyPublished && relPath && known?.publishedBodyHash) {",
+    replace: "  if (alreadyPublished && relPath) {",
+    evals: ["evals/jira-board.test.ts"],
   },
   {
     control: "a delegation ends by itself",

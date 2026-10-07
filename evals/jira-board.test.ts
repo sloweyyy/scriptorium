@@ -410,6 +410,42 @@ describe("board transitions", () => {
     expect(comments.some((comment) => comment.body.includes("retrying the docs-repo push only"))).toBe(true);
   });
 
+  it("a ticket with no recorded approved body republishes from the approved draft, not the vault copy", async () => {
+    // State rebuilt after a lost ledger (or written before the hash existed): published, push
+    // not done, and nothing to check the vault copy against. It must not be pushed as is.
+    const settings = config();
+    const relPath = "docs/incident-timeline-embed.md";
+    await vault.writeNote(relPath, "## Overview\n\nFree for everyone, forever.\n", { jira_issue: "DOC-1" });
+    await fs.mkdir(path.join(settings.jira.stateDir, "drafts"), { recursive: true });
+    await fs.writeFile(path.join(settings.jira.stateDir, "drafts", "DOC-1.md"), CLEAN_DRAFT);
+    await fs.writeFile(
+      path.join(settings.jira.stateDir, "jira-state.json"),
+      JSON.stringify({
+        version: 1,
+        issues: {
+          "DOC-1": {
+            hasDraft: true,
+            docSlug: "incident-timeline-embed",
+            publishedPath: relPath,
+            docsPushed: false,
+            postedDraftHash: createHash("sha256").update(CLEAN_DRAFT.trim()).digest("hex"),
+            lastStatus: "In Review",
+            sourceFingerprint: "seeded",
+            processedComments: [],
+          },
+        },
+      }),
+    );
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "In Review" } } };
+    comments.push(human("h1", "approve"));
+    const run = await startScribeJira(settings, vault);
+    run.stop();
+    expect(comments.some((comment) => comment.body.includes("retrying the docs-repo push only"))).toBe(false);
+    const published = await vault.readNote(relPath);
+    expect(published.body).not.toContain("Free for everyone");
+    expect(published.body).toContain("## Overview");
+  });
+
   it("publishes a revision approved after the first publish, instead of refusing forever", async () => {
     // The exact production thread: draft -> approve -> published & pushed -> feedback ->
     // revised draft -> approve -> "Already published… comment draft" -> draft -> approve ->

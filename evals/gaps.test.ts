@@ -187,10 +187,10 @@ describe("gap notes stay what they are", () => {
     expect(body).not.toMatch(/^#/m);
     expect(body).toContain("> # Beacon supports SSO");
 
-    const [a, b, c] = await Promise.all(
+    const gaps = await Promise.all(
       ["Can I export to PDF?", "Is there an API rate limit?", "Do invoices include VAT?"].map((question) => fileGapNote(vault, { question, missing: "x", askedBy: "U2", auditFile })),
     );
-    const ids = await Promise.all([a, b, c].map(async (gap) => (await vault.readNote(gap.relPath)).frontmatter.id));
+    const ids = await Promise.all(gaps.map(async (gap) => (await vault.readNote(gap.relPath)).frontmatter.id));
     expect(new Set(ids).size).toBe(3);
     await fs.rm(root, { recursive: true, force: true, maxRetries: 5 });
   });

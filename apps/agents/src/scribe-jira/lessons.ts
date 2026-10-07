@@ -23,7 +23,7 @@ export async function proposeLesson(ctx: Ctx, key: string, approvedBy: string): 
 
   // Consumed either way: this feedback has been judged once, and the next publish on
   // this ticket must not re-distill it into a duplicate proposal.
-  await ctx.state.patch(key, { feedback: [] });
+  await ctx.state.patch(key, { feedback: [], feedbackAuthors: [] });
 
   const rule = await distillLesson(feedback.join("\n"));
   if (!rule) {

@@ -881,6 +881,17 @@ describe("a lesson learned on one ticket shapes the next (TODO #6)", () => {
     expect(comments.some((comment) => comment.body.includes("L-001"))).toBe(true);
   });
 
+  it("feedback waiting for its lesson is held with who wrote it", async () => {
+    vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    comments.push(human("f1", "always state which timezone the send time uses"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T13:00:00.000+0000" } };
+    (await startScribeJira(settings, vault)).stop();
+    const state = JSON.parse(await fs.readFile(path.join(settings.jira.stateDir, "jira-state.json"), "utf8"));
+    expect(state.issues["DOC-1"]).toMatchObject({ feedback: ["always state which timezone the send time uses"], feedbackAuthors: ["human-1"] });
+  });
+
   it("`approve` and `approve lesson` in one poll: the rule the publish just proposed, which nobody read, stays a proposal", async () => {
     const { DISTILL_SYSTEM_PROMPT, listLessons } = await import("@scriptorium/scribe");
     vi.mocked(generateText).mockImplementation(async (options: GenerateOptions) => (options.system === DISTILL_SYSTEM_PROMPT ? `LESSON: ${RULE}` : CLEAN_DRAFT));

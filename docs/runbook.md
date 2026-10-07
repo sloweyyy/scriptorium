@@ -157,10 +157,10 @@ pnpm privacy:erase U0123ABC --by <you>
     requester id on past requests becomes a pseudonym.
   - Any request whose arguments or card name them has its text emptied; who approved it stays.
   - Reminders they asked for, or that name them, are cancelled or emptied.
-  - Doc-ticket feedback waiting to be distilled into a lesson is dropped where it names them.
+  - Doc-ticket feedback waiting to be distilled into a lesson is dropped if they wrote it or
+    it names them. Feedback is held with its author's Jira account; feedback recorded
+    before that was the case is matched by name only.
   - Delegations to or from them end.
-- **Feedback isn't stored with its author.** Feedback that doesn't name them stays, so
-  review `jira-state.json` for anything else they wrote.
 - **What stays, on purpose: who approved a write.** Erasing an approver would erase the
   record that separation of duties depends on. Vault notes that mention them (docs, house
   rules) are listed for review, not edited.

@@ -214,6 +214,7 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
   if (untouched) return;
   const comments = await ctx.client.listComments(key);
   const pendingFeedback: string[] = [];
+  const pendingAuthors: Array<string | undefined> = [];
   // Set once this tick rewrites the draft. An approval that arrives in the same poll was
   // given to the PREVIOUS version — the reviewer has not seen the one it would publish.
   let revisedThisTick = false;
@@ -221,8 +222,10 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
   const flushFeedback = async (): Promise<void> => {
     if (!pendingFeedback.length) return;
     const batch = [...pendingFeedback];
+    const authors = [...pendingAuthors];
     pendingFeedback.length = 0;
-    await runRevise(ctx, issue, batch);
+    pendingAuthors.length = 0;
+    await runRevise(ctx, issue, batch, authors);
     revisedThisTick = true;
   };
 
@@ -293,6 +296,7 @@ export async function handleIssue(ctx: Ctx, issue: JiraIssue): Promise<void> {
     }
     if (command.kind === "feedback") {
       pendingFeedback.push(command.text);
+      pendingAuthors.push(comment.author?.accountId);
       pendingFeedbackIds.push(comment.id);
       continue;
     }

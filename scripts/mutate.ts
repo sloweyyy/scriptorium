@@ -1052,6 +1052,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/contract.test.ts"],
   },
   {
+    control: "doc-ticket feedback is held with who wrote it",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "      pendingAuthors.push(comment.author?.accountId);",
+    replace: "      pendingAuthors.push(undefined);",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "an erasure drops feedback the person wrote, not only feedback naming them",
+    file: "apps/agents/src/erase.ts",
+    find: "    names(issue.feedback?.[index]) || matches(issue.feedbackAuthors?.[index] ?? undefined);",
+    replace: "    names(issue.feedback?.[index]);",
+    evals: ["evals/privacy-erase.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

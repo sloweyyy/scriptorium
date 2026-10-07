@@ -1453,8 +1453,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a recovered draft is posted again before it can be approved",
     file: "apps/agents/src/scribe-jira/issue.ts",
-    find: "      patch.draftUnposted = true;",
-    replace: "      patch.draftUnposted = false;",
+    find: " patch.draftUnposted = true;",
+    replace: " patch.draftUnposted = false;",
     evals: ["evals/jira-flow.test.ts"],
   },
   {
@@ -1502,7 +1502,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "Scribe hands a ticket back to whoever had it before",
     file: "apps/agents/src/scribe-jira/context.ts",
-    find: "  if (current && current !== ctx.botAccountId) await ctx.state.patch(key, { handBackTo: current });\n",
+    find: "  if (current !== ctx.botAccountId) await ctx.state.patch(key, { handBackTo: current });\n",
     replace: "",
     evals: ["evals/jira-board.test.ts"],
   },
@@ -1974,6 +1974,34 @@ export const MUTANTS: Mutant[] = [
     find: "            ...(current.status === \"pending\" || current.status === \"approved\" ? { status: \"expired\" as const, expiresAt: new Date().toISOString() } : {}),\n",
     replace: "",
     evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "after a lost ledger, only a ticket where a draft was asked for is engaged",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "    engaged: Boolean(attached) || autoDrafts(ctx, issue) || asked,",
+    replace: "    engaged: true,",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "after a lost ledger, a published ticket isn't told its draft never landed",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "      if (!patch.publishedPath) patch.draftUnposted = true;",
+    replace: "      patch.draftUnposted = true;",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a person who holds the ticket keeps it",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "  if (holder && holder !== ctx.botAccountId) return;\n",
+    replace: "",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a hand-back is used once",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "  if (before) await ctx.state.patch(key, { handBackTo: undefined });\n",
+    replace: "",
+    evals: ["evals/jira-board.test.ts"],
   },
   {
     control: "a delegation ends by itself",

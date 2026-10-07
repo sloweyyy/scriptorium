@@ -197,18 +197,30 @@ function reporterId(issue: JiraIssue): string | undefined {
  * correctly as "unassigned, free for someone to pick up".
  */
 export async function handBack(ctx: Ctx, key: string, issue: JiraIssue): Promise<void> {
-  // To whoever had it before the agent took it (a writer assigned to the ticket), and only
-  // otherwise to its reporter: always the reporter replaced the person doing the work.
+  // A person who holds it now keeps it: a writer on a ticket the agent never took (it only
+  // replied "no PRD"), or someone who took it while the agent worked. Read live: the
+  // tick's snapshot is a model call old.
+  const holder = await ctx.client.getIssue(key).then(
+    (fresh) => fresh.fields.assignee?.accountId,
+    () => issue.fields.assignee?.accountId,
+  );
+  if (holder && holder !== ctx.botAccountId) return;
+  // To whoever had it when the agent took it, and only otherwise to its reporter: always
+  // the reporter replaced the person doing the work.
   const before = ctx.state.get(key)?.handBackTo;
   const reporter = reporterId(issue);
   const to = before && before !== ctx.botAccountId ? before : reporter && reporter !== ctx.botAccountId ? reporter : null;
   await assignTo(ctx, key, to);
+  // Given back: a later take records its own.
+  if (before) await ctx.state.patch(key, { handBackTo: undefined });
 }
 
 /** Take the ticket to draft it, remembering whose it was so it goes back to them. */
 export async function takeTicket(ctx: Ctx, key: string, issue: JiraIssue): Promise<void> {
   const current = issue.fields.assignee?.accountId;
-  if (current && current !== ctx.botAccountId) await ctx.state.patch(key, { handBackTo: current });
+  // Who had it at this take, nobody included: someone who held it weeks ago doesn't get an
+  // unassigned ticket back.
+  if (current !== ctx.botAccountId) await ctx.state.patch(key, { handBackTo: current });
   await assignTo(ctx, key, ctx.botAccountId);
 }
 

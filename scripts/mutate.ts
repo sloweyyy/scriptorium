@@ -1752,6 +1752,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/publish.test.ts"],
   },
   {
+    control: "a lesson is written inert, as it will be published",
+    file: "packages/scribe/src/lessons.ts",
+    find: "  const text = inertMarkdown(input.text);",
+    replace: "  const text = input.text;",
+    evals: ["evals/publish.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

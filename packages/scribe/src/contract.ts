@@ -1,5 +1,4 @@
 import { parseMarkdown, type Frontmatter } from "@scriptorium/core";
-import { PLACEHOLDER_PATTERN } from "./lint";
 
 export interface ContractField {
   key: string;
@@ -93,8 +92,11 @@ export interface ContractResult {
  */
 function answered(value: string): boolean {
   const trimmed = value.trim();
-  if (!trimmed || PLACEHOLDER_PATTERN.test(trimmed)) return false;
-  return !/^(n\/?a|none|unknown|tbc|\?+|-+|—|…|\.{2,})$/i.test(trimmed);
+  if (!trimmed) return false;
+  // The whole value a placeholder (any case), or a placeholder MARKER in it ("admins (TBD)").
+  // Lint's case-insensitive word match read "Todo list reminders" as unanswered.
+  if (/^(todo|tbd|tbc|fixme|xxx|n\/?a|none|unknown|lorem ipsum|\[placeholder\]|\?+|-+|—|…|\.{2,})[.!]?$/i.test(trimmed)) return false;
+  return !/\b(TODO|TBD|FIXME|XXX)\b|\[placeholder\]/.test(trimmed);
 }
 
 export function checkContract(prdMarkdown: string): ContractResult {

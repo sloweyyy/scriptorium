@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { isSafeSlug, parseMarkdown, type ImageInput } from "@scriptorium/core";
 import {
+  AttachmentTooLargeError,
   confluencePageIdFromUrl,
   confluencePageIdsIn,
   confluenceStorageToMarkdown,
@@ -159,21 +160,34 @@ export async function loadDesignImages(ctx: Ctx, issue: JiraIssue): Promise<{ im
   const names: string[] = [];
   const skipped: string[] = [];
   let total = 0;
+  // Downloads, not designs kept: the budget filled after five large ones, and every image
+  // after them was still downloaded and thrown away, on every draft and revision.
+  let downloads = 0;
+  const tooBig = (attachment: JiraAttachment) => `${attachment.filename} (over ${Math.round(MAX_DESIGN_BYTES / 1e6 * 10) / 10} MB — export it smaller)`;
+  const full = (attachment: JiraAttachment) => `${attachment.filename} (the newer designs already fill what one draft can take; attach fewer or smaller ones)`;
   for (const attachment of newestFirst(issue.fields.attachment ?? [])) {
     const mediaType = VISION_TYPES[attachment.mimeType?.toLowerCase() ?? ""];
     if (!mediaType) continue;
-    if (images.length >= MAX_DESIGNS) {
+    if (images.length >= MAX_DESIGNS || downloads >= MAX_DESIGNS) {
       skipped.push(`${attachment.filename} (more than ${MAX_DESIGNS} designs; the newest ${MAX_DESIGNS} were read)`);
       continue;
     }
-    // Checked before downloading when Jira says the size, and after in case it didn't.
+    // Checked before downloading when Jira says the size, and while downloading in case it didn't.
     if ((attachment.size ?? 0) > MAX_DESIGN_BYTES) {
-      skipped.push(`${attachment.filename} (over ${Math.round(MAX_DESIGN_BYTES / 1e6 * 10) / 10} MB — export it smaller)`);
+      skipped.push(tooBig(attachment));
       continue;
     }
-    const bytes = await ctx.client.downloadAttachment(attachment);
-    if (bytes.length > MAX_DESIGN_BYTES) {
-      skipped.push(`${attachment.filename} (over ${Math.round(MAX_DESIGN_BYTES / 1e6 * 10) / 10} MB — export it smaller)`);
+    if (total + (attachment.size ?? 0) > MAX_DESIGN_TOTAL_BYTES) {
+      skipped.push(full(attachment));
+      continue;
+    }
+    downloads += 1;
+    const bytes = await ctx.client.downloadAttachment(attachment, MAX_DESIGN_BYTES).catch((error: unknown) => {
+      if (error instanceof AttachmentTooLargeError) return undefined;
+      throw error;
+    });
+    if (!bytes) {
+      skipped.push(tooBig(attachment));
       continue;
     }
     // Sent as what it IS, never as what its name claims; not an image at all is left out, named.
@@ -183,7 +197,7 @@ export async function loadDesignImages(ctx: Ctx, issue: JiraIssue): Promise<{ im
       continue;
     }
     if (total + bytes.length > MAX_DESIGN_TOTAL_BYTES) {
-      skipped.push(`${attachment.filename} (the newer designs already fill what one draft can take; attach fewer or smaller ones)`);
+      skipped.push(full(attachment));
       continue;
     }
     total += bytes.length;
@@ -222,8 +236,11 @@ export async function loadSource(ctx: Ctx, issue: JiraIssue): Promise<PrdSource>
         newestRefused = attachment.filename;
         continue;
       }
-      const bytes = await ctx.client.downloadAttachment(attachment);
-      if (bytes.length > MAX_PRD_BYTES) {
+      const bytes = await ctx.client.downloadAttachment(attachment, MAX_PRD_BYTES).catch((error: unknown) => {
+        if (error instanceof AttachmentTooLargeError) return undefined;
+        throw error;
+      });
+      if (!bytes) {
         source.skipped.push(tooBig);
         newestRefused = attachment.filename;
         continue;

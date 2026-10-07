@@ -136,7 +136,7 @@ export function renderLessonsForPrompt(lessons: Lesson[]): string {
   ].join("\n");
 }
 
-export async function nextLessonId(vault: Vault): Promise<string> {
+export async function nextLessonId(vault: Vault, reserved: Iterable<string> = []): Promise<string> {
   // Numbering scans FILENAMES, not just parseable lessons: a hand-seeded file without an
   // `id` field is invisible to listLessons but still occupies its number on disk, and
   // handing that number out again produced two different rules both called L-001 — at
@@ -149,6 +149,9 @@ export async function nextLessonId(vault: Vault): Promise<string> {
   for (const lesson of await listLessons(vault)) {
     max = Math.max(max, Number(lesson.id.replace(/\D/g, "")) || 0);
   }
+  // A withdrawn id is never handed out again, even when its note is gone (a vault restored
+  // without its rules): the new rule would be born withdrawn, and never approvable.
+  for (const id of reserved) max = Math.max(max, Number(id.replace(/\D/g, "")) || 0);
   return `L-${String(max + 1).padStart(3, "0")}`;
 }
 
@@ -158,10 +161,12 @@ export interface NewLesson {
   status?: LessonStatus;
   author?: string;
   sourceThread?: string;
+  /** Ids that may not be reused: the deployment's withdrawn lessons. */
+  reservedIds?: Iterable<string>;
 }
 
 export async function saveLesson(vault: Vault, input: NewLesson): Promise<Lesson> {
-  const id = await nextLessonId(vault);
+  const id = await nextLessonId(vault, input.reservedIds);
   const relPath = `${LESSONS_DIR}/${id}-${docSlug(input.text, 8, 40)}.md`;
   const status: LessonStatus = input.status ?? "proposed";
   await vault.writeNote(relPath, input.text, {

@@ -1353,6 +1353,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/slack-format.test.ts"],
   },
   {
+    control: "a proposal with no record here is shown again, never stuck",
+    file: "apps/agents/src/scribe-jira/lessons.ts",
+    find: "      if (current?.status === \"proposed\" && current.sourceThread === ctx.client.issueUrl(key)) {",
+    replace: "      if (false) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a withdrawn lesson id is never handed out again",
+    file: "packages/scribe/src/lessons.ts",
+    find: "  for (const id of reserved) max = Math.max(max, Number(id.replace(/\\D/g, \"\")) || 0);\n",
+    replace: "",
+    evals: ["evals/lessons.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

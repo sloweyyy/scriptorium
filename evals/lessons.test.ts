@@ -174,6 +174,12 @@ describe("deciding a lesson", () => {
     await expect(withdrawnLessons(stateDir)).rejects.toThrow(/unreadable/);
   });
 
+  it("a withdrawn id is never handed out again, even when its note is gone", async () => {
+    const { nextLessonId } = await import("@scriptorium/scribe");
+    expect(await nextLessonId(vault)).toBe("L-001");
+    expect(await nextLessonId(vault, ["L-001", "L-004"])).toBe("L-005");
+  });
+
   it("a lesson with no record of where it was proposed can't be approved from any ticket", async () => {
     const { lessonDecisionCheck } = await import("@scriptorium/scribe");
     const unsourced = { id: "L-009", scope: "global", status: "proposed" as const, text: "x", relPath: "_lessons/L-009.md" };

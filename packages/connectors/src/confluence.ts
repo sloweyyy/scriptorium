@@ -47,8 +47,10 @@ const Page = z.object({
   title: z.string(),
   spaceId: z.union([z.string(), z.number()]).transform(String),
   body: z.object({ storage: z.object({ value: z.string() }) }),
+  version: z.object({ number: z.number() }).optional(),
   _links: z.object({ webui: z.string().optional(), base: z.string().optional() }).optional(),
 });
+const VersionDetail = z.object({ number: z.number().optional(), message: z.string().optional() });
 const PageSpace = z.object({ id: z.union([z.string(), z.number()]).transform(String), spaceId: z.union([z.string(), z.number()]).transform(String) });
 const ChildList = z.object({
   _links: z.object({ next: z.string().optional() }).optional(),
@@ -75,7 +77,10 @@ const PageMeta = z.object({
   spaceId: z.union([z.string(), z.number()]).transform(String),
   version: z.object({ number: z.number(), message: z.string().optional() }),
 });
-const PageList = z.object({ results: z.array(z.object({ id: z.union([z.string(), z.number()]).transform(String), title: z.string() })) });
+const PageList = z.object({
+  results: z.array(z.object({ id: z.union([z.string(), z.number()]).transform(String), title: z.string(), authorId: z.string().optional(), createdAt: z.string().optional() })),
+});
+const CurrentUser = z.object({ accountId: z.string() });
 
 export class ConfluenceAccessError extends Error {}
 
@@ -127,7 +132,7 @@ export class ConfluenceConnector {
       }));
   }
 
-  async readPage(pageId: string): Promise<{ id: string; title: string; space: string; markdown: string; url?: string }> {
+  async readPage(pageId: string): Promise<{ id: string; title: string; space: string; markdown: string; url?: string; version?: number }> {
     if (!/^\d+$/.test(pageId)) throw new ConfluenceAccessError("A Confluence page id is digits only.");
     const allowed = await this.allowedSpaces();
     const page = await this.get(`/api/v2/pages/${pageId}?body-format=storage`, Page);
@@ -142,6 +147,7 @@ export class ConfluenceConnector {
       space,
       markdown: confluenceStorageToMarkdown(page.body.storage.value),
       url: page._links?.webui ? `${base}${page._links.webui}` : undefined,
+      version: page.version?.number,
     };
   }
 
@@ -227,13 +233,30 @@ export class ConfluenceConnector {
       const found = await this.get(`/api/v2/pages?space-id=${spaceId}&title=${encodeURIComponent(input.title)}&limit=1`, PageList);
       return found.results[0]?.id;
     };
+    // The parent is checked like any page this agent touches: in an allowed space.
+    if (input.parentId !== undefined) {
+      if (!/^\d+$/.test(input.parentId)) throw new ConfluenceAccessError("A Confluence page id is digits only.");
+      const parent = await this.get(`/api/v2/pages/${input.parentId}`, PageSpace);
+      if (parent.spaceId !== spaceId) throw new ConfluenceAccessError(`Page ${input.parentId} isn't in ${input.space}, so it can't be the new page's parent.`);
+    }
     const op = opKey("confluence.create", spaceId, input.title, input.approvalId);
+    const attempt = await ledger.get(op);
     // First attempt only: a page that already has this title is someone else's, not an
     // earlier attempt of ours — reporting it as "Already created" would claim their page.
-    if (!(await ledger.get(op))) {
+    if (!attempt) {
       const taken = await find();
       if (taken) throw new ConfluenceAccessError(`A page titled "${input.title}" already exists in ${input.space} (confluence:${taken}). Update it with confluence_update_page, or choose another title.`);
     }
+    // On a retry, a page with the title is ours only if this account made it after the
+    // attempt began: one a person created between a failed attempt and the retry is theirs.
+    const ours = async () => {
+      const found = await this.get(`/api/v2/pages?space-id=${spaceId}&title=${encodeURIComponent(input.title)}&limit=1`, PageList);
+      const page = found.results[0];
+      if (!page) return undefined;
+      const me = (await this.get("/rest/api/user/current", CurrentUser).catch(() => undefined))?.accountId;
+      const since = attempt?.startedAt ? Date.parse(attempt.startedAt) - 60_000 : 0;
+      return me && page.authorId === me && (!page.createdAt || Date.parse(page.createdAt) >= since) ? page.id : undefined;
+    };
     const { result, replayed } = await once(
       ledger,
       op,
@@ -247,7 +270,7 @@ export class ConfluenceConnector {
             body: { representation: "wiki", value: markdownToJira(input.markdown) },
           }, PageMeta)
         ).id,
-      { probe: find },
+      { probe: ours },
     );
     return { id: result, created: !replayed };
   }
@@ -257,7 +280,7 @@ export class ConfluenceConnector {
    * rides in the version message, so a retry that finds its own op on the current version
    * knows the update already landed.
    */
-  async updatePage(input: { id: string; markdown: string; title?: string; approvalId?: string }): Promise<{ version: number; updated: boolean }> {
+  async updatePage(input: { id: string; markdown: string; title?: string; approvalId?: string; baseVersion: number }): Promise<{ version: number; updated: boolean }> {
     const ledger = this.settings.ledger;
     if (!ledger) throw new ConfluenceAccessError("This connector is read-only.");
     if (!/^\d+$/.test(input.id)) throw new ConfluenceAccessError("A Confluence page id is digits only.");
@@ -267,6 +290,14 @@ export class ConfluenceConnector {
     // approved update, not a replay of the first. (Not the page version: a retry after a
     // lost response sees the version it already bumped, and would update twice.)
     const op = opKey("confluence.update", input.id, input.markdown, input.title, input.approvalId);
+    // Written over the version the body was proposed from, never over whatever is there now:
+    // a person's edit between the proposal and the click was silently replaced. Confluence
+    // refuses a version that isn't next, so asking for base+1 is the conflict check; the
+    // refusal here only says it in words before trying.
+    const target = input.baseVersion + 1;
+    if (!(await ledger.get(op)) && current.version.number !== input.baseVersion) {
+      throw new ConfluenceAccessError(`Page ${input.id} changed after this update was proposed (version ${input.baseVersion}, now ${current.version.number}). Nothing was changed: read it again and propose the update on the latest text.`);
+    }
     const { result, replayed } = await once(
       ledger,
       op,
@@ -277,13 +308,15 @@ export class ConfluenceConnector {
             status: "current",
             title: input.title ?? current.title,
             body: { representation: "wiki", value: markdownToJira(input.markdown) },
-            version: { number: current.version.number + 1, message: `scriptorium op ${op}` },
+            version: { number: target, message: `scriptorium op ${op}` },
           }, PageMeta)
         ).version.number,
       {
+        // The version our write would have made, not the latest: a person may have edited
+        // after it landed, and looking only at the latest wrote over their edit on a retry.
         probe: async () => {
-          const now = await this.get(`/api/v2/pages/${input.id}`, PageMeta);
-          return now.version.message?.includes(op) ? now.version.number : undefined;
+          const written = await this.get(`/api/v2/pages/${input.id}/versions/${target}`, VersionDetail).catch(() => undefined);
+          return written?.message?.includes(op) ? target : undefined;
         },
       },
     );
@@ -311,7 +344,7 @@ export class ConfluenceConnector {
           const { id } = z.object({ id: z.string() }).parse(input);
           return refusalOr(async () => {
             const page = await this.readPage(id);
-            return `confluence:${page.id} — ${page.title} (space ${page.space})${page.url ? ` ${page.url}` : ""}\n\n${page.markdown}`;
+            return `confluence:${page.id} — ${page.title} (space ${page.space}${page.version ? `, version ${page.version}` : ""})${page.url ? ` ${page.url}` : ""}\n\n${page.markdown}`;
           });
         },
         // The page read is evidence for ITSELF only — its id came from the validated input,
@@ -386,9 +419,14 @@ export class ConfluenceConnector {
             {
               name: "confluence_update_page",
               description: "Replace the body of a Confluence page in an allowed space. Requires human approval; it is not done until approved.",
-              inputSchema: z.object({ id: z.string(), markdown: z.string().min(1), title: z.string().optional() }),
+              inputSchema: z.object({
+                id: z.string(),
+                baseVersion: z.number().int().positive().describe("The page version you read (confluence_read_page shows it). If the page changes after that, the update is refused, never written over the change."),
+                markdown: z.string().min(1),
+                title: z.string().optional(),
+              }),
               run: async (input: unknown, context?: ToolRunContext) => {
-                const parsed = z.object({ id: z.string(), markdown: z.string().min(1), title: z.string().optional() }).parse(input);
+                const parsed = z.object({ id: z.string(), baseVersion: z.number().int().positive(), markdown: z.string().min(1), title: z.string().optional() }).parse(input);
                 return refusalOr(async () => {
                   const page = await this.updatePage({ ...parsed, approvalId: context?.approval?.id });
                   return `${page.updated ? "Updated" : "Already updated"} confluence:${parsed.id} (version ${page.version})`;

@@ -23,7 +23,11 @@ describe("surfaces", () => {
     const server = startIngress({ config, hooks: {}, surfaces: () => surfaces.snapshot() });
     await new Promise<void>((resolve) => server.once("listening", resolve));
     try {
-      const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/health`);
+      // The address this server bound, not 127.0.0.1: listening on `::`, its port number may
+      // be another parallel worker's on IPv4, and that server answered (a flaky 404).
+      const { address, port } = server.address() as AddressInfo;
+      const host = address === "::" || address.includes(":") ? "[::1]" : "127.0.0.1";
+      const response = await fetch(`http://${host}:${port}/health`);
       expect(response.status).toBe(503);
       expect(await response.json()).toMatchObject({ status: "degraded", surfaces: { "scribe-jira": "failed" } });
     } finally {

@@ -152,7 +152,7 @@ describe("confluence attachments", () => {
 });
 
 describe("confluence writes", () => {
-  let pages: Record<string, { title: string; spaceId: string; version: number; message?: string; body?: string }>;
+  let pages: Record<string, { title: string; spaceId: string; version: number; message?: string; body?: string; history?: Record<number, string | undefined>; authorId?: string; createdAt?: string }>;
   let loseNext: boolean;
 
   beforeEach(() => {
@@ -163,24 +163,33 @@ describe("confluence writes", () => {
       const method = init?.method ?? "GET";
       const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200 });
       if (url.includes("/api/v2/spaces?keys=")) return json({ results: [{ id: 1, key: "BEACON" }] });
+      if (url.endsWith("/rest/api/user/current")) return json({ accountId: "acc-agent" });
       if (url.includes("/api/v2/pages?space-id=")) {
         const title = new URL(String(input)).searchParams.get("title");
-        return json({ results: Object.entries(pages).filter(([, page]) => page.title === title).map(([id, page]) => ({ id, title: page.title })) });
+        return json({ results: Object.entries(pages).filter(([, page]) => page.title === title).map(([id, page]) => ({ id, title: page.title, authorId: page.authorId, createdAt: page.createdAt })) });
       }
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       if (method === "POST" && url.endsWith("/api/v2/pages")) {
+        // Like Confluence: a title is unique in its space.
+        if (Object.values(pages).some((page) => page.title === body.title && page.spaceId === String(body.spaceId))) return new Response("title taken", { status: 400 });
         const id = String(300 + Object.keys(pages).length);
-        pages[id] = { title: body.title, spaceId: String(body.spaceId), version: 1, body: body.body.value };
+        pages[id] = { title: body.title, spaceId: String(body.spaceId), version: 1, body: body.body.value, authorId: "acc-agent", createdAt: new Date().toISOString() };
         if (loseNext) { loseNext = false; throw new TypeError("socket hang up"); }
         return json({ id, title: body.title, spaceId: body.spaceId, version: { number: 1 } });
       }
       const id = url.match(/\/api\/v2\/pages\/(\d+)/)?.[1];
+      const versionAsked = Number(url.match(/\/versions\/(\d+)$/)?.[1]);
+      if (id && pages[id] && versionAsked) {
+        return versionAsked in (pages[id]!.history ?? {}) ? json({ number: versionAsked, message: pages[id]!.history![versionAsked] }) : new Response("nope", { status: 404 });
+      }
       if (id && pages[id] && method === "PUT") {
-        pages[id] = { ...pages[id]!, version: body.version.number, message: body.version.message, body: body.body.value };
+        // Like Confluence: the next version or a conflict, never a write over someone else's.
+        if (body.version.number !== pages[id]!.version + 1) return new Response("version conflict", { status: 409 });
+        pages[id] = { ...pages[id]!, version: body.version.number, message: body.version.message, body: body.body.value, history: { ...pages[id]!.history, [body.version.number]: body.version.message } };
         if (loseNext) { loseNext = false; throw new TypeError("socket hang up"); }
         return json({ id, title: body.title, spaceId: pages[id]!.spaceId, version: { number: body.version.number } });
       }
-      if (id && pages[id]) return json({ id, title: pages[id]!.title, spaceId: pages[id]!.spaceId, version: { number: pages[id]!.version, message: pages[id]!.message } });
+      if (id && pages[id]) return json({ id, title: pages[id]!.title, spaceId: pages[id]!.spaceId, version: { number: pages[id]!.version, message: pages[id]!.message }, body: { storage: { value: pages[id]!.body ?? "" } } });
       return new Response("nope", { status: 404 });
     });
   });
@@ -207,19 +216,58 @@ describe("confluence writes", () => {
     expect(pages["777"]?.body).toBe("a human's page");
   });
 
+  it("a retry never claims a page a person made with the same title after the failed attempt", async () => {
+    const ledger = new MemoryEffectLedger();
+    // The first attempt fails before Confluence creates anything.
+    const failing = new ConfluenceConnector({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", allowedSpaceKeys: ["BEACON"], ledger });
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => (init?.method === "POST" ? new Response("bad gateway", { status: 502 }) : originalFetch(input, init)));
+    await expect(failing.createPage({ space: "BEACON", title: "Release notes", markdown: "x", approvalId: "ap-1" })).rejects.toThrow();
+    vi.stubGlobal("fetch", originalFetch);
+    // A person creates "Release notes" in the meantime.
+    pages["777"] = { title: "Release notes", spaceId: "1", version: 1, authorId: "acc-person", createdAt: new Date().toISOString() };
+    const retried = writer(ledger).createPage({ space: "BEACON", title: "Release notes", markdown: "x", approvalId: "ap-1" });
+    await expect(retried).rejects.toThrow();
+    expect(Object.values(pages).filter((page) => page.title === "Release notes")).toHaveLength(1);
+  });
+
+  it("a parent outside the space is refused", async () => {
+    await expect(writer().createPage({ space: "BEACON", title: "Child", markdown: "x", parentId: "202" })).rejects.toThrow(/isn't in BEACON/);
+  });
+
   it("refuses to write outside the allowed spaces", async () => {
     await expect(writer().createPage({ space: "HR", title: "x", markdown: "x" })).rejects.toThrow(/outside/);
-    await expect(writer().updatePage({ id: "202", markdown: "x" })).rejects.toThrow(/outside/);
+    await expect(writer().updatePage({ id: "202", markdown: "x", baseVersion: 1 })).rejects.toThrow(/outside/);
     expect(pages["202"]!.version).toBe(1);
   });
 
   it("updates to version + 1 exactly once, with the op in the version message", async () => {
     const ledger = new MemoryEffectLedger();
     loseNext = true;
-    await expect(writer(ledger).updatePage({ id: "101", markdown: "Windows are 4 hours." })).rejects.toThrow();
-    expect(await writer(ledger).updatePage({ id: "101", markdown: "Windows are 4 hours." })).toEqual({ version: 4, updated: false });
+    await expect(writer(ledger).updatePage({ id: "101", markdown: "Windows are 4 hours.", baseVersion: 3 })).rejects.toThrow();
+    expect(await writer(ledger).updatePage({ id: "101", markdown: "Windows are 4 hours.", baseVersion: 3 })).toEqual({ version: 4, updated: false });
     expect(pages["101"]!.version).toBe(4);
     expect(pages["101"]!.message).toMatch(/^scriptorium op /);
+  });
+
+  it("never writes over a person's edit: made after the proposal, or after our write landed", async () => {
+    // Proposed from version 3; a person edits to 4 before the click.
+    pages["101"] = { ...pages["101"]!, version: 4, body: "Their edit." };
+    await expect(writer().updatePage({ id: "101", markdown: "Ours.", baseVersion: 3, approvalId: "ap-1" })).rejects.toThrow(/changed after this update was proposed/);
+    expect(pages["101"]!.body).toBe("Their edit.");
+
+    // Ours lands as 5 but the answer is lost; a person edits to 6; the retry finds ours at 5.
+    const ledger = new MemoryEffectLedger();
+    loseNext = true;
+    await expect(writer(ledger).updatePage({ id: "101", markdown: "Ours again.", baseVersion: 4, approvalId: "ap-2" })).rejects.toThrow();
+    pages["101"] = { ...pages["101"]!, version: 6, body: "Their later edit." };
+    expect(await writer(ledger).updatePage({ id: "101", markdown: "Ours again.", baseVersion: 4, approvalId: "ap-2" })).toEqual({ version: 5, updated: false });
+    expect(pages["101"]!.body).toBe("Their later edit.");
+  });
+
+  it("the read tool shows the version an update must name", async () => {
+    const read = writer().tools().find((tool) => tool.name === "confluence_read_page")!;
+    expect((await read.run({ id: "101" })).split("\n")[0]).toContain("version 3");
   });
 
   it("offers no write tools without a ledger", () => {
@@ -262,9 +310,9 @@ describe("separately approved identical writes", () => {
     });
     const ledger = new MemoryEffectLedger();
     const c = new ConfluenceConnector({ baseUrl: "https://example.atlassian.net", email: "a", apiToken: "t", allowedSpaceKeys: ["BEACON"], ledger });
-    await c.updatePage({ id: "101", markdown: "A", approvalId: "ap-1" });
-    await c.updatePage({ id: "101", markdown: "B", approvalId: "ap-2" });
-    expect((await c.updatePage({ id: "101", markdown: "A", approvalId: "ap-3" })).updated).toBe(true);
+    await c.updatePage({ id: "101", markdown: "A", approvalId: "ap-1", baseVersion: 1 });
+    await c.updatePage({ id: "101", markdown: "B", approvalId: "ap-2", baseVersion: 2 });
+    expect((await c.updatePage({ id: "101", markdown: "A", approvalId: "ap-3", baseVersion: 3 })).updated).toBe(true);
     expect(pages["101"]!.version).toBe(4);
   });
 });

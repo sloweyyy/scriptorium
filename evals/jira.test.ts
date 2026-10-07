@@ -12,7 +12,7 @@ import {
   splitAtLastOwnComment,
   type JiraComment,
 } from "@scriptorium/jira";
-import { newestFirst, prdFrontmatter, safeDesignName } from "@scriptorium/agents";
+import { newestFirst, prdFrontmatter, safeDesignName, sourceFingerprint } from "@scriptorium/agents";
 
 function comment(body: string, accountId = "human-1", id = "1"): JiraComment {
   return { id, body, created: new Date().toISOString(), author: { accountId, displayName: "Reviewer" } };
@@ -388,6 +388,15 @@ describe("which PRD attachment is the PRD", () => {
     const at = (filename: string, created: string) => ({ id: filename, filename, mimeType: "text/markdown", content: "", created });
     const picked = newestFirst([at("prd.md", "2026-08-20T10:00:00.000+0000"), at("prd-fixed.md", "2026-08-21T09:00:00.000+0000")]);
     expect(picked.map((attachment) => attachment.filename)).toEqual(["prd-fixed.md", "prd.md"]);
+  });
+});
+
+describe("what the ticket offered last time", () => {
+  it("changes when the description's words change, even at the same length", () => {
+    const issue = (description: string) => ({ key: "DOC-1", fields: { summary: "S", description, attachment: [] } }) as never;
+    // A PM answers the contract's question in place: same length, different words.
+    expect(sourceFingerprint(issue("audience: TBD"))).not.toBe(sourceFingerprint(issue("audience: PMs")));
+    expect(sourceFingerprint(issue("audience: PMs "))).toBe(sourceFingerprint(issue("audience: PMs")));
   });
 });
 

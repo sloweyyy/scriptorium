@@ -342,15 +342,22 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[], 
     return;
   }
 
-  // This feedback was already turned into the saved draft, whose comment never landed (a
-  // failure after the save, retried): post that revision, don't revise it again.
-  const fromThis = createHash("sha256").update(feedback.join("\u0000")).digest("hex");
+  // The saved draft may be a revision whose comment never landed (a failure after the save):
+  // the feedback it was revised with is in it already. Retried alone, that revision is
+  // posted, not revised again; retried with feedback that came since, only the new feedback
+  // is applied to it. Matched on the whole set, a new comment made the old one apply twice.
   const known0 = ctx.state.get(key);
-  if (known0?.revisedFrom === fromThis && known0.postedDraftHash !== hashDraft(draft)) {
-    const recorded = known0.feedback ?? [];
-    for (const [index, item] of feedback.entries()) if (!recorded.includes(item)) await ctx.state.appendFeedback(key, item, authors[index]);
+  const applied = known0?.revisedWith && known0.postedDraftHash !== hashDraft(draft) ? known0.revisedWith : [];
+  const fresh = feedback.filter((item) => !applied.includes(item));
+  const recorded = known0?.feedback ?? [];
+  const recordFeedback = async (): Promise<void> => {
+    // A retried comment the failed run already recorded is not recorded again.
+    for (const [index, item] of feedback.entries()) if (!(applied.includes(item) && recorded.includes(item))) await ctx.state.appendFeedback(key, item, authors[index]);
+  };
+  if (applied.length && !fresh.length) {
+    await recordFeedback();
     await repostDraft(ctx, key, draft);
-    await ctx.state.patch(key, { revisedFrom: undefined });
+    await ctx.state.patch(key, { revisedWith: undefined });
     await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
     await handBack(ctx, key, issue);
     return;
@@ -362,15 +369,15 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[], 
   // Re-read fresh, never carried over from the first draft — "match the new mockup" is
   // feedback the text alone cannot express. But only when the feedback actually points at
   // a design: see REFERS_TO_DESIGN for why the default is text-only.
-  const pointsAtDesign = feedback.some((item) => REFERS_TO_DESIGN.test(item));
+  const pointsAtDesign = fresh.some((item) => REFERS_TO_DESIGN.test(item));
   const designs = pointsAtDesign ? await loadDesignImages(ctx, issue) : { images: [], names: [] };
-  const result = await reviseDoc(ctx.vault, draft, feedback, designs.images, { withdrawn: await withdrawnLessons(ctx.config.jira.stateDir) });
+  const result = await reviseDoc(ctx.vault, draft, fresh, designs.images, { withdrawn: await withdrawnLessons(ctx.config.jira.stateDir) });
   await ctx.state.saveDraft(key, result.markdown);
   // The vault copy is now stale relative to this draft: the next approve republishes.
-  await ctx.state.patch(key, { draftPublished: false, revisedFrom: fromThis });
+  await ctx.state.patch(key, { draftPublished: false, revisedWith: [...applied, ...fresh] });
   await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
   await handBack(ctx, key, issue);
-  for (const [index, item] of feedback.entries()) await ctx.state.appendFeedback(key, item, authors[index]);
+  await recordFeedback();
 
   const known = ctx.state.get(key);
   const slug = known?.docSlug ?? docSlug(issue.fields.summary);
@@ -387,12 +394,12 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[], 
         images: designs.images,
         imageNames: designs.names,
         skipped: [],
-        origin: `${feedback.length} comment(s) of feedback`,
+        origin: `${fresh.length} comment(s) of feedback`,
       },
       revision: true,
       attachment: `draft-${slug}.md`,
     }),
   );
-  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(result.markdown), revisedFrom: undefined });
-  await audit(ctx.config.auditFile, { type: "jira.draft.revised", actor: "scribe", issue: key, feedback });
+  await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(result.markdown), revisedWith: undefined });
+  await audit(ctx.config.auditFile, { type: "jira.draft.revised", actor: "scribe", issue: key, feedback: fresh });
 }

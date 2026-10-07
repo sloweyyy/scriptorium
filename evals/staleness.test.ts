@@ -72,6 +72,34 @@ describe("staleness", () => {
 });
 
 describe("stale docs are reported on their ticket, once per change", () => {
+  it("a notice that landed before its response was lost is found on the ticket, not posted again", async () => {
+    const { reportStaleDocs } = await import("@scriptorium/agents");
+    const { MemoryEffectLedger } = await import("@scriptorium/runtime");
+    await vault.writeNote("prd/maintenance.md", "# Maintenance\n\nReminder 1 hour before.", {});
+    await publishDoc({ vault, auditFile: path.join(tmpRoot, "audit.jsonl"), repoRoot: tmpRoot, markdown: "# Maintenance\n\nBody.", approvedBy: "PM", sourcePrd: "prd/maintenance", slug: "maintenance", jiraIssue: "DOC-7" });
+    await vault.writeNote("prd/maintenance.md", "# Maintenance\n\nReminder 24 hours before.", {});
+    const ledger = new MemoryEffectLedger();
+    const onTicket = new Set<string>();
+    let lose = true;
+    const run = () =>
+      reportStaleDocs({
+        vault,
+        ledger,
+        auditFile: path.join(tmpRoot, "audit.jsonl"),
+        notify: async (_key, _markdown, op) => {
+          onTicket.add(op); // Jira stored it…
+          if (lose) {
+            lose = false;
+            throw new Error("Jira 502"); // …and the answer never came back
+          }
+        },
+        landed: async (_key, op) => onTicket.has(op),
+      });
+    await expect(run()).rejects.toThrow("502");
+    expect(await run()).toEqual({ notified: [] });
+    expect(onTicket.size).toBe(1);
+  });
+
   it("notifies DOC-7 once for a PRD change, again for a second change, and never for a fresh doc", async () => {
     const { reportStaleDocs } = await import("@scriptorium/agents");
     const { MemoryEffectLedger } = await import("@scriptorium/runtime");

@@ -72,7 +72,7 @@ export interface TeammateCore {
   /** The App Home for this Slack user: their approvals inbox, as Block Kit blocks. */
   homeView(userId: string): Promise<unknown[]>;
   /** A pull request to check against its ticket (from the GitHub webhook). */
-  onPullRequest(input: { repo: string; number: number; author?: string; deliveryId?: string }): Promise<void>;
+  onPullRequest(input: { repo: string; number: number; author?: string; deliveryId?: string; eventKey?: string }): Promise<void>;
   drain(deadlineMs: number): Promise<boolean>;
 }
 
@@ -829,14 +829,14 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       queue.push(event);
     },
 
-    async onPullRequest({ repo, number, author, deliveryId }) {
+    async onPullRequest({ repo, number, author, deliveryId, eventKey }) {
       // Only allowed repos, and only with somewhere to put the result and the card.
       if (!config.hasModelAccess || !settings.prChannel || !settings.githubRepos.map((allowed) => allowed.toLowerCase()).includes(repo.toLowerCase())) {
         await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: keys.githubPull(repo, number), reason: "PR checks are not configured for this repo" }).catch(() => undefined);
         return;
       }
       const event: AgentEvent = {
-        id: deliveryId ?? `${repo}#${number}`,
+        id: eventKey ?? deliveryId ?? `${repo}#${number}`,
         source: "github",
         key: keys.githubPull(repo, number),
         kind: "github.pull_request",

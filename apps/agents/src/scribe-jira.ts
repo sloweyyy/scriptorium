@@ -1,7 +1,7 @@
 import path from "node:path";
 import { defaultJql, type AppConfig, type Vault } from "@scriptorium/core";
 import { FileEffectLedger } from "@scriptorium/runtime";
-import { jiraClient, JiraState } from "@scriptorium/jira";
+import { jiraClient, JiraState, markdownToJira } from "@scriptorium/jira";
 import { draftFingerprint } from "./slack-approval";
 import { errorMessage, knownAccounts, say, withIssueLock, type Ctx } from "./scribe-jira/context";
 import { handleIssue, reportFailure } from "./scribe-jira/issue";
@@ -38,7 +38,12 @@ export interface ScribeJiraHandle {
   /** Work one issue now, by key. Re-fetches from the API; never trusts a webhook body. */
   nudge(issueKey: string): Promise<void>;
   /** Post a comment on a ticket from outside the poller (e.g. a GitHub event). */
-  comment(issueKey: string, markdown: string): Promise<void>;
+  /**
+   * With `op`, posted exactly once: the comment carries the op, and `commentPosted` finds it
+   * after a lost response or a crash, so a retry doesn't post it again.
+   */
+  comment(issueKey: string, markdown: string, op?: string): Promise<void>;
+  commentPosted(issueKey: string, op: string): Promise<boolean>;
   /** Approve and publish from another surface (e.g. a Slack button). Same gate, second doorway. */
   /** `draft` is the fingerprint the Slack card was posted for; a changed draft refuses. */
   approve(issueKey: string, approvedBy: string, draft?: string): Promise<void>;
@@ -117,8 +122,13 @@ export async function startScribeJira(config: AppConfig, vault: Vault, options: 
         await reportFailure(ctx, issue, error);
       }
     },
-    async comment(issueKey: string, markdown: string): Promise<void> {
-      await say(ctx, issueKey, markdown);
+    async comment(issueKey: string, markdown: string, op?: string): Promise<void> {
+      if (!op) return void (await say(ctx, issueKey, markdown));
+      const posted = await ctx.client.addComment(issueKey, markdownToJira(markdown), { op });
+      await ctx.state.markProcessed(issueKey, [posted.id]);
+    },
+    async commentPosted(issueKey: string, op: string): Promise<boolean> {
+      return Boolean(await ctx.client.findCommentByOp(issueKey, op));
     },
     async approve(issueKey: string, approvedBy: string, draft?: string): Promise<void> {
       // Re-fetch, then take the exact path an `approve` comment takes — including the

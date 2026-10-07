@@ -1,7 +1,7 @@
 import path from "node:path";
 import { docsRepoReady, geminiModel, jiraReady, loadConfig, Vault } from "@scriptorium/core";
 import { jiraClient } from "@scriptorium/jira";
-import { FileEffectLedger } from "@scriptorium/runtime";
+import { FileEffectLedger, Lease, opKey } from "@scriptorium/runtime";
 import { seedCorpusIfEmpty, updateMoc, watchInbox } from "@scriptorium/curator";
 import { startIngress } from "./ingress";
 import { shutdownHandler, Surfaces } from "./lifecycle";
@@ -108,12 +108,24 @@ if (config.curator.botToken && config.curator.appToken) {
 // changed since approval gets ONE notice on the ticket it was approved on.
 if (scribe) {
   const staleLedger = new FileEffectLedger(path.join(config.jira.stateDir, "effects.json"));
+  // One instance runs it, like every other scheduled check: during a deploy's overlap both
+  // revisions ran it, and both could post the same notice.
+  const staleLease = new Lease(path.join(config.jira.stateDir, "staleness.lease"));
   const checkStale = (): void =>
-    void reportStaleDocs({ vault, ledger: staleLedger, auditFile: config.auditFile, notify: (key, markdown) => scribe!.comment(key, markdown) })
-      .then(({ notified }) => notified.length && console.log(`[curator] stale: notified ${notified.join(", ")}`))
-      .catch((error) => console.warn(`[curator] staleness check: ${error instanceof Error ? error.message : error}`));
+    void (async () => {
+      if (!(await staleLease.acquire().catch(() => false))) return;
+      const { notified } = await reportStaleDocs({
+        vault,
+        ledger: staleLedger,
+        auditFile: config.auditFile,
+        notify: (key, markdown, op) => scribe!.comment(key, markdown, op),
+        landed: (key, op) => scribe!.commentPosted(key, op),
+      });
+      if (notified.length) console.log(`[curator] stale: notified ${notified.join(", ")}`);
+    })().catch((error) => console.warn(`[curator] staleness check: ${error instanceof Error ? error.message : error}`));
   const staleTimer = setInterval(checkStale, 60 * 60 * 1000);
   stops.push(() => clearInterval(staleTimer));
+  stops.push(() => staleLease.release());
   checkStale();
 }
 
@@ -141,7 +153,7 @@ const ingress = startIngress({
     jiraAssigned: (input) => teammate?.onJiraAssigned(input) ?? Promise.resolve(),
     jiraCreated: (input) => teammate?.onJiraCreated(input) ?? Promise.resolve(),
     docsChanged: docsRepoReady(config.docsRepo)
-      ? async ({ paths, commitUrl }) => {
+      ? async ({ paths, commit, commitUrl }) => {
           const change = await syncFromDocsRepo(config, vault, paths);
           if (change.vaultUpdated.length) {
             await updateMoc(vault);
@@ -151,6 +163,10 @@ const ingress = startIngress({
           // with its own published projection.
           for (const edited of change.externalEdited) {
             if (!edited.issueKey || !scribe) continue;
+            // Once per (commit, file): GitHub redelivers (and the in-memory dedupe forgets at
+            // every deploy), and each redelivery posted the same comment again.
+            const op = commit ? opKey(edited.landed ? "docs.landed" : "docs.edited", commit, edited.repoPath) : undefined;
+            if (op && (await scribe.commentPosted(edited.issueKey, op))) continue;
             if (edited.landed) {
               // The agent's own publish arriving via its PR merge — the loop closing,
               // not a human edit. The ticket gets the good news and the live URL.
@@ -165,6 +181,7 @@ const ingress = startIngress({
                 ]
                   .filter(Boolean)
                   .join("\n"),
+                op,
               );
               continue;
             }
@@ -179,6 +196,7 @@ const ingress = startIngress({
               ]
                 .filter(Boolean)
                 .join("\n"),
+              op,
             );
           }
         }

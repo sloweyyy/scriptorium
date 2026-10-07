@@ -96,7 +96,9 @@ function answered(value: string): boolean {
   // The whole value a placeholder (any case), or a placeholder MARKER in it ("admins (TBD)").
   // Lint's case-insensitive word match read "Todo list reminders" as unanswered.
   if (/^(todo|tbd|tbc|fixme|xxx|n\/?a|none|unknown|lorem ipsum|\[placeholder\]|\?+|-+|—|…|\.{2,})[.!]?$/i.test(trimmed)) return false;
-  return !/\b(TODO|TBD|FIXME|XXX)\b|\[placeholder\]/.test(trimmed);
+  // TODO only in capitals ("Todo list reminders" is a name); the others in any case: "tbd
+  // (ask PM)" is as unanswered as "TBD".
+  return !(/\bTODO\b/.test(trimmed) || /\b(tbd|tbc|fixme|xxx)\b|\[placeholder\]/i.test(trimmed));
 }
 
 export function checkContract(prdMarkdown: string): ContractResult {

@@ -1367,20 +1367,6 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/lessons.test.ts"],
   },
   {
-    control: "a friendly approval is an approval: only a hedge makes it a question",
-    file: "packages/jira/src/commands.ts",
-    find: "  return /\\?|\\b(wait|but|not yet|until|once|don'?t|do not|hold|holding|before|unless|except|however|actually|instead|stop|pending|blocked|no)\\b/.test(rest);",
-    replace: "  return rest.replace(/[\\s\\p{P}]/gu, \"\").length > 0;",
-    evals: ["evals/jira.test.ts"],
-  },
-  {
-    control: "a PRD value that merely contains the word todo is an answer",
-    file: "packages/scribe/src/contract.ts",
-    find: "  return !/\\b(TODO|TBD|FIXME|XXX)\\b|\\[placeholder\\]/.test(trimmed);",
-    replace: "  return !/\\b(TODO|TBD|FIXME|XXX)\\b|\\[placeholder\\]/i.test(trimmed);",
-    evals: ["evals/contract.test.ts"],
-  },
-  {
     control: "unset, Curator answers in the notify channel it announces in",
     file: "apps/agents/src/curator-bot.ts",
     find: "  return config.slack.notifyChannel ? [config.slack.notifyChannel] : [];",
@@ -1547,6 +1533,27 @@ export const MUTANTS: Mutant[] = [
     find: "  if (current && current !== ctx.botAccountId) await ctx.state.patch(key, { handBackTo: current });\n",
     replace: "",
     evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "anything after an approval but thanks, praise or a sign-off makes it a question",
+    file: "packages/jira/src/commands.ts",
+    find: "  return rest.length > 0;\n}",
+    replace: "  return false;\n}",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "thanks, praise and a sign-off after an approval keep it an approval",
+    file: "packages/jira/src/commands.ts",
+    find: "    .filter((line) => !/^\\s*(\u2014|\u2013|--|-)\\s*[\\p{L} .'-]{1,40}$/u.test(line)) // a sign-off: \"\u2014 Phuc\"\n",
+    replace: "",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "a lowercase tbd in a PRD value is still a placeholder",
+    file: "packages/scribe/src/contract.ts",
+    find: "  return !(/\\bTODO\\b/.test(trimmed) || /\\b(tbd|tbc|fixme|xxx)\\b|\\[placeholder\\]/i.test(trimmed));",
+    replace: "  return !/\\b(TODO|TBD|FIXME|XXX)\\b|\\[placeholder\\]/.test(trimmed);",
+    evals: ["evals/contract.test.ts"],
   },
   {
     control: "a delegation ends by itself",

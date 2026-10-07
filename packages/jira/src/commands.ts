@@ -97,8 +97,24 @@ function commandHead(text: string): string {
  * turned "Approved\n\nGreat job, team!" into a question nobody meant to ask.
  */
 function saysMore(text: string): boolean {
-  const rest = text.split("\n").slice(1).join(" ").toLowerCase();
-  return /\?|\b(wait|but|not yet|until|once|don'?t|do not|hold|holding|before|unless|except|however|actually|instead|stop|pending|blocked|no)\b/.test(rest);
+  // An allowlist, not a list of hedges: every way to object can't be listed ("Don’t publish
+  // this yet" with a curly apostrophe, "after legal signs off", "only if…", "never mind"),
+  // and each one missed published. What may follow an approval is thanks, praise, a cc, a
+  // sign-off or a screenshot; any other word makes it a question.
+  const rest = text
+    .split("\n")
+    .slice(1)
+    .filter((line) => !/^\s*(—|–|--|-)\s*[\p{L} .'-]{1,40}$/u.test(line)) // a sign-off: "— Phuc"
+    .join(" ")
+    // Thanks to someone by name: "Thanks Phuc!", "cheers, Mai".
+    // (A capitalised name only: "Thanks, but not yet" keeps its "but".)
+    .replace(/\b([Tt]hanks|[Tt]hank you|[Tt]hx|[Cc]heers|[Kk]udos)\b[\s,]*(\p{Lu}[\p{Ll}'’-]*\s*){0,2}/gu, " ")
+    .toLowerCase()
+    .replace(/![^!\n]+!/g, " ") // an attached image, as Jira writes it
+    .replace(/\p{Extended_Pictographic}|\uFE0F/gu, " ")
+    .replace(/\b(thanks|thank you|thx|ty|cheers|cc|great|good|nice|well|done|job|work|team|everyone|all|folks|awesome|amazing|perfect|excellent|lovely|looks good|lgtm|ship it|appreciated|kudos|congrats)\b/g, " ")
+    .replace(/[\s\p{P}\p{S}]+/gu, "");
+  return rest.length > 0;
 }
 
 /** Starts the way an approval does. Not a match — a reason to ask instead of acting. */

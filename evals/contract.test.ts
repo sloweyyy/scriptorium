@@ -44,6 +44,9 @@ describe("input contract", () => {
     // A real answer that happens to contain the word is an answer.
     expect(checkContract("---\nfeature: Todo list reminders\naudience: workspace admins\nuser_goal: never miss a todo\n---\n# X").ok).toBe(true);
     expect(checkContract("---\nfeature: Digest emails\naudience: admins (TBD which tier)\nuser_goal: one email a day\n---\n# X").missing.map((field) => field.key)).toEqual(["audience"]);
+    for (const audience of ["tbd (ask PM)", "admins (tbd which tier)"]) {
+      expect(checkContract(`---\nfeature: Digest emails\naudience: ${audience}\nuser_goal: one email a day\n---\n# X`).missing.map((field) => field.key), audience).toEqual(["audience"]);
+    }
     // A real answer that mentions nothing of the kind still passes.
     expect(checkContract("---\nfeature: Digest emails\naudience: workspace admins\nuser_goal: one email a day\n---\n# X").ok).toBe(true);
   });

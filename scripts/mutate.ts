@@ -1206,6 +1206,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/ingress.test.ts"],
   },
   {
+    control: "an event arriving during shutdown isn't marked seen and then dropped",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "(queue.open ? gate.check(event) : { accepted: false, reason: \"shutting down\" } as ReturnType<Gate[\"check\"]>)",
+    replace: "gate.check(event)",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

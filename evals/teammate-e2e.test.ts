@@ -442,6 +442,22 @@ describe("approvals nobody decides", () => {
   });
 });
 
+describe("shutdown", () => {
+  it("an event that arrives while draining isn't marked seen, so the next revision still answers it", async () => {
+    const old = await createTeammate(config(), vault, slack as never, "UBOT");
+    await old.drain(1_000);
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]." };
+    const mention = { channel: "C1", ts: "7.0", user: "U1", text: "<@UBOT> when do digests go out?" };
+    await old.onMention(mention);
+    expect(posted).toEqual([]);
+    // Slack redelivers it to the revision that took over: answered, not refused as a duplicate.
+    const next = await createTeammate(config(), vault, slack as never, "UBOT");
+    await next.onMention(mention);
+    await settle(next);
+    expect(posted.some((message) => String(message.text).includes("09:00"))).toBe(true);
+  });
+});
+
 describe("nudges respect what admins switched off", () => {
   it("no approver is pinged about a request whose tool is switched off: the click would refuse it", async () => {
     const admins = { ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig;

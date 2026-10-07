@@ -2,14 +2,14 @@
 // the merged-PR count and new findings as they land. index.html only renders this.
 window.SITE = {
   // Reviewed pull requests merged so far (the "built in the open" line and the stats).
-  mergedPullRequests: 60,
+  mergedPullRequests: 78,
   updated: "8 October 2026",
 
   stats: [
-    { value: "690+", label: "evals, deterministic, on every commit" },
+    { value: "730+", label: "evals, deterministic, on every commit" },
     { value: "313", label: "guardrails proven by mutation testing" },
     { value: "30+", label: "tools, every write approve-tier" },
-    { value: "60", label: "reviewed pull requests merged" },
+    { value: "78", label: "reviewed pull requests merged" },
   ],
 
   capabilities: [
@@ -51,6 +51,8 @@ window.SITE = {
     { sev: "High", issue: "Only a comment's first line was read, so \"Approve\" followed by \"wait, not yet: legal hasn't signed off\" published the doc.", fix: "An approval is the whole comment. Anything after it besides thanks makes it a question, never an approval." },
     { sev: "High", issue: "Answers reached Slack unescaped: one could post @channel, ping everyone a catch-up named, or show a trusted address over a different link.", fix: "Answers are escaped before they're formatted. A link whose label looks like another address shows where it really goes." },
     { sev: "High", issue: "Approval cards cut each argument at 400 characters while saying \"Approves exactly these arguments\", so the rest of a page body or comment was approved unseen.", fix: "Every argument is shown in full, across as many card sections as it takes. A change too long for one card is refused before it's posted, never cut." },
+    { sev: "High", issue: "A retry after a revised draft's comment had landed could record a different draft as the one shown, so the next approval published text no comment had shown.", fix: "A reply is keyed by its text, and a revision's record lives until its feedback is marked done: a retry posts what it hasn't shown, and repeats nothing it has." },
+    { sev: "High", issue: "The internal site's Quartz plugin turns some text back into HTML after parsing: an escaped <script> inside ==highlight==, a quote in a transclusion's alias or a video's URL.", fix: "Every page breaks the syntax Quartz would turn into HTML, a URL holding a quote loses its target, and an interactive mermaid diagram is shown as code." },
   ],
 
   packages: [

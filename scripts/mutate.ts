@@ -1500,6 +1500,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-flow.test.ts"],
   },
   {
+    control: "only a mention or `draft` engages Scribe on an unlabelled ticket",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "      const engages = command.kind === \"wake\" || command.kind === \"draft\";",
+    replace: "      const engages = true;",
+    evals: ["evals/jira-flow.test.ts"],
+  },
+  {
+    control: "all of a draft's designs together fit one request",
+    file: "apps/agents/src/scribe-jira/source.ts",
+    find: "    if (total + bytes.length > MAX_DESIGN_TOTAL_BYTES) {",
+    replace: "    if (false) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

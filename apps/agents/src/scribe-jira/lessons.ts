@@ -53,28 +53,40 @@ export async function proposeLesson(ctx: Ctx, key: string, approvedBy: string): 
     author: approvedBy,
     sourceThread: ctx.client.issueUrl(key),
     status: "proposed",
+    reservedIds: await withdrawnLessons(ctx.config.jira.stateDir),
   });
-  const bodyHash = lessonBodyHash((await ctx.vault.readNote(lesson.relPath)).body);
-  await ctx.state.patch(key, { pendingLessonId: lesson.id, proposedLessons: { ...ctx.state.get(key)?.proposedLessons, [lesson.id]: { bodyHash } } });
+  await ctx.state.patch(key, { pendingLessonId: lesson.id });
   await audit(ctx.config.auditFile, { type: "lesson.proposed", actor: "scribe", issue: key, id: lesson.id, text: rule });
   // Durable the moment it exists: a proposal that lives only in this container is one
   // redeploy away from vanishing — and its id being reissued to a different rule.
   await pushInternalPlane(ctx.config, ctx.vault, `lessons: propose ${lesson.id} (${key})`);
+  await showProposal(ctx, key, lesson.id, lesson.relPath, "from your feedback on this ticket");
+}
 
+/**
+ * Post a proposal on the ticket and record what it showed (the rule's hash) and when. Only
+ * then can it be approved: an approval must come after it, for exactly that text. Used for
+ * a new proposal, and to show again one with no record here (proposed before records were
+ * kept, or whose comment failed to post), which otherwise could never be approved.
+ */
+async function showProposal(ctx: Ctx, key: string, id: string, relPath: string, origin: string): Promise<void> {
+  const body = (await ctx.vault.readNote(relPath)).body;
+  const bodyHash = lessonBodyHash(body);
+  await ctx.state.patch(key, { proposedLessons: { ...ctx.state.get(key)?.proposedLessons, [id]: { bodyHash } } });
   const posted = await say(
     ctx,
     key,
     [
-      `**Proposed house rule ${lesson.id}** — from your feedback on this ticket:`,
+      `**Proposed house rule ${id}** — ${origin}:`,
       "",
-      `> ${rule}`,
+      ...body.trim().split("\n").map((line) => `> ${line}`),
       "",
-      `Comment \`approve lesson ${lesson.id}\` and it applies to every future draft; \`reject lesson ${lesson.id}\` and I forget it.`,
+      `Comment \`approve lesson ${id}\` and it applies to every future draft; \`reject lesson ${id}\` and I forget it.`,
       "It stays a proposal until you say so — the system doesn't get to decide what it learns.",
     ].join("\n"),
   );
   // Only now has anyone been shown it: an approval needs this time, and must be newer.
-  await ctx.state.patch(key, { proposedLessons: { ...ctx.state.get(key)?.proposedLessons, [lesson.id]: { bodyHash, postedAt: posted.created } } });
+  await ctx.state.patch(key, { proposedLessons: { ...ctx.state.get(key)?.proposedLessons, [id]: { bodyHash, postedAt: posted.created } } });
 }
 
 export async function runLessonDecision(
@@ -116,11 +128,18 @@ export async function runLessonDecision(
     // used to sign the rule the publish had just proposed, which nobody had read; and the
     // note was signed as it stood, so a proposal edited in the vault repo was signed too.
     const shown = known?.proposedLessons?.[id];
-    if (!shown) {
+    if (!shown?.postedAt) {
+      // A proposal from this ticket with no record of being shown here: show it now, and
+      // ask again. "Give the feedback again" led back to the same id, never re-shown, so
+      // such a rule could never be approved.
+      if (current?.status === "proposed" && current.sourceThread === ctx.client.issueUrl(key)) {
+        await showProposal(ctx, key, id, current.relPath, "shown again, so you can approve exactly this text");
+        return;
+      }
       await say(ctx, key, `Lesson ${id} wasn't proposed on this ticket, so there is nothing here to approve. Give the feedback again and it will be proposed fresh.`);
       return;
     }
-    if (!shown.postedAt || (decidedAt && Date.parse(decidedAt) < Date.parse(shown.postedAt))) {
+    if (decidedAt && Date.parse(decidedAt) < Date.parse(shown.postedAt)) {
       await say(ctx, key, `That approval was written before lesson ${id} was proposed, so it can't be for this rule. Read the proposal above, then comment \`approve lesson ${id}\` if it should apply.`);
       return;
     }

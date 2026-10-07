@@ -954,6 +954,25 @@ describe("a lesson learned on one ticket shapes the next (TODO #6)", () => {
     expect(comments.at(-1)?.body).toContain("written before lesson L-001 was proposed");
   });
 
+  it("a proposal with no record of being shown here is shown again, then approvable, never stuck", async () => {
+    const { listLessons, saveLesson } = await import("@scriptorium/scribe");
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    // Proposed before proposals were recorded (or its comment failed): on this ticket, no record.
+    await saveLesson(vault, { text: RULE, status: "proposed", sourceThread: "https://example.atlassian.net/browse/DOC-1" });
+    comments.push(human("a1", "approve lesson L-001"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T13:00:00.000+0000" } };
+    (await startScribeJira(settings, vault)).stop();
+    expect((await listLessons(vault)).find((lesson) => lesson.id === "L-001")?.status).toBe("proposed");
+    expect(comments.at(-1)?.body).toContain("shown again");
+    expect(comments.at(-1)?.body).toContain(RULE);
+    // Now approved, against the text it just showed.
+    comments.push(human("a2", "approve lesson L-001"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T14:00:00.000+0000" } };
+    (await startScribeJira(settings, vault)).stop();
+    expect((await listLessons(vault)).find((lesson) => lesson.id === "L-001")?.status).toBe("approved");
+  });
+
   it("a proposal whose text changed after it was shown is not signed", async () => {
     await learnOnDoc1(null);
     const { listLessons } = await import("@scriptorium/scribe");

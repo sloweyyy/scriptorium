@@ -851,7 +851,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "an approval older than the lesson proposal approves nothing",
     file: "apps/agents/src/scribe-jira/lessons.ts",
-    find: "    if (!shown.postedAt || (decidedAt && Date.parse(decidedAt) < Date.parse(shown.postedAt))) {",
+    find: "    if (decidedAt && Date.parse(decidedAt) < Date.parse(shown.postedAt)) {",
     replace: "    if (false) {",
     evals: ["evals/jira-board.test.ts"],
   },
@@ -1351,6 +1351,20 @@ export const MUTANTS: Mutant[] = [
     find: "text.replace(/&(?!(?:amp|lt|gt);)/g, \"&amp;\")",
     replace: "text.replace(/&/g, \"&amp;\")",
     evals: ["evals/slack-format.test.ts"],
+  },
+  {
+    control: "a proposal with no record here is shown again, never stuck",
+    file: "apps/agents/src/scribe-jira/lessons.ts",
+    find: "      if (current?.status === \"proposed\" && current.sourceThread === ctx.client.issueUrl(key)) {",
+    replace: "      if (false) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a withdrawn lesson id is never handed out again",
+    file: "packages/scribe/src/lessons.ts",
+    find: "  for (const id of reserved) max = Math.max(max, Number(id.replace(/\\D/g, \"\")) || 0);\n",
+    replace: "",
+    evals: ["evals/lessons.test.ts"],
   },
   {
     control: "a delegation ends by itself",

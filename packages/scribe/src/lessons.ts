@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { approvalSignature, approvalSigningKey, approvalTerms, approvalVerified, docSlug, type Vault } from "@scriptorium/core";
+import { approvalSignature, approvalSigningKey, approvalTerms, approvalVerified, docSlug, inertMarkdown, type Vault } from "@scriptorium/core";
 
 const LESSONS_DIR = "_lessons";
 
@@ -169,7 +169,11 @@ export async function saveLesson(vault: Vault, input: NewLesson): Promise<Lesson
   const id = await nextLessonId(vault, input.reservedIds);
   const relPath = `${LESSONS_DIR}/${id}-${docSlug(input.text, 8, 40)}.md`;
   const status: LessonStatus = input.status ?? "proposed";
-  await vault.writeNote(relPath, input.text, {
+  // Inert as written, not only as published: the approval is signed over this body, and the
+  // vault is restored from the published copy on boot. Escaped only on the way out, a rule
+  // with a `<br>` in it came back changed, and lost its approval.
+  const text = inertMarkdown(input.text);
+  await vault.writeNote(relPath, text, {
     id,
     scope: input.scope ?? "global",
     status,
@@ -177,7 +181,7 @@ export async function saveLesson(vault: Vault, input: NewLesson): Promise<Lesson
     source_thread: input.sourceThread,
     created: new Date().toISOString(),
   });
-  return { id, scope: input.scope ?? "global", status, text: input.text, relPath, author: input.author, sourceThread: input.sourceThread };
+  return { id, scope: input.scope ?? "global", status, text, relPath, author: input.author, sourceThread: input.sourceThread };
 }
 
 /** The rule text changed after it was proposed: what would be signed is not what was shown. */

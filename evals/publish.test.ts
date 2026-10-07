@@ -4,8 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Vault } from "@scriptorium/core";
+import { parseMarkdown, Vault } from "@scriptorium/core";
+import { untrustedApprovalsDowngraded } from "@scriptorium/agents";
 import { lastPublishCommit, publishVault, stageVault } from "@scriptorium/publish";
+import { approveLesson, saveLesson } from "@scriptorium/scribe";
 
 const exec = promisify(execFile);
 
@@ -384,6 +386,38 @@ describe("publish divergence gate", () => {
     // A re-publish with an unchanged vault is a no-op, not an empty commit.
     const again = await publishVault({ vault, target: "external", repoDir: agentClone, subdir: "site/src/content/docs", approvedBy: "pm@example.com" });
     expect(again.push.status).toBe("unchanged");
+  });
+});
+
+describe("what leaves for a site is inert", () => {
+  it("after the link transform, which can join text into a tag, and for notes not written inert", async () => {
+    await vault.writeNote("reference/secret.md", "# Secret", { kind: "reference", source_url: "https://example.com/x" });
+    await vault.writeNote("docs/joined.md", "# Joined\n\nPruned: <[[reference/secret]]img src=x onerror=alert(1)>\n\nDropped: <[[gone|img src=x onerror=alert(2)]]>", { kind: "doc" });
+    await vault.writeNote("_lessons/L-001.md", "Never say <img src=x onerror=alert(3)>.", { kind: "lesson", status: "proposed" });
+    for (const target of ["internal", "external"] as const) {
+      const dir = path.join(tmpRoot, `staged-${target}`);
+      const result = await stageVault({ vault, target, destDir: dir });
+      for (const relPath of result.files) {
+        const raw = await fs.readFile(path.join(dir, relPath), "utf8");
+        expect(raw, `${target}: ${relPath}`).not.toMatch(/<img/);
+      }
+      expect(result.files, target).toContain("docs/joined.md");
+    }
+  });
+});
+
+describe("a lesson round-trips through its published copy", () => {
+  it("unchanged, so the restore on boot keeps its approval", async () => {
+    // The vault is restored from the internal site's repo. A rule escaped only on the way
+    // out came back with a different body, and its signature no longer verified.
+    const key = "test-signing-key-0123456789abcdef";
+    const lesson = await saveLesson(vault, { text: "Don't use <br> for line breaks." });
+    await approveLesson(vault, lesson.id, "pm@example.com", key);
+    const dir = path.join(tmpRoot, "staged-internal");
+    await stageVault({ vault, target: "internal", destDir: dir });
+    const staged = parseMarkdown(await fs.readFile(path.join(dir, lesson.relPath), "utf8"));
+    expect(staged.body).toBe((await vault.readNote(lesson.relPath)).body);
+    expect(untrustedApprovalsDowngraded(lesson.relPath, staged.frontmatter, staged.body, key).status).toBe("approved");
   });
 });
 

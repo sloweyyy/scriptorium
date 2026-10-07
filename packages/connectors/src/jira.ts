@@ -251,11 +251,22 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
       run: (input, context) =>
         refusalOr(async () => {
           const parsed = z.object({ summary: z.string().min(1).max(250), description: z.string() }).parse(input);
-          // No probe yet (issue properties on create are a follow-up), so a crash between the
-          // create and the ledger write can duplicate — the ledger still stops every retry
-          // that happens after the record lands.
-          const { result, replayed } = await once(settings.ledger, opKey("jira.create", project, digest(parsed.summary), digest(parsed.description), context?.approval?.id), () =>
-            settings.client.createIssue({ summary: parsed.summary, description: markdownToJira(parsed.description), issueType: settings.issueType ?? "Task", project }),
+          // The issue carries a label naming this op, so a retry after a create whose response
+          // was lost (a timeout after Jira stored it, or a crash) finds the issue instead of
+          // filing a second one. Without it, Retry on a timed-out create was one click from a
+          // duplicate, and a plan's resume re-created a step it promised not to repeat.
+          const op = opKey("jira.create", project, digest(parsed.summary), digest(parsed.description), context?.approval?.id);
+          const label = createOpLabel(op);
+          const { result, replayed } = await once(
+            settings.ledger,
+            op,
+            () => settings.client.createIssue({ summary: parsed.summary, description: markdownToJira(parsed.description), issueType: settings.issueType ?? "Task", project, labels: [label] }),
+            {
+              probe: async () => {
+                const [found] = await settings.client.searchIssues(`project = ${jqlString(project)} AND labels = ${jqlString(label)}`, 1);
+                return found ? { key: found.key, url: settings.client.issueUrl(found.key) } : undefined;
+              },
+            },
           );
           return `${replayed ? "Already created" : "Created"} jira:${result.key} ${result.url}`;
         }),
@@ -263,6 +274,11 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
   }
 
   return tools;
+}
+
+/** The label a created issue carries so a retry can find it: one op, one label. */
+export function createOpLabel(op: string): string {
+  return `scriptorium-op-${createHash("sha256").update(op).digest("hex").slice(0, 12)}`;
 }
 
 const RECENT_LIMIT = 30;

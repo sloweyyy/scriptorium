@@ -79,6 +79,10 @@ export function mayApprove(
   if (!anyone && !rule.approvers.includes(approver.accountId)) {
     return { ok: false, reason: `${approver.name ?? approver.accountId} is not an approver for this action` };
   }
+  // A human asked, but which one isn't known: whether they are the approver can't be checked.
+  if (rule.separateDuties && requestedBy && /:unknown$/.test(requestedBy)) {
+    return { ok: false, reason: "who asked for this couldn't be identified, so it can't be approved: ask for it again directly" };
+  }
   if (rule.separateDuties && requestedBy && samePerson(envelope, requestedBy, approver.accountId)) {
     return { ok: false, reason: "the person who asked for this cannot also approve it" };
   }

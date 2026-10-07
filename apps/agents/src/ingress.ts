@@ -58,18 +58,19 @@ export interface IngressHooks {
   /** A Jira comment was created — the Teammate answers it if it is mentioned. */
   jiraComment?: (input: JiraCommentEvent) => Promise<void>;
   /** A Jira issue was assigned to someone — the Teammate acts if it is the assignee. */
-  jiraAssigned?: (input: { issueKey: string; assigneeId: string; changeId: string }) => Promise<void>;
+  jiraAssigned?: (input: { issueKey: string; assigneeId: string; changeId: string; assignedBy?: string }) => Promise<void>;
   /** A new issue — triaged by the Teammate in the projects that opted in. */
   jiraCreated?: (input: { issueKey: string; reporterId?: string }) => Promise<void>;
 }
 
 /** `jira:issue_updated` whose changelog moved the assignee: who to, and the change's id. */
-export function jiraAssignmentFrom(payload: unknown): { issueKey: string; assigneeId: string; changeId: string } | undefined {
-  const body = payload as { webhookEvent?: string; issue?: { key?: string }; changelog?: { id?: string | number; items?: Array<{ field?: string; fieldId?: string; to?: string | null }> } };
+export function jiraAssignmentFrom(payload: unknown): { issueKey: string; assigneeId: string; changeId: string; assignedBy?: string } | undefined {
+  const body = payload as { webhookEvent?: string; user?: { accountId?: string }; issue?: { key?: string }; changelog?: { id?: string | number; items?: Array<{ field?: string; fieldId?: string; to?: string | null }> } };
   if (body.webhookEvent !== "jira:issue_updated" || typeof body.issue?.key !== "string") return undefined;
   const change = body.changelog?.items?.find((item) => item.fieldId === "assignee" || item.field === "assignee");
   if (!change?.to) return undefined;
-  return { issueKey: body.issue.key, assigneeId: change.to, changeId: String(body.changelog?.id ?? `${body.issue.key}:${change.to}`) };
+  // `user` is who made the change: the person a write proposed by this turn was asked by.
+  return { issueKey: body.issue.key, assigneeId: change.to, changeId: String(body.changelog?.id ?? `${body.issue.key}:${change.to}`), assignedBy: typeof body.user?.accountId === "string" ? body.user.accountId : undefined };
 }
 
 /** A new issue (`jira:issue_created`): what triage needs. */

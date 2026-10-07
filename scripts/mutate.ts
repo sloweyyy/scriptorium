@@ -905,6 +905,27 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/gaps.test.ts"],
   },
   {
+    control: "a retried Jira create finds the issue that landed instead of filing another",
+    file: "packages/connectors/src/jira.ts",
+    find: "                return found ? { key: found.key, url: settings.client.issueUrl(found.key) } : undefined;",
+    replace: "                return undefined;",
+    evals: ["evals/jira-connector.test.ts"],
+  },
+  {
+    control: "a request whose asker can't be identified can't be approved under separation of duties",
+    file: "packages/policy/src/policy.ts",
+    find: "  if (rule.separateDuties && requestedBy && /:unknown$/.test(requestedBy)) {",
+    replace: "  if (false) {",
+    evals: ["evals/policy.test.ts"],
+  },
+  {
+    control: "a Jira assignment's turn is asked by whoever assigned it",
+    file: "apps/agents/src/ingress.ts",
+    find: "assignedBy: typeof body.user?.accountId === \"string\" ? body.user.accountId : undefined };",
+    replace: "assignedBy: undefined };",
+    evals: ["evals/policy.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

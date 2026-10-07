@@ -53,9 +53,9 @@ const others = ["confluence_search", "confluence_page_children", "confluence_pag
   (name): ToolSpec => ({ name, description: name, inputSchema: z.object({}), run: async () => "[]" }),
 );
 
-async function turn(question: string) {
+async function turn(question: string, extra: { private?: boolean } = {}) {
   return runTeammateTurn(
-    { question, askedBy: "slack:U_ASKER" },
+    { question, askedBy: "slack:U_ASKER", ...extra },
     {
       vault,
       config: teammateConfig({ selfAccountIds: ["slack:U_BOT"], approvers: ["slack:U_PM"] }),
@@ -103,6 +103,16 @@ describe("teammate turn", () => {
     const reply = await turn("Does Beacon support SSO?");
     expect(reply.kind).toBe("gap");
     expect(await vault.listNotes("_gaps")).toHaveLength(1);
+  });
+
+  it("a gap from a private question records what's missing, never the question as asked", async () => {
+    script = { calls: [{ name: "search_vault", input: { query: "sso" } }], reply: "NOT_IN_KB: nothing documents SSO" };
+    const reply = await turn("My manager Dana is being let go next week; does Beacon support SSO so we can revoke her access?", { private: true });
+    expect(reply.kind).toBe("gap");
+    const [gap] = await vault.listNotes("_gaps");
+    const raw = await fs.readFile(vault.abs(gap!), "utf8");
+    expect(raw).not.toMatch(/Dana|let go|revoke her/);
+    expect(raw).toContain("nothing documents SSO");
   });
 
   it("a write waits for approval, and the reply reports that instead of claiming it", async () => {

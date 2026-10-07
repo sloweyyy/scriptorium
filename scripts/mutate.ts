@@ -1318,6 +1318,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/curator-slack.test.ts"],
   },
   {
+    control: "a gap from a private question never records the question as asked",
+    file: "apps/agents/src/teammate.ts",
+    find: "    const question = turn.private ? `(Asked privately.) Missing: ${judged.gap}` : turn.question;",
+    replace: "    const question = turn.question;",
+    evals: ["evals/teammate.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

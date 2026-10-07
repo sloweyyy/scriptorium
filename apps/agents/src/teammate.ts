@@ -69,6 +69,13 @@ export interface TeammateTurn {
   threadTs?: string;
   /** What the turn's tokens count against for the daily cap. Default: the channel, else the asker. */
   budgetScope?: string;
+  /**
+   * Asked where not everyone can read it: a DM, or a Jira comment restricted to a role or
+   * group, or internal on a service desk. A gap it leads to records what's missing, never
+   * the question as asked: gap notes are published to the internal site and copied onto a
+   * doc ticket, where the asker's words would reach people the conversation didn't.
+   */
+  private?: boolean;
 }
 
 /**
@@ -217,7 +224,8 @@ export async function runTeammateTurn(turn: TeammateTurn, deps: TeammateDeps): P
   });
 
   if (judged.gap) {
-    const gap = await fileGapNote(deps.vault, { question: turn.question, missing: judged.gap, askedBy: turn.askedBy, auditFile: deps.auditFile, openTicket: deps.openTicket });
+    const question = turn.private ? `(Asked privately.) Missing: ${judged.gap}` : turn.question;
+    const gap = await fileGapNote(deps.vault, { question, missing: judged.gap, askedBy: turn.askedBy, auditFile: deps.auditFile, openTicket: deps.openTicket });
     return { kind: "gap", text: "I couldn't find this in our docs, so I won't guess. I've asked for it to be written.", gapPath: gap.relPath, ticket: gap.ticket };
   }
   if (judged.ungrounded) {

@@ -7,7 +7,7 @@ window.SITE = {
 
   stats: [
     { value: "690+", label: "evals, deterministic, on every commit" },
-    { value: "307", label: "guardrails proven by mutation testing" },
+    { value: "311", label: "guardrails proven by mutation testing" },
     { value: "30+", label: "tools, every write approve-tier" },
     { value: "60", label: "reviewed pull requests merged" },
   ],

@@ -15,6 +15,10 @@ export interface JiraClientConfig {
   projectKey: string;
 }
 
+/** No attachment the agent reads is near this: a PRD is 200 KB, a design a few MB. */
+export const MAX_ATTACHMENT_BYTES = 25_000_000;
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+
 export class JiraError extends Error {
   constructor(
     readonly status: number,
@@ -23,6 +27,13 @@ export class JiraError extends Error {
   ) {
     super(`Jira ${status} on ${endpoint}: ${detail}`);
     this.name = "JiraError";
+  }
+}
+
+/** An attachment over the size the caller can take: refused while it downloaded. */
+export class AttachmentTooLargeError extends JiraError {
+  constructor(endpoint: string, readonly maxBytes: number) {
+    super(413, endpoint, `over ${maxBytes} bytes`);
   }
 }
 
@@ -348,23 +359,48 @@ export class JiraClient {
    * redirect to signed media storage on another host, where the Authorization header
    * must not travel (undici strips it cross-origin anyway).
    */
-  async downloadAttachment(attachment: JiraAttachment): Promise<Buffer> {
+  /**
+   * An attachment's bytes, up to `maxBytes` and within two minutes. Over the cap is refused
+   * while it streams (`AttachmentTooLargeError`), never read whole into memory first: any
+   * size anyone attached was downloaded in full, then measured.
+   */
+  async downloadAttachment(attachment: JiraAttachment, maxBytes = MAX_ATTACHMENT_BYTES): Promise<Buffer> {
+    const signal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
     const first = await fetch(attachment.content, {
       headers: { Authorization: this.authHeader },
       redirect: "manual",
+      signal,
     });
 
     let response = first;
     if (first.status >= 300 && first.status < 400) {
       const location = first.headers.get("location");
       if (!location) throw new JiraError(first.status, attachment.content, "redirect without a location header");
-      response = await fetch(location, { redirect: "follow" });
+      response = await fetch(location, { redirect: "follow", signal });
     }
 
     if (!response.ok) {
       throw new JiraError(response.status, attachment.content, response.statusText);
     }
-    return Buffer.from(await response.arrayBuffer());
+    if (Number(response.headers.get("content-length") ?? 0) > maxBytes) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new AttachmentTooLargeError(attachment.content, maxBytes);
+    }
+    const reader = response.body?.getReader();
+    if (!reader) return Buffer.alloc(0);
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new AttachmentTooLargeError(attachment.content, maxBytes);
+      }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks);
   }
 
   /** Attach a file to an issue (multipart; the boundary must come from FormData, not from us). */

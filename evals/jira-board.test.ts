@@ -200,11 +200,13 @@ function stubJira(): void {
     // A real PNG signature, then filler; "fake-png" serves a PDF under an image's name.
     const stored = uploaded.get(url.split("/attachment/content/")[1] ?? "");
     if (stored) return new Response(stored, { status: 200 });
+    if (url.includes("/attachment/content/fake-png")) fetched.push(url);
     if (url.includes("/attachment/content/fake-png")) return new Response("%PDF-1.7 not an image", { status: 200 });
     // Two versions of one design: the bytes say which is which.
     const version = url.match(/\/attachment\/content\/design-(v\d)/)?.[1];
     if (version) return new Response(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from(version)]), { status: 200 });
     // A design just under the per-image cap: eight of them overflow one request.
+    if (url.includes("/attachment/content/big-")) fetched.push(url);
     if (url.includes("/attachment/content/big-")) return new Response(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(3_600_000)]), { status: 200 });
     if (url.includes("/attachment/content/")) return new Response(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("PNGBYTES")]), { status: 200 });
     if (url.endsWith("/attachments") && method === "POST" && init?.body instanceof FormData) {
@@ -1234,6 +1236,45 @@ describe("designs that fit one request", () => {
     expect(draftCall.images!.length).toBeLessThan(7);
     expect(comments.some((comment) => comment.body.includes("fill what one draft can take"))).toBe(true);
     expect(comments.some((comment) => comment.body.includes("I hit an error"))).toBe(false);
+    // Once Jira's sizes say the budget is full, the rest aren't downloaded to be thrown away.
+    expect(fetched.filter((url) => url.includes("/attachment/content/big-")).length).toBe(draftCall.images!.length);
+  });
+
+  it("near-cap designs whose size Jira doesn't give still stop at the total, measured as they arrive", async () => {
+    const big = (n: number) => ({ id: `big-${n}`, filename: `screen-${n}.png`, mimeType: "image/png", created: `2026-08-20T09:0${n}:00.000+0000`, content: `https://example.atlassian.net/rest/api/2/attachment/content/big-${n}` });
+    issue = { ...issue, fields: { ...(issue.fields as object), attachment: [1, 2, 3, 4, 5, 6, 7].map(big) } };
+    (await startScribeJira(config(), vault)).stop();
+    const draftCall = vi.mocked(generateText).mock.calls[0]?.[0] as GenerateOptions;
+    const sent = (draftCall.images ?? []).reduce((sum, image) => sum + Buffer.from(image.base64, "base64").length, 0);
+    expect(sent).toBeLessThanOrEqual(18_000_000);
+  });
+
+  it("downloads stop at the design limit even when none of them turn out to be designs", async () => {
+    const fake = (n: number) => ({ id: `fake-png-${n}`, filename: `shot-${n}.png`, mimeType: "image/png", size: 30, created: `2026-08-20T09:${String(n).padStart(2, "0")}:00.000+0000`, content: `https://example.atlassian.net/rest/api/2/attachment/content/fake-png-${n}` });
+    issue = { ...issue, fields: { ...(issue.fields as object), attachment: Array.from({ length: 12 }, (_, n) => fake(n)) } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(fetched.filter((url) => url.includes("/attachment/content/fake-png")).length).toBeLessThanOrEqual(8);
+  });
+
+  it("an attachment is refused while it downloads once it passes the cap, whatever its size said", async () => {
+    const { JiraClient, AttachmentTooLargeError } = await import("@scriptorium/jira");
+    const client = new JiraClient({ baseUrl: "https://example.atlassian.net", email: "a@b.example", apiToken: "t" } as never);
+    const attachment = { id: "x", filename: "x.png", mimeType: "image/png", content: "https://example.atlassian.net/rest/api/2/attachment/content/x" };
+    let pulled = 0;
+    // 10 MB with no length declared: read whole, it is all in memory before anyone measures it.
+    const large = new ReadableStream({
+      pull(controller) {
+        pulled += 1;
+        if (pulled > 10) controller.close();
+        else controller.enqueue(new Uint8Array(1_000_000));
+      },
+    });
+    vi.stubGlobal("fetch", async () => new Response(large, { status: 200 }));
+    await expect(client.downloadAttachment(attachment as never, 3_000_000)).rejects.toBeInstanceOf(AttachmentTooLargeError);
+    expect(pulled).toBeLessThan(6);
+    // A size the server declares is refused before reading.
+    vi.stubGlobal("fetch", async () => new Response("x", { status: 200, headers: { "content-length": "99000000" } }));
+    await expect(client.downloadAttachment(attachment as never, 3_000_000)).rejects.toBeInstanceOf(AttachmentTooLargeError);
   });
 });
 

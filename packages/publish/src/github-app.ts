@@ -100,7 +100,10 @@ export async function installationToken(config: GitHubAppConfig, nowMs = Date.no
   const installation = (await installResponse.json()) as { id: number };
 
   const tokenEndpoint = `/app/installations/${installation.id}/access_tokens`;
-  const tokenResponse = await fetch(`${api}${tokenEndpoint}`, { method: "POST", headers: appHeaders(jwt) });
+  // Narrowed to the one repository it is for. Without a body the token covers every repo
+  // the installation can reach, so a token cached "for org/app" also opened org/other.
+  const repoName = config.repo.split("/")[1] ?? config.repo;
+  const tokenResponse = await fetch(`${api}${tokenEndpoint}`, { method: "POST", headers: { ...appHeaders(jwt), "Content-Type": "application/json" }, body: JSON.stringify({ repositories: [repoName] }) });
   if (!tokenResponse.ok) {
     throw new GitHubError(tokenResponse.status, tokenEndpoint, (await tokenResponse.text()).slice(0, 300));
   }

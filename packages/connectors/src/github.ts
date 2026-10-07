@@ -169,10 +169,14 @@ export function githubTools(settings: GitHubToolSettings): ToolSpec[] {
           const parsed = z.object({ repo: z.string(), number: PullNumber, body: z.string().min(1).max(20_000) }).parse(input);
           const repo = checkRepo(parsed.repo);
           const op = opKey("github.comment", repo, parsed.number, parsed.body, context?.approval?.id);
-          // Paged: on a busy PR the comment a crashed attempt made may be past the first 100.
+          // Only comments since the attempt began: read oldest-first from the start, a PR with
+          // a thousand bot comments never reached ours within ten pages, and the retry posted
+          // it again. (A few minutes' margin for clock skew.)
+          const attempt = await settings.ledger.get(op);
+          const since = attempt?.startedAt ? `&since=${encodeURIComponent(new Date(Date.parse(attempt.startedAt) - 5 * 60_000).toISOString())}` : "";
           const find = async () => {
             for (let page = 1; page <= 10; page += 1) {
-              const comments = await call(repo, `/repos/${repo}/issues/${parsed.number}/comments?per_page=100&page=${page}`, Comments);
+              const comments = await call(repo, `/repos/${repo}/issues/${parsed.number}/comments?per_page=100&page=${page}${since}`, Comments);
               const found = comments.find((comment) => comment.body?.includes(OP_MARKER(op)));
               if (found) return found.id;
               if (comments.length < 100) return undefined;

@@ -75,6 +75,32 @@ describe("github connector", () => {
     expect(comments[0]?.body).toMatch(/<!-- scriptorium-op:[0-9a-f]{24} -->/);
   });
 
+  it("a retry looks for its comment among those made since the attempt, however busy the PR", async () => {
+    // A thousand bot comments already: read oldest-first, ten pages never reach ours.
+    for (let i = 0; i < 1_000; i += 1) comments.push({ id: i, body: `ci run ${i}` });
+    const asked: string[] = [];
+    const stub = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/issues/12/comments") && init?.method !== "POST") {
+        asked.push(url);
+        // The API filters by `since`: only comments made after it come back.
+        const since = new URL(url).searchParams.get("since");
+        const page = Number(new URL(url).searchParams.get("page") ?? 1);
+        const visible = since ? comments.slice(1_000) : comments;
+        return new Response(JSON.stringify(visible.slice((page - 1) * 100, page * 100)));
+      }
+      return stub(input, init);
+    });
+    const ledger = new MemoryEffectLedger();
+    loseNext = true;
+    const comment = () => tools(ledger).github_pr_comment!.run({ repo: "org/app", number: 12, body: "Criteria covered." }, { approval: { id: "ap-7" } });
+    await expect(comment()).rejects.toThrow(/socket hang up/);
+    expect(await comment()).toMatch(/^Already commented/);
+    expect(comments.filter((entry) => String(entry.body).includes("Criteria covered."))).toHaveLength(1);
+    expect(asked.every((url) => url.includes("since="))).toBe(true);
+  });
+
   it("a note can't hide its own AI-generated label inside an HTML comment", async () => {
     await tools(new MemoryEffectLedger()).github_pr_comment!.run({ repo: "org/app", number: 12, body: "Looks fine.\n\n<!--" }, { approval: { id: "ap-2" } });
     const body = comments.at(-1)?.body ?? "";

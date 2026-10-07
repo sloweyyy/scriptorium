@@ -7,31 +7,39 @@ on:
   schedule:
     - cron: "41 5 * * 1"
   pull_request:
+    # Every file a mutant guards, and the evals that guard them. A pull request runs only
+    # the mutants it can break (see MUTATE_CHANGED in scripts/mutate.ts).
     paths:
-      - "packages/policy/**"
-      - "packages/runtime/src/effects.ts"
-      - "packages/runtime/src/session.ts"
-      - "packages/curator/src/qa*.ts"
-      - "packages/curator/src/search.ts"
-      - "packages/core/src/vault.ts"
-      - "packages/connectors/**"
-      - "apps/agents/src/teammate.ts"
-      - "apps/agents/src/teammate-bot.ts"
-      - "packages/jira/src/commands.ts"
-      - "packages/scribe/src/pipeline.ts"
+      - "packages/**"
+      - "apps/agents/src/**"
+      - "evals/**"
       - "scripts/mutate.ts"
+      - "scripts/audit.ts"
+      - "Dockerfile"
+      - ".dockerignore"
 permissions:
   contents: read
 jobs:
   mutate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # The whole set, weekly, takes most of an hour.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm mutate
+      - name: Mutants for what the pull request changed (all of them on the schedule)
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            MUTATE_CHANGED="$(git diff --name-only "origin/$BASE_REF...HEAD")"
+            export MUTATE_CHANGED
+          fi
+          pnpm mutate

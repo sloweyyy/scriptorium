@@ -2242,8 +2242,15 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   process.on("exit", restore);
 
+  // A pull request runs the mutants it can break: those on a file it changed, or guarded by
+  // an eval it changed (all of them when the catalogue itself changed). The whole set takes
+  // most of an hour; it runs weekly.
+  const changed = process.env.MUTATE_CHANGED?.split("\n").map((line) => line.trim()).filter(Boolean);
+  const selected = changed && !changed.includes("scripts/mutate.ts") ? MUTANTS.filter((mutant) => changed.includes(mutant.file) || mutant.evals.some((path) => changed.includes(path))) : MUTANTS;
+  if (changed) console.log(`${selected.length} of ${MUTANTS.length} mutants touch what changed`);
+
   // Every eval set must be green BEFORE mutation, or "the mutant made it red" means nothing.
-  const sets = [...new Set(MUTANTS.map((mutant) => mutant.evals.join(" ")))];
+  const sets = [...new Set(selected.map((mutant) => mutant.evals.join(" ")))];
   const red = sets.filter((set) => !run(set.split(" ")));
   if (red.length) {
     console.error(`baseline is red — fix these before mutating:\n${red.map((set) => `  - ${set}`).join("\n")}`);
@@ -2251,7 +2258,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 
   const survivors: string[] = [];
-  for (const mutant of MUTANTS) {
+  for (const mutant of selected) {
     const original = fs.readFileSync(mutant.file, "utf8");
     const edits = [{ find: mutant.find, replace: mutant.replace }, ...(mutant.also ?? [])];
     // A find string that matches twice mutates whichever comes first — maybe not the control.
@@ -2278,6 +2285,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.error(`\n${survivors.length} guardrail(s) not guarded:\n${survivors.map((line) => `  - ${line}`).join("\n")}`);
     process.exitCode = 1;
   } else {
-    console.log(`\nAll ${MUTANTS.length} guardrail mutants killed.`);
+    console.log(`\nAll ${selected.length} guardrail mutants killed.`);
   }
 }

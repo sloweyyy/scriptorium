@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isSafeSlug, parseMarkdown, type ImageInput } from "@scriptorium/core";
@@ -75,7 +76,10 @@ export function lastDraftAttachment(issue: JiraIssue, botAccountId: string): { a
  */
 export function sourceFingerprint(issue: JiraIssue, remoteLinks?: string): string {
   const attachments = (issue.fields.attachment ?? []).map((attachment) => attachment.id).sort();
-  return `${attachments.join(",")}|${issue.fields.description?.trim().length ?? 0}|${remoteLinks ?? ""}`;
+  // The text, not its length: "audience: TBD" answered as "audience: PMs" is the same length,
+  // and the ticket waited for a change it had already had.
+  const description = createHash("sha256").update(issue.fields.description?.trim() ?? "").digest("hex").slice(0, 16);
+  return `${attachments.join(",")}|${description}|${remoteLinks ?? ""}`;
 }
 
 /**

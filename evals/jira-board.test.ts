@@ -1225,6 +1225,24 @@ describe("a crash or an error mid-batch loses nothing and repeats nothing (H4)",
     vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
   });
 
+  it("a revise retried with new feedback applies only the new feedback to the revision that never posted", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    vi.mocked(generateText).mockImplementation(async () => `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`);
+    failNextPostContaining = "Revised draft";
+    await tickWith(settings, "add the paste step");
+    const before = vi.mocked(generateText).mock.calls.length;
+    // The failed comment comes round again, with a new one beside it.
+    await tickWith(settings, "say that only admins can do this");
+    const prompts = vi.mocked(generateText).mock.calls.slice(before).map((call) => (call[0] as GenerateOptions).prompt);
+    expect(prompts.length).toBeGreaterThan(0);
+    expect(prompts[0]).toContain("say that only admins can do this");
+    // The saved revision already has the paste step: asking for it again added it twice.
+    expect(prompts.join("\n")).not.toContain("add the paste step");
+    expect(comments.filter((comment) => comment.body.includes("Revised draft"))).toHaveLength(1);
+    vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
+  });
+
   it("a retry attaches the draft once, not once per attempt", async () => {
     const settings = config();
     const drafts = () => ((issue.fields as { attachment?: Array<{ filename: string }> }).attachment ?? []).filter((attachment) => attachment.filename.startsWith("draft-"));

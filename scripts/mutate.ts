@@ -228,7 +228,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a revise retried after its comment failed posts the revision, not a second revise",
     file: "apps/agents/src/scribe-jira/drafting.ts",
-    find: "  if (known0?.revisedFrom === fromThis && known0.postedDraftHash !== hashDraft(draft)) {",
+    find: "  if (applied.length && !fresh.length) {",
     replace: "  if (false) {",
     evals: ["evals/jira-board.test.ts"],
   },
@@ -1778,6 +1778,20 @@ export const MUTANTS: Mutant[] = [
     find: "  for (const entry of active) (standingIn[`slack:${entry.to}`] ??= []).push(`slack:${entry.from}`);",
     replace: "  for (const entry of active) { (standingIn[`slack:${entry.to}`] ??= []).push(`slack:${entry.from}`); (standingIn[`slack:${entry.from}`] ??= []).push(`slack:${entry.to}`); }",
     evals: ["evals/control.test.ts"],
+  },
+  {
+    control: "a retried revision is not given again the feedback it already applied",
+    file: "apps/agents/src/scribe-jira/drafting.ts",
+    find: "  const fresh = feedback.filter((item) => !applied.includes(item));",
+    replace: "  const fresh = applied.length && feedback.every((item) => applied.includes(item)) ? [] : feedback;",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "the source fingerprint changes with the description's words",
+    file: "apps/agents/src/scribe-jira/source.ts",
+    find: "  const description = createHash(\"sha256\").update(issue.fields.description?.trim() ?? \"\").digest(\"hex\").slice(0, 16);",
+    replace: "  const description = String(issue.fields.description?.trim().length ?? 0);",
+    evals: ["evals/jira.test.ts"],
   },
   {
     control: "a delegation ends by itself",

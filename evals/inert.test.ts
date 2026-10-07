@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { inertMarkdown, Vault } from "@scriptorium/core";
+import { inertMarkdown, unsafeMarkup, Vault } from "@scriptorium/core";
 import { fileGapNote, organizeInboxFile } from "@scriptorium/curator";
 import { lintDoc, publishDoc } from "@scriptorium/scribe";
 
@@ -19,6 +19,25 @@ describe("inert markdown", () => {
     expect(out).toContain("&lt;img");
     const kept = "Press `<kbd>Ctrl</kbd>`, see [the guide](https://docs.beacon.example) or <https://x.example>, mail [us](mailto:a@b.example), a < b.\n```html\n<script>keep()</script>\n```";
     expect(inertMarkdown(kept)).toBe(kept);
+  });
+
+  it("parses as the sites do: a code span across a line hides nothing, and code anywhere is left as written", () => {
+    // Line by line, the second backtick looked like a one-line span and the <img> stayed live.
+    const bypass = "Is SSO supported? `\n` <img src=x onerror=alert(document.cookie)> `";
+    expect(inertMarkdown(bypass)).not.toContain("<img");
+    // Example HTML in an indented fence (a list step), in indented code and in a double-backtick
+    // span is code: untouched, and lint doesn't object. An email autolink stays a link.
+    for (const normal of [
+      '1. Embed it:\n\n   ```html\n   <iframe src="https://x"></iframe>\n   ```\n2. Done.',
+      "Intro.\n\n    <script>indented()</script>",
+      "``a `<b>` c`` and <support@beacon.example> and <https://x.example>",
+    ]) {
+      expect(inertMarkdown(normal), normal).toBe(normal);
+      expect(unsafeMarkup(normal), normal).toEqual({ html: [], links: [] });
+    }
+    // Every shape of a non-web target loses it: inline, autolink, definition.
+    const links = "[p](javascript:alert(1)) <javascript:alert(2)>\n\n[d]: javascript:evil()";
+    expect(inertMarkdown(links)).not.toMatch(/javascript:/i);
   });
 
   it("lint sends back a draft with raw HTML or a link that doesn't go to the web", () => {

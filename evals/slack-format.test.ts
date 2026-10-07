@@ -52,6 +52,12 @@ describe("markdown to slack mrkdwn", () => {
     expect(toSlackMrkdwn("> quoted line")).toBe("> quoted line");
   });
 
+  it("text that is already escaped isn't escaped twice", () => {
+    // The vault stores a literal `<` as `&lt;`; Slack delivers `&` as `&amp;`.
+    expect(toSlackMrkdwn("Press &lt;Enter&gt; to send, says R&amp;D.")).toBe("Press &lt;Enter&gt; to send, says R&amp;D.");
+    expect(toSlackMrkdwn("Tom & Jerry")).toBe("Tom &amp; Jerry");
+  });
+
   it("renders wikilinks as paths — vault syntax means nothing to a Slack reader", () => {
     expect(toSlackMrkdwn("as documented in [[docs/scheduled-maintenance]]")).toBe(
       "as documented in `docs/scheduled-maintenance`",

@@ -162,7 +162,8 @@ async function fileGapNoteNow(vault: Vault, input: GapInput, key: string): Promi
     // heading of the note, and the index's title for it.
     // Inert too: the internal site renders the vault, and a question someone typed (or a
     // summary a model wrote) carrying `<img onerror=…>` ran as script there.
-    ...input.question.split(/\r?\n/).map((line) => `> ${inertMarkdown(line)}`),
+    // (Inert as a whole, then quoted: line by line, a code span across the break hid live HTML.)
+    ...inertMarkdown(input.question).split(/\r?\n/).map((line) => `> ${line}`),
     "",
     `Missing documentation: ${inertMarkdown(input.missing.replace(/\s+/g, " ").trim())}`,
     "",

@@ -2,14 +2,14 @@
 // the merged-PR count and new findings as they land. index.html only renders this.
 window.SITE = {
   // Reviewed pull requests merged so far (the "built in the open" line and the stats).
-  mergedPullRequests: 34,
+  mergedPullRequests: 44,
   updated: "8 October 2026",
 
   stats: [
-    { value: "650+", label: "evals, deterministic, on every commit" },
+    { value: "660+", label: "evals, deterministic, on every commit" },
     { value: "194", label: "guardrails proven by mutation testing" },
     { value: "30+", label: "tools, every write approve-tier" },
-    { value: "34", label: "reviewed pull requests merged" },
+    { value: "44", label: "reviewed pull requests merged" },
   ],
 
   capabilities: [
@@ -45,12 +45,12 @@ window.SITE = {
 
 
   findings: [
+    { sev: "Critical", issue: "One unauthenticated request with a malformed path (GET /runs/%E0) crashed the whole process: the Jira poller and every Slack bot went down with it.", fix: "Every failure ends only its own request: 400 for a malformed one, 500 otherwise. Run-link paths decode safely, before any token check." },
+    { sev: "High", issue: "An approved request ran for anyone who asked for the same thing, in any thread or DM. An approval handed back after a failed run could be spent by just asking again.", fix: "An approval is spent only by the person who asked, in the conversation it was given for. One handed back after a failure runs again only on an approver's Retry." },
+    { sev: "High", issue: "A revoked house rule kept its signature, so a failed push followed by a restore (or a revert on the vault branch) brought it back into force.", fix: "Withdrawn rules are recorded where the vault can't roll them back, and listing, drafting and key rotation all honour that record." },
+    { sev: "High", issue: "Only a comment's first line was read, so \"Approve\" followed by \"wait, not yet: legal hasn't signed off\" published the doc.", fix: "An approval is the whole comment. Anything after it besides thanks makes it a question, never an approval." },
+    { sev: "High", issue: "Answers reached Slack unescaped: one could post @channel, ping everyone a catch-up named, or show a trusted address over a different link.", fix: "Answers are escaped before they're formatted. A link whose label looks like another address shows where it really goes." },
     { sev: "High", issue: "Approval cards cut each argument at 400 characters while saying \"Approves exactly these arguments\", so the rest of a page body or comment was approved unseen.", fix: "Every argument is shown in full, across as many card sections as it takes. A change too long for one card is refused before it's posted, never cut." },
-    { sev: "High", issue: "A Confluence link on a ticket, on any site, made the docs agent read that page id on your own site, in any space its account could see, and quote it onto the ticket.", fix: "Only links on your own site are followed, and only pages in allowed spaces are read. With none allowed, no page is fetched, and nothing about a refused page is echoed." },
-    { sev: "High", issue: "Every reply's \"view run\" link carried the viewer's global token, so anyone who could read one reply could open every run: other people's questions, DMs and tool calls.", fix: "A reply's link is signed for its own run and opens nothing else. The token is never posted; it stays with operators." },
-    { sev: "High", issue: "A private memory could be read through retrieval by spelling its path another way, such as docs/../_memory/…, and then cited.", fix: "Every path check runs on the path as the filesystem resolves it, with case folded. Memory, gap and inbox notes are never evidence." },
-    { sev: "High", issue: "If a revised draft's comment failed to post (a draft too long for Jira, say), approving the draft on the ticket published the unseen revision.", fix: "Publishing requires the saved draft to be exactly the one on the ticket. If it isn't, it's posted again and needs a new approval. Long drafts are shortened in the comment and attached in full." },
-    { sev: "High", issue: "A question in an internal Jira comment got a public reply, visible to customers.", fix: "Replies copy the comment's visibility. A restriction it can't read gets no reply at all." },
   ],
 
   packages: [

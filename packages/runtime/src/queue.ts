@@ -47,6 +47,11 @@ export class KeyedQueue {
     return true;
   }
 
+  /** Still taking events. Check before recording an event as seen: a refused push loses it. */
+  get open(): boolean {
+    return !this.stopped;
+  }
+
   /** Number of keys with work running or waiting. */
   get size(): number {
     return new Set([...this.running, ...this.pending.keys()]).size;

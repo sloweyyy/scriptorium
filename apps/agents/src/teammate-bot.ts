@@ -208,6 +208,13 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     // Remembered on the state volume: a Slack retry reaching a restarted instance is still a retry.
   }, 5_000, new FileSeenIds(path.join(stateDir, "seen-deliveries.json")));
 
+  /**
+   * The Gate records an event as seen; a stopped queue refuses it. In that order, an event
+   * arriving during shutdown was marked seen and then dropped, and its redelivery to the
+   * next revision was refused as a duplicate. Closed intake is checked first.
+   */
+  const admit = (event: AgentEvent): ReturnType<Gate["check"]> => (queue.open ? gate.check(event) : { accepted: false, reason: "shutting down" } as ReturnType<Gate["check"]>);
+
   const queue = new KeyedQueue(
     async (key, events) => {
       for (const event of events) await withRun(async () => {
@@ -463,7 +470,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const core: TeammateCore = {
     async onMention(mention) {
       const agentEvent = mentionToEvent(mention);
-      const verdict = gate.check(agentEvent);
+      const verdict = admit(agentEvent);
       if (!verdict.accepted) {
         await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: agentEvent.key, reason: verdict.reason });
         return;
@@ -770,7 +777,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         payload: { issueKey, commentId, question: capQuestion(jiraToMarkdown(plainText(body))), restriction },
         receivedAt: new Date().toISOString(),
       };
-      const verdict = gate.check(event);
+      const verdict = admit(event);
       if (!verdict.accepted) {
         await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: event.key, reason: verdict.reason }).catch(() => undefined);
         return;
@@ -794,7 +801,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         payload: { issueKey, commentId: `assigned-${changeId}`, question: `You were assigned jira:${issueKey}. Check whether it is ready to be worked on, and reply with the verdict and what is missing.` },
         receivedAt: new Date().toISOString(),
       };
-      const verdict = gate.check(event);
+      const verdict = admit(event);
       if (!verdict.accepted) return;
       queue.push(event);
     },
@@ -820,7 +827,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         receivedAt: new Date().toISOString(),
       };
       // Redeliveries are dropped first, so they never use up the hour's triage budget.
-      const verdict = gate.check(event);
+      const verdict = admit(event);
       if (!verdict.accepted) return;
       if (!triageRate.take(project)) {
         await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: event.key, reason: `triage rate cap for ${project} reached` }).catch(() => undefined);
@@ -844,7 +851,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         payload: { repo, number },
         receivedAt: new Date().toISOString(),
       };
-      const verdict = gate.check(event);
+      const verdict = admit(event);
       if (!verdict.accepted) {
         await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: event.key, reason: verdict.reason }).catch(() => undefined);
         return;
@@ -934,10 +941,14 @@ export async function startTeammateBot(config: AppConfig, vault: Vault): Promise
     stop: async () => {
       clearInterval(digestTimer);
       clearInterval(reminderTimer);
-      await core.drain(8_000);
-      // Let go, so the next revision takes the scheduled work at once instead of after the TTL.
-      await lease.release();
-      await app.stop();
+      // Intake first: Socket Mode kept delivering until app.stop(), into a queue that was
+      // already refusing. Then let go of the schedule, so the next revision takes it at once
+      // rather than after the TTL. Then drain, inside the 8 s shutdown deadline: a drain as
+      // long as the deadline lost the race whenever a turn was in flight, and the release
+      // and app.stop() after it never ran.
+      await app.stop().catch(() => undefined);
+      await lease.release().catch(() => undefined);
+      await core.drain(5_000);
     },
   };
 }

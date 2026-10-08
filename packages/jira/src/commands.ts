@@ -82,6 +82,8 @@ export function withoutQuotedBlocks(body: string): string {
  */
 function commandHead(text: string): string {
   return (text.split("\n")[0] ?? "")
+    // Jira's (y) and :+1: open an approval as 👍 does.
+    .replace(LEADING_COURTESY, "")
     .toLowerCase()
     .replace(/\p{Extended_Pictographic}|\uFE0F/gu, "")
     .replace(/(^|\s)[*_+]+|[*_+]+(?=\s|$)/g, "$1")
@@ -99,11 +101,12 @@ function commandHead(text: string): string {
  * the approval was removed unread; "?" and 🛑 were stripped as punctuation and symbols).
  *
  * The command opens the comment (after any quote it replies to); then only courtesy may
- * follow, on its line or the next ones: thanks (to a name that isn't a hedge), praise, a cc,
- * a sign-off, a screenshot, a positive emoji. Anything else, or a question mark, or a
- * quote, panel or code block after it, makes it a question, never an approval.
+ * follow, on its line or the next ones: thanks, praise, a cc, a sign-off, a screenshot, a
+ * positive emoji. A name (signing off, or thanked) is the author's own: any capitalised word
+ * was taken for one, and "— Postponed" and "Thanks,\nHolding" published. Anything else, or
+ * a question mark, or a quote, panel or code block after it, makes it a question.
  */
-function plainApproval(body: string): string | undefined {
+function plainApproval(body: string, author?: string): string | undefined {
   // A quote, panel or code block after the command is read like any other line: its words
   // aren't courtesy, so it makes the comment a question.
   const reply = withoutLeadingQuotes(body);
@@ -112,17 +115,15 @@ function plainApproval(body: string): string | undefined {
     .map((line) => line.replace(/(^|\s)[*_+]+|[*_+]+(?=\s|$)/g, "$1").trim())
     .filter(Boolean);
   const [line = "", ...more] = lines;
-  // A positive emoji may open it ("👍 Approved"): the command starts at the first letter.
-  const lead = line.match(/^[^\p{L}]*/u)?.[0] ?? "";
-  if (!isCourtesy(lead)) return undefined;
-  const first = line.slice(lead.length);
+  // A positive emoji or emoticon may open it ("👍 Approved", "(y) approve").
+  const first = line.replace(LEADING_COURTESY, "");
   const command = first.match(/^(approved|approve|publish|accept)\b(\s+lesson(\s+l-?\d{1,4})?\b|\s+(the\s+)?(doc|document|draft)\b)?/i);
-  if (!command || !isCourtesy(first.slice(command[0].length))) return undefined;
+  if (!command || !isCourtesy(first.slice(command[0].length), author)) return undefined;
   const courteous = more.every((line, index) =>
-    isCourtesy(line) ||
-    isSignOff(line) ||
+    isCourtesy(line, author) ||
+    isSignOff(line, author) ||
     // "Thanks,\nPhuc": a name alone, last, after thanks.
-    (index === more.length - 1 && index > 0 && isName(line) && isCourtesy(more[index - 1] ?? "")),
+    (index === more.length - 1 && index > 0 && isName(line, author) && isCourtesy(more[index - 1] ?? "", author)),
   );
   return courteous ? command[0].toLowerCase() : undefined;
 }
@@ -139,40 +140,46 @@ function withoutLeadingQuotes(body: string): string {
 
 /** What may come with an approval: thanks, praise, a cc. Any other word is something said. */
 const COURTESY_WORDS = new Set(
-  "thanks thank you thx ty cheers kudos please pls cc great good nice well done job work team everyone all folks guys awesome amazing perfect excellent lovely brilliant looks look lgtm ship it appreciated much so a lot many congrats congratulations really very again for the this quick turnaround help effort".split(" "),
+  "thanks thank you thx ty cheers kudos please pls cc great good nice well done job work team everyone all folks guys awesome amazing perfect excellent lovely brilliant looks lgtm ship it appreciated much so a lot many congrats congratulations really very for the this quick turnaround".split(" "),
 );
-/** Words that hold an approval back, even capitalised where a name would be ("Thanks, Not Yet"). */
-const HEDGES = new Set(
-  "not no yet wait waiting hold stop but never later pending unless until after before only cancel reject hang dont don't don’t do maybe if nope nah block blocked revert undo mind hmm actually except first legal review approval sign signed signoff next week tomorrow today tonight soon asap eod eow monday tuesday wednesday thursday friday saturday sunday".split(" "),
-);
-/** A screenshot as Jira writes it: "!shot.png!" or "!shot.png|thumbnail!". Not any text between two "!". */
-const SCREENSHOT = /![^!\n|]+?\.(?:png|jpe?g|gif|webp|svg|bmp)(?:\|[^!\n]*)?!/gi;
+/**
+ * A screenshot as Jira writes it: "!shot.png!" or "!shot.png|thumbnail!", with no space in
+ * it. Not text between two "!": "Approve! But fix the typo in hero.png!" is an objection.
+ */
+const SCREENSHOT = /![^\s!|]+\.(?:png|jpe?g|gif|webp|svg|bmp)(?:\|[^\s!]*)?!/gi;
 const POSITIVE_EMOJI = /[\u{1F3FB}-\u{1F3FF}]|👍|🎉|✅|☑️|✔️|🙏|😊|🙂|😀|😃|😄|😁|☺️|🚀|❤️|❤|💯|👏|🥳|✨|🙌|💪|⭐|🌟|️|‍/gu;
 /** Jira's own: (y) (/) (*) (on), and the smileys. */
 const POSITIVE_EMOTICONS = /\((?:y|\/|\*|on)\)|:-?\)|:-?D|;-?\)/g;
 const POSITIVE_SHORTCODES = /:(?:\+1|thumbsup|thumbs_up|tada|white_check_mark|heavy_check_mark|rocket|pray|smile|slightly_smiling_face|blush|heart|clap|100|raised_hands|star|sparkles|muscle|partying_face):/g;
 const NAME = /^\p{Lu}[\p{Ll}'’.-]*(\s+\p{Lu}[\p{Ll}'’.-]*){0,2}$/u;
+/** What may open an approval before its first word: a positive emoji, emoticon or shortcode. */
+const LEADING_COURTESY = new RegExp(`^(?:\\s|${POSITIVE_EMOJI.source}|${POSITIVE_EMOTICONS.source}|${POSITIVE_SHORTCODES.source})+`, "u");
 
-function isName(text: string): boolean {
-  // Word by word, hyphens too: "— Not-yet" and "— Waiting On Legal" are hedges, not names.
-  return NAME.test(text) && !text.split(/[\s\-–—]+/).some((word) => HEDGES.has(word.toLowerCase().replace(/[.,!]+$/, "")));
+/**
+ * The comment's author's own name, or part of it: "Phuc" from "Phuc Truong". Word by word,
+ * hyphens too: "— Not-yet" and "— Waiting On Legal" aren't anybody's name.
+ */
+function isName(text: string, author?: string): boolean {
+  const own = new Set((author ?? "").toLowerCase().split(/[\s\-–—]+/).filter(Boolean));
+  const words = text.split(/[\s\-–—]+/).map((word) => word.toLowerCase().replace(/[.,!]+$/, "")).filter(Boolean);
+  return NAME.test(text) && words.length > 0 && words.every((word) => own.has(word));
 }
 
 /** A sign-off: "— Phuc", "-- Mai Anh". Not "- not before Friday", which is a bullet. */
-function isSignOff(line: string): boolean {
+function isSignOff(line: string, author?: string): boolean {
   const name = line.match(/^(?:—|–|--)\s*(.+)$/)?.[1]?.trim();
-  return name !== undefined && isName(name);
+  return name !== undefined && isName(name, author);
 }
 
 /** Courtesy words, positive emoji and punctuation only: "?" isn't courtesy, nor is any other word. */
-function isCourtesy(text: string): boolean {
+function isCourtesy(text: string, author?: string): boolean {
   const rest = text
     .replace(SCREENSHOT, " ")
     .replace(POSITIVE_EMOJI, " ")
     .replace(POSITIVE_EMOTICONS, " ")
     .replace(POSITIVE_SHORTCODES, " ")
     // Thanks to someone by name: "Thanks Phuc!", "cheers, Mai Anh".
-    .replace(/\b([Tt]hanks|[Tt]hank you|[Tt]hx|[Cc]heers|[Kk]udos)\b([\s,]+)(\p{Lu}[\p{Ll}'’-]*(?:\s+\p{Lu}[\p{Ll}'’-]*)?)/gu, (match, thanks: string, _gap: string, name: string) => (isName(name) ? thanks : match));
+    .replace(/\b([Tt]hanks|[Tt]hank you|[Tt]hx|[Cc]heers|[Kk]udos)\b([\s,]+)(\p{Lu}[\p{Ll}'’-]*(?:\s+\p{Lu}[\p{Ll}'’-]*)?)/gu, (match, thanks: string, _gap: string, name: string) => (isName(name, author) ? thanks : match));
   return rest
     .split(/\s+/)
     .map((token) => token.replace(/^[.,!…:;"'’“”\-–—]+|[.,!…:;"'’“”\-–—]+$/g, "").toLowerCase())
@@ -256,7 +263,7 @@ export function parseCommand(comment: JiraComment, botAccountId?: string, contex
   // not yet: legal hasn't signed off" published. Anything said with it besides courtesy
   // makes it a question, never an approval in either direction.
   if (/^(approve|approved|publish|accept)\b/.test(head)) {
-    const approval = plainApproval(body);
+    const approval = plainApproval(body, comment.author?.displayName);
     if (!approval) {
       const id = lessonId(head);
       return { kind: "unclear", suggestion: id ? `approve lesson ${id}` : "approve" };

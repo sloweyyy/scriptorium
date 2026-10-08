@@ -550,7 +550,8 @@ describe("forgetting leaves no copy", () => {
     const core = await createTeammate(config(), vault, slack as never, "UBOT");
     const text = "I'm on medical leave until 2026-11-30.";
     await vault.writeNote("_memory/M-0000dddd.md", text, { id: "M-0000dddd", scope: "person:slack:U1", status: "approved", approved_by: "Priya", approval: "R-mem" });
-    await vault.writeNote("_memory/imported/M-0000dddd.md", text, { id: "M-0000dddd", scope: "person:slack:U1", status: "approved", approved_by: "Priya", approval: "R-mem" });
+    // A copy naming someone else's request (the field isn't signed): theirs stays theirs.
+    await vault.writeNote("_memory/imported/M-0000dddd.md", text, { id: "M-0000dddd", scope: "person:slack:U1", status: "approved", approved_by: "Priya", approval: "R-other" });
     const store = new FileApprovalStore(path.join(tmpRoot, "state", "approvals.json"));
     const request = (id: string, requestedBy: string) => ({ id, agent: "Teammate", tool: "memory_save", args: { text, scope: `person:${requestedBy}` }, argsHash: "h", summary: `Remember: ${text}`, key: "k", requestedBy, requestedAt: "2026-10-01T00:00:00Z", expiresAt: "2026-10-08T00:00:00Z", status: "consumed" as const });
     await store.save(request("R-mem", "slack:U1"));
@@ -569,6 +570,30 @@ describe("forgetting leaves no copy", () => {
     const again = requests.find((entry) => entry.id === "R-again");
     expect(again?.args).toBeUndefined();
     expect(again?.status).toBe("expired");
+  });
+});
+
+describe("an admin forgetting a shared memory", () => {
+  it("empties the asker's waiting duplicate and the request that saved it, however its note was edited", async () => {
+    const admins = { ...config(), teammate: { ...config().teammate, admins: ["UADMIN"] } } as AppConfig;
+    const core = await createTeammate(admins, vault, slack as never, "UBOT");
+    const text = "Release notes go out on Thursdays.";
+    // The note was edited after it was saved; the request that saved it says what was asked.
+    await vault.writeNote("_memory/M-0000eeee.md", "Release notes go out on Thursday mornings.", { id: "M-0000eeee", scope: "channel:C1", status: "approved", approved_by: "Priya", approval: "R-saved" });
+    const store = new FileApprovalStore(path.join(tmpRoot, "state", "approvals.json"));
+    const request = (id: string, status: "consumed" | "pending", words = text) => ({ id, agent: "Teammate", tool: "memory_save", args: { text: words, scope: "channel:C1" }, argsHash: "h", summary: `Remember: ${words}`, key: "k", requestedBy: "slack:U2", requestedAt: "2026-10-01T00:00:00Z", expiresAt: "2026-10-08T00:00:00Z", status });
+    await store.save(request("R-saved", "consumed"));
+    // U2 asked again in another thread, worded as the note now is: waiting, it would save it again.
+    await store.save(request("R-again", "pending", "Release notes go out on Thursday mornings."));
+    // And in the words they first used.
+    await store.save(request("R-first-words", "pending"));
+    expect(await core.onSlashCommand({ channel: "C1", user: "UADMIN", text: "forget M-0000eeee", commandId: "f9" })).toMatch(/^Forgotten/);
+    const requests = await store.all();
+    expect(requests.find((entry) => entry.id === "R-saved")?.args).toBeUndefined();
+    const again = requests.find((entry) => entry.id === "R-again");
+    expect(again?.args).toBeUndefined();
+    expect(again?.status).toBe("expired");
+    expect(requests.find((entry) => entry.id === "R-first-words")?.status).toBe("expired");
   });
 });
 

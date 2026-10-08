@@ -2139,8 +2139,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "forgetting empties only the askers' requests and the one that saved it",
     file: "apps/agents/src/teammate-bot.ts",
-    find: " && words.has(args.text.trim()) && askers.has(request.requestedBy);",
-    replace: " && words.has(args.text.trim());",
+    find: " && words.has(args.text.trim()) && askers.has(request.requestedBy) && args.scope",
+    replace: " && words.has(args.text.trim()) && args.scope",
     evals: ["evals/teammate-e2e.test.ts"],
   },
   {
@@ -2233,6 +2233,13 @@ export const MUTANTS: Mutant[] = [
     find: "      if (!patch.publishedPath && !shown) patch.draftUnposted = true;",
     replace: "      if (!patch.publishedPath) patch.draftUnposted = true;",
     evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "forgetting a memory leaves the same words in another scope",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: " && askers.has(request.requestedBy) && args.scope === result.memory.scope;",
+    replace: " && askers.has(request.requestedBy);",
+    evals: ["evals/teammate-e2e.test.ts"],
   },
   {
     control: "a delegation ends by itself",

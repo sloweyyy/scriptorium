@@ -553,7 +553,8 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         for (const request of requests) {
           const args = argsOf(request);
           const named = saved.includes(request);
-          const again = typeof args?.text === "string" && words.has(args.text.trim()) && askers.has(request.requestedBy);
+          // In this memory's scope: the same words for another channel are another memory.
+          const again = typeof args?.text === "string" && words.has(args.text.trim()) && askers.has(request.requestedBy) && args.scope === result.memory.scope;
           if (!named && !again) continue;
           await store.update(request.id, (current) => ({
             ...current,

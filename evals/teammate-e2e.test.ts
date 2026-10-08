@@ -587,6 +587,10 @@ describe("an admin forgetting a shared memory", () => {
     await store.save(request("R-again", "pending", "Release notes go out on Thursday mornings."));
     // And in the words they first used.
     await store.save(request("R-first-words", "pending"));
+    // The same words for another channel are another memory: not this one to forget.
+    await store.save({ ...request("R-other-channel", "pending"), args: { text, scope: "channel:C2" } });
+    // Someone else asking for the same words here is their own request, not the asker's.
+    await store.save({ ...request("R-someone-else", "pending"), requestedBy: "slack:U3" });
     expect(await core.onSlashCommand({ channel: "C1", user: "UADMIN", text: "forget M-0000eeee", commandId: "f9" })).toMatch(/^Forgotten/);
     const requests = await store.all();
     expect(requests.find((entry) => entry.id === "R-saved")?.args).toBeUndefined();
@@ -594,6 +598,8 @@ describe("an admin forgetting a shared memory", () => {
     expect(again?.args).toBeUndefined();
     expect(again?.status).toBe("expired");
     expect(requests.find((entry) => entry.id === "R-first-words")?.status).toBe("expired");
+    expect(requests.find((entry) => entry.id === "R-other-channel")?.status).toBe("pending");
+    expect(requests.find((entry) => entry.id === "R-someone-else")?.status).toBe("pending");
   });
 });
 

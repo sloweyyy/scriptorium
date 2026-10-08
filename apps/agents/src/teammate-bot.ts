@@ -538,14 +538,23 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
         const result = await forgetMemory(vault, forget[1] as string, { accountId: `slack:${user}`, mayCurate: (settings.admins ?? []).includes(user) });
         if (!result.ok) return `Nothing forgotten: ${result.reason}.`;
         // The request that saved it carries its text too (shown in App Home's "What you asked
-        // for"): emptied, as an erasure empties it. Who approved it stays. So is any other this
-        // person made for the same words: one still waiting saved it again once approved.
-        // Someone else's request for the same words is theirs, and the text must match: the
-        // note's `approval` field isn't signed.
-        for (const request of await store.all()) {
-          const args = request.args as { text?: unknown } | undefined;
-          if (request.tool !== "memory_save" || typeof args?.text !== "string" || args.text.trim() !== result.memory.text) continue;
-          if (!result.memory.approvals.includes(request.id) && request.requestedBy !== `slack:${user}`) continue;
+        // for"): emptied, as an erasure empties it. Who approved it stays. It is found by the
+        // id on the note, whatever its text now (a copy may have been edited), in the memory's
+        // own scope: the note's `approval` field isn't signed. And any other request for the
+        // same words by whoever asked for it, or by whoever forgets it, is emptied too: one
+        // still waiting saved it again once approved. An admin forgetting it was matched as
+        // the asker, and the person who asked kept their duplicate.
+        const requests = (await store.all()).filter((request) => request.tool === "memory_save");
+        const argsOf = (request: (typeof requests)[number]) => request.args as { text?: unknown; scope?: unknown } | undefined;
+        const saved = requests.filter((request) => result.memory.approvals.includes(request.id) && argsOf(request)?.scope === result.memory.scope);
+        const askers = new Set([`slack:${user}`, ...saved.map((request) => request.requestedBy)]);
+        // The words as the note has them, and as they were asked for.
+        const words = new Set([result.memory.text, ...saved.flatMap((request) => (typeof argsOf(request)?.text === "string" ? [String(argsOf(request)?.text).trim()] : []))]);
+        for (const request of requests) {
+          const args = argsOf(request);
+          const named = saved.includes(request);
+          const again = typeof args?.text === "string" && words.has(args.text.trim()) && askers.has(request.requestedBy);
+          if (!named && !again) continue;
           await store.update(request.id, (current) => ({
             ...current,
             args: undefined,

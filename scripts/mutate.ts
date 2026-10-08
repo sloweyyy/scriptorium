@@ -1962,13 +1962,6 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-e2e.test.ts"],
   },
   {
-    control: "forgetting empties only the forgetter's requests and the one that saved it",
-    file: "apps/agents/src/teammate-bot.ts",
-    find: "          if (!result.memory.approvals.includes(request.id) && request.requestedBy !== `slack:${user}`) continue;\n",
-    replace: "",
-    evals: ["evals/teammate-e2e.test.ts"],
-  },
-  {
     control: "a forgotten memory's waiting duplicate can't save it again",
     file: "apps/agents/src/teammate-bot.ts",
     find: "            ...(current.status === \"pending\" || current.status === \"approved\" ? { status: \"expired\" as const, expiresAt: new Date().toISOString() } : {}),\n",
@@ -2184,6 +2177,34 @@ export const MUTANTS: Mutant[] = [
     find: "      if (comment) {\n        await attachDraft(",
     replace: "      if (false) {\n        await attachDraft(",
     evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "forgetting empties only the askers' requests and the one that saved it",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: " && words.has(args.text.trim()) && askers.has(request.requestedBy);",
+    replace: " && words.has(args.text.trim());",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "whoever asked for a memory is an asker when someone else forgets it",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "        const askers = new Set([`slack:${user}`, ...saved.map((request) => request.requestedBy)]);",
+    replace: "        const askers = new Set([`slack:${user}`]);",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "a duplicate in the words first asked for is a duplicate",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "        const words = new Set([result.memory.text, ...saved.flatMap(",
+    replace: "        const words = new Set([result.memory.text, ...[].flatMap(",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "the request a memory names is its own only in the memory's scope",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "result.memory.approvals.includes(request.id) && argsOf(request)?.scope === result.memory.scope);",
+    replace: "result.memory.approvals.includes(request.id));",
+    evals: ["evals/teammate-e2e.test.ts"],
   },
   {
     control: "a delegation ends by itself",

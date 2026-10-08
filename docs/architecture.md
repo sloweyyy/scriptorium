@@ -78,7 +78,8 @@ Each invariant is enforced in one place, and an eval fails if it is broken.
 13. **What reaches a site is inert.** Text nobody vouched for is written inert, and every
     body is made inert again as it leaves for a site: raw HTML escaped, a link that isn't
     to the web unlinked, Quartz's own HTML-making syntax broken. `evals/inert.test.ts`,
-    `evals/publish.test.ts`
+    `evals/publish.test.ts`, and `evals/site-render.test.ts`, which renders inert pages with
+    the public site's own parser
 
 The threat model behind these invariants is in [`security-model.md`](security-model.md).
 To add to the system, see [`extending.md`](extending.md).

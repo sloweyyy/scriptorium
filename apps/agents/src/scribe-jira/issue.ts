@@ -83,6 +83,9 @@ async function runWake(ctx: Ctx, issue: JiraIssue): Promise<void> {
   await runDraft(ctx, issue, { force: true });
 }
 
+/** How the agent's note of a failure starts. */
+const ERROR_NOTE = "⚠️ I hit an error working this ticket:";
+
 /** Rebuild what the ledger lost from the evidence that outlives it: the ticket itself and the vault. */
 async function recoverState(ctx: Ctx, issue: JiraIssue, settled: JiraComment[], otherAgents: string[], interrupted: boolean): Promise<IssueState> {
   const key = issue.key;
@@ -150,7 +153,9 @@ async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{
   // entry says so) on a ticket where the agent had said nothing yet. The count is kept from
   // the first try: a reply posted since (the note of the failure) doesn't make it a recovery.
   const entry = ctx.state.get(key);
-  const spoken = history.filter((comment) => comment.author?.accountId === ctx.botAccountId).length;
+  // Its notes of a failure don't count: one written before first sight began (a lookup that
+  // failed) made a new ticket read as one it had worked, and it was never greeted or drafted.
+  const spoken = history.filter((comment) => comment.author?.accountId === ctx.botAccountId && !comment.body.includes(ERROR_NOTE)).length;
   const spokenBefore = entry?.adopting === true ? (entry.spokenBefore ?? spoken) : spoken;
   const interrupted = entry?.adopting === true && spokenBefore === 0;
   await ctx.state.seed(key, status, spokenBefore);
@@ -165,8 +170,9 @@ async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{
   // (1) The agent has comments here: this is a restart on a ticket it already worked, not
   // a new ticket. Reconstruct instead of re-greeting and re-drafting, and apply the
   // downtime rule — everything up to its own last word is history, everything after it
-  // still needs answering.
-  if (settled.length) {
+  // still needs answering. Notes of a failure aren't working it: a ticket it has said
+  // nothing else on is still new, and is greeted and drafted.
+  if (settled.length && spoken > 0) {
     await ctx.state.markProcessed(key, settled.map((comment) => comment.id));
     const known = await recoverState(ctx, issue, settled, otherAgents, interrupted);
     console.log(`[scribe] ${key}: adopted after a restart, ${unprocessed.length} comment(s) to catch up on`);
@@ -417,8 +423,10 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
     const draft = await ctx.state.readDraft(key);
     if (draft) {
       await repostDraft(ctx, key, draft);
-      // Shown now: the next move is a reviewer's, as after any draft.
-      await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
+      // Shown now: the next move is a reviewer's, as after any draft. Only out of the agent's
+      // own In Progress: after a lost ledger, a column a person chose ("Blocked") was taken for
+      // the agent's own, and moved.
+      if (issueStatus(issue).toLowerCase() === ctx.config.jira.inProgressStatus.toLowerCase()) await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
       if (ctx.state.get(key)?.held) await handBack(ctx, key, issue);
     }
   }
@@ -476,7 +484,7 @@ export async function reportFailure(ctx: Ctx, issue: JiraIssue, error: unknown):
   if (known?.lastError === message) return;
   await ctx.state.patch(issue.key, { lastError: message });
   try {
-    await say(ctx, issue.key, `⚠️ I hit an error working this ticket:\n\n{{${message}}}\n\nComment \`draft\` to make me retry.`);
+    await say(ctx, issue.key, `${ERROR_NOTE}\n\n{{${message}}}\n\nComment \`draft\` to make me retry.`);
   } catch {
     // Jira itself may be the thing that's down; the log line below is the fallback.
   }

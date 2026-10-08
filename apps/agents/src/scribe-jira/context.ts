@@ -142,6 +142,12 @@ export async function moveTo(ctx: Ctx, key: string, statusName: string, currentS
       await ctx.state.patch(key, { lastStatus: statusName });
       return;
     }
+    // Where it is couldn't be read: not moved. Moved blind, a column a person had just chosen
+    // was overridden.
+    if (live === undefined) {
+      console.warn(`[scribe] ${key}: couldn't read its status, so I'm not moving it to "${statusName}"`);
+      return;
+    }
     // Any column a person chose while the agent worked stays theirs: Approved above all (the
     // tick's end leaves that change for the next tick to judge as an approval), but also a
     // ticket moved to "Won't Do" mid-draft, which was pulled back into In Progress, In

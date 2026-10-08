@@ -2342,7 +2342,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a reposted draft goes to review",
     file: "apps/agents/src/scribe-jira/issue.ts",
-    find: "      // Shown now: the next move is a reviewer's, as after any draft.\n      await moveTo(ctx, key, ctx.config.jira.inReviewStatus);\n",
+    find: "      if (issueStatus(issue).toLowerCase() === ctx.config.jira.inProgressStatus.toLowerCase()) await moveTo(ctx, key, ctx.config.jira.inReviewStatus);\n",
     replace: "",
     evals: ["evals/jira-board.test.ts"],
   },
@@ -2415,6 +2415,34 @@ export const MUTANTS: Mutant[] = [
     find: "(cc|thanks|thank you|thx|cheers|kudos)\\b/i.test(raw.replace(",
     replace: "(cc)\\b/i.test(raw.replace(",
     evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "scribe moves a ticket only from a column it could read",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "    if (live === undefined) {\n      console.warn",
+    replace: "    if (false) {\n      console.warn",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a reposted draft moves the ticket only out of In Progress",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "  if (issueStatus(issue).toLowerCase() === ctx.config.jira.inProgressStatus.toLowerCase()) await moveTo(ctx, key, ctx.config.jira.inReviewStatus);",
+    replace: "  await moveTo(ctx, key, ctx.config.jira.inReviewStatus);",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "notes of a failure don't make a new ticket look worked",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: " && !comment.body.includes(ERROR_NOTE)).length;",
+    replace: ").length;",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a ticket the agent only reported failures on is still new",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "  if (settled.length && spoken > 0) {",
+    replace: "  if (settled.length) {",
+    evals: ["evals/jira-board.test.ts"],
   },
   {
     control: "a delegation ends by itself",

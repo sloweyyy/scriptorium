@@ -94,8 +94,8 @@ The model is untrusted too. It proposes; the platform decides what runs.
 - Every reply says it is AI-generated and names its run.
 - Every page published to a site is inert. Both sites render raw HTML and any link
   scheme, and text nobody vouched for reaches the vault (a typed question, an attached
-  PRD, a model's draft). `inertMarkdown` reads a page the way each site parses it (GFM, and
-  GFM with Quartz's `$…$` math) and escapes raw HTML. It unlinks a target that isn't
+  PRD, a model's draft). `inertMarkdown` reads a page the way each site parses it (GFM with
+  Starlight's `:::` directives, and GFM with Quartz's `$…$` math) and escapes raw HTML. It unlinks a target that isn't
   http(s), mailto or relative, or that holds a quote. It also breaks the syntax Quartz turns
   back into HTML after parsing: a highlight, a transclusion's alias, comment pairs cut from
   the raw text, external wikilinks, table pipes, and an interactive mermaid diagram. Text is

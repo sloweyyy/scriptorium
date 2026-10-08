@@ -83,14 +83,13 @@ async function runWake(ctx: Ctx, issue: JiraIssue): Promise<void> {
 }
 
 /** Rebuild what the ledger lost from the evidence that outlives it: the ticket itself and the vault. */
-async function recoverState(ctx: Ctx, issue: JiraIssue, settled: JiraComment[]): Promise<IssueState> {
+async function recoverState(ctx: Ctx, issue: JiraIssue, settled: JiraComment[], otherAgents: string[]): Promise<IssueState> {
   const key = issue.key;
   const attached = lastDraftAttachment(issue, ctx.botAccountId);
   // Engaged only where a draft was asked for: the label, a draft of its own on the ticket,
   // or a person who mentioned it or typed `draft`. Every ticket it had ever commented on
   // was engaged, so one where it had only answered `help` was drafted on the next comment,
   // taken from its assignee and moved across the board.
-  const otherAgents = await ctx.otherAgentIds();
   const asked = settled.some((comment) => {
     const kind = parseCommand(comment, ctx.botAccountId, { hasDraft: Boolean(attached), otherAgents }).kind;
     return kind === "wake" || kind === "draft";
@@ -100,6 +99,7 @@ async function recoverState(ctx: Ctx, issue: JiraIssue, settled: JiraComment[]):
   // a retry. A wake still answers (it forces the draft), and if the PRD actually changed
   // during the downtime the fingerprint differs and the retry happens by itself.
   const patch: Partial<IssueState> = {
+    adopting: undefined,
     engaged: Boolean(attached) || autoDrafts(ctx, issue) || asked,
     sourceFingerprint: sourceFingerprint(issue, ctx.state.get(key)?.remoteLinkFingerprint),
   };
@@ -138,7 +138,9 @@ async function recoverState(ctx: Ctx, issue: JiraIssue, settled: JiraComment[]):
 async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{ known: IssueState; handled: boolean }> {
   const key = issue.key;
   const history = await ctx.client.listComments(key);
-  const seeded = await ctx.state.seed(key, status);
+  const otherAgents = await ctx.otherAgentIds();
+  // Until it finishes, the next tick starts first sight again (`adopting`).
+  await ctx.state.seed(key, status);
 
   // The baseline, recorded once per ticket: without it, a ticket created WITH a linked
   // page would look like a ticket that just gained one on the very next tick, and get a
@@ -153,7 +155,7 @@ async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{
   // still needs answering.
   if (settled.length) {
     await ctx.state.markProcessed(key, settled.map((comment) => comment.id));
-    const known = await recoverState(ctx, issue, settled);
+    const known = await recoverState(ctx, issue, settled, otherAgents);
     console.log(`[scribe] ${key}: adopted after a restart, ${unprocessed.length} comment(s) to catch up on`);
     return { known, handled: false };
   }
@@ -164,7 +166,7 @@ async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{
     await ctx.state.markProcessed(key, history.map((comment) => comment.id));
     await say(ctx, key, `${HELP}\n\nReading this ticket now…`);
     await runDraft(ctx, issue);
-    const known = await ctx.state.patch(key, { lastStatus: status, lastUpdated: issue.fields.updated, lastError: undefined });
+    const known = await ctx.state.patch(key, { lastStatus: status, lastUpdated: issue.fields.updated, lastError: undefined, adopting: undefined });
     return { known, handled: true };
   }
 
@@ -174,7 +176,7 @@ async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{
   // the agent ever polled still gets an answer. Plain feedback among them is dropped by
   // the not-engaged gate in the loop.
   console.log(`[scribe] ${key}: adopted quietly — no "${ctx.config.jira.label}" label, so mention-only`);
-  return { known: seeded, handled: false };
+  return { known: await ctx.state.patch(key, { adopting: undefined }), handled: false };
 }
 
 export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> {
@@ -188,7 +190,7 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
   const seen = ctx.state.get(key);
 
   let known: IssueState;
-  if (seen) {
+  if (seen && ctx.state.adopted(key)) {
     known = seen;
   } else {
     const adopted = await firstSight(ctx, issue, status);

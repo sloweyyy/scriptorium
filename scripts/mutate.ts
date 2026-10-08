@@ -1831,8 +1831,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a revision that was shown is not shown again",
     file: "apps/agents/src/scribe-jira/drafting.ts",
-    find: "    if (known0?.postedDraftHash !== hashDraft(draft)) await repostDraft(ctx, key, draft);",
-    replace: "    await repostDraft(ctx, key, draft);",
+    find: "    if (known0?.postedDraftHash !== hashDraft(draft)) {\n      // The comment",
+    replace: "    if (true) {\n      // The comment",
     evals: ["evals/jira-board.test.ts"],
   },
   {
@@ -1845,8 +1845,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a revision is recorded before the draft it made is saved",
     file: "apps/agents/src/scribe-jira/drafting.ts",
-    find: "  await ctx.state.patch(key, { revision: { feedback: [...applied, ...fresh], draftHash: hashDraft(result.markdown) } });\n  await ctx.state.saveDraft(key, result.markdown);",
-    replace: "  await ctx.state.saveDraft(key, result.markdown);\n  await ctx.state.patch(key, { revision: { feedback: [...applied, ...fresh], draftHash: hashDraft(result.markdown) } });",
+    find: "  await ctx.state.patch(key, { revision: { feedback: [...applied, ...fresh], draftHash: hashDraft(result.markdown), comment }, draftPublished: false });\n  await ctx.state.saveDraft(key, result.markdown);",
+    replace: "  await ctx.state.saveDraft(key, result.markdown);\n  await ctx.state.patch(key, { revision: { feedback: [...applied, ...fresh], draftHash: hashDraft(result.markdown), comment }, draftPublished: false });",
     evals: ["evals/jira-board.test.ts"],
   },
   {
@@ -1999,8 +1999,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a hand-back is used once",
     file: "apps/agents/src/scribe-jira/context.ts",
-    find: "  if (before) await ctx.state.patch(key, { handBackTo: undefined });\n",
-    replace: "",
+    find: "  if ((await assignTo(ctx, key, to)) && before) await ctx.state.patch(key, { handBackTo: undefined });",
+    replace: "  await assignTo(ctx, key, to);",
     evals: ["evals/jira-board.test.ts"],
   },
   {
@@ -2128,6 +2128,62 @@ export const MUTANTS: Mutant[] = [
     find: "  if (!isCourtesy(lead)) return undefined;\n",
     replace: "",
     evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "a ticket is worked as adopted only once first sight finished",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "  if (seen && ctx.state.adopted(key)) {",
+    replace: "  if (seen) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "first sight stays open until it finishes",
+    file: "packages/jira/src/state.ts",
+    find: "    return this.patch(key, { lastStatus: this.data.issues[key]?.lastStatus ?? status, adopting: true });",
+    replace: "    return this.patch(key, { lastStatus: this.data.issues[key]?.lastStatus ?? status });",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "an entry with no status is no adoption",
+    file: "packages/jira/src/state.ts",
+    find: "    return Boolean(known && !known.adopting && known.lastStatus !== undefined);",
+    replace: "    return Boolean(known && !known.adopting);",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a revision marks the published doc stale in the same write that records it",
+    file: "apps/agents/src/scribe-jira/drafting.ts",
+    find: "comment }, draftPublished: false });",
+    replace: "comment } });",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a hand-back the holder of which can't be read goes ahead",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "    () => undefined,\n  );\n  if (holder && holder !== ctx.botAccountId) return;",
+    replace: "    () => issue.fields.assignee?.accountId,\n  );\n  if (holder && holder !== ctx.botAccountId) return;",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "who to hand back to is kept until the assign succeeds",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "  if ((await assignTo(ctx, key, to)) && before) await ctx.state.patch(key, { handBackTo: undefined });",
+    replace: "  await assignTo(ctx, key, to);\n  if (before) await ctx.state.patch(key, { handBackTo: undefined });",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "an old-form fingerprint is brought up to date",
+    file: "apps/agents/src/scribe-jira/drafting.ts",
+    find: "    if (known?.sourceFingerprint !== fingerprint) await ctx.state.patch(key, { sourceFingerprint: fingerprint });\n",
+    replace: "",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a retried revision posts the comment it was going to post",
+    file: "apps/agents/src/scribe-jira/drafting.ts",
+    find: "      if (comment) {\n        await attachDraft(",
+    replace: "      if (false) {\n        await attachDraft(",
+    evals: ["evals/jira-board.test.ts"],
   },
   {
     control: "a delegation ends by itself",

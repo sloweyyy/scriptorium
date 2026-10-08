@@ -83,7 +83,13 @@ export interface IssueState {
    * after: nothing to do), applies only feedback that came since, and never applies any of
    * it twice. Recorded before the draft is saved, so a crash between finds another draft.
    */
-  revision?: { feedback: string[]; draftHash: string };
+  revision?: { feedback: string[]; draftHash: string; comment?: string };
+  /**
+   * First sight began and hasn't finished. The next tick adopts the ticket again: a recovery
+   * that failed halfway (a lookup, a download) was otherwise never run again, and the ticket
+   * was drafted from scratch.
+   */
+  adopting?: boolean;
   /**
    * Follow-ups a publish still owes: the Slack announcement and the lesson proposal. Set
    * when the publish lands, each cleared once done, so a failure between them (the
@@ -206,10 +212,18 @@ export class JiraState {
    * Without this, an issue that was already in "Approved" when the agent booted
    * would look like a fresh approval and publish itself.
    */
+  /** Begin first sight: a ticket's status, kept if it has one, and `adopting` until it is done. */
   async seed(key: string, status: string): Promise<IssueState> {
-    const existing = this.data.issues[key];
-    if (existing) return existing;
-    return this.patch(key, { lastStatus: status });
+    return this.patch(key, { lastStatus: this.data.issues[key]?.lastStatus ?? status, adopting: true });
+  }
+
+  /**
+   * Adopted: first sight finished. An entry written only by something else (the note of a
+   * failure, which marks its own comment processed) is no adoption, and has no status.
+   */
+  adopted(key: string): boolean {
+    const known = this.data.issues[key];
+    return Boolean(known && !known.adopting && known.lastStatus !== undefined);
   }
 
   async patch(key: string, patch: Partial<IssueState>): Promise<IssueState> {

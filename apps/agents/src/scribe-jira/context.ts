@@ -173,13 +173,16 @@ export async function moveTo(ctx: Ctx, key: string, statusName: string, currentS
  * not assign still gets its draft, and the comment thread remains the authoritative
  * narration either way.
  */
-export async function assignTo(ctx: Ctx, key: string, accountId: string | null | undefined): Promise<void> {
+/** True once it is assigned. */
+export async function assignTo(ctx: Ctx, key: string, accountId: string | null | undefined): Promise<boolean> {
   // `undefined` means "leave it alone"; `null` means "explicitly nobody".
-  if (accountId === undefined) return;
+  if (accountId === undefined) return false;
   try {
     await ctx.client.assign(key, accountId);
+    return true;
   } catch (error) {
     console.warn(`[scribe] ${key}: could not assign: ${errorMessage(error)}`);
+    return false;
   }
 }
 
@@ -200,9 +203,11 @@ export async function handBack(ctx: Ctx, key: string, issue: JiraIssue): Promise
   // A person who holds it now keeps it: a writer on a ticket the agent never took (it only
   // replied "no PRD"), or someone who took it while the agent worked. Read live: the
   // tick's snapshot is a model call old.
+  // Unread (the fetch failed), the agent is taken to hold it: the snapshot shows whoever had
+  // it before the agent took it, and believing that left the ticket with the agent.
   const holder = await ctx.client.getIssue(key).then(
     (fresh) => fresh.fields.assignee?.accountId,
-    () => issue.fields.assignee?.accountId,
+    () => undefined,
   );
   if (holder && holder !== ctx.botAccountId) return;
   // To whoever had it when the agent took it, and only otherwise to its reporter: always
@@ -210,9 +215,8 @@ export async function handBack(ctx: Ctx, key: string, issue: JiraIssue): Promise
   const before = ctx.state.get(key)?.handBackTo;
   const reporter = reporterId(issue);
   const to = before && before !== ctx.botAccountId ? before : reporter && reporter !== ctx.botAccountId ? reporter : null;
-  await assignTo(ctx, key, to);
-  // Given back: a later take records its own.
-  if (before) await ctx.state.patch(key, { handBackTo: undefined });
+  // Given back: a later take records its own. Not given (the assign failed): kept for the next try.
+  if ((await assignTo(ctx, key, to)) && before) await ctx.state.patch(key, { handBackTo: undefined });
 }
 
 /** Take the ticket to draft it, remembering whose it was so it goes back to them. */

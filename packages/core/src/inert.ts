@@ -65,12 +65,12 @@ const MAX_MARKERS = 1_000;
 const MAX_MARKERS_IN_CODE = 2_000;
 const MAX_MARKERS_IN_ALL = 50_000;
 /**
- * Where a text directive may start (`:` before a letter). Each start whose `{…}` never closes
- * re-reads the rest of its paragraph: ":a{#" 10,000 times took 10 s.
+ * What text directives' attributes read, in all: a `:name{` reads on to its `}`, or to the end
+ * of its paragraph, across lines and through `#`, `.` and `{`. ":a{#" 10,000 times took 11 s
+ * a reading; 200 of them before 990,000 characters, 2.4 s. Counting the starts alone let the
+ * second through, and turned a table of `:page_id` routes into a code block.
  */
-const MAX_DIRECTIVES = 200;
-const MAX_DIRECTIVES_IN_CODE = 2_000;
-const MAX_DIRECTIVES_IN_ALL = 5_000;
+const MAX_DIRECTIVE_REACH = 2_000_000;
 const REMOVED = "#unsafe-link-removed";
 const SAFE_SCHEMES = new Set(["http", "https", "mailto"]);
 
@@ -246,14 +246,16 @@ function tooCostly(markdown: string): string | undefined {
   let fence: { char: string; length: number } | undefined;
   let before: string[] = [];
   let opened = 0;
-  // The colons of each `:::` container still open: a closer shorter than its opener closes nothing.
-  const asides: number[] = [];
+  // Each `:::` container still open: its colons (a closer shorter than its opener closes
+  // nothing) and how many quotes it is in (a closer in another quote closes nothing either).
+  const asides: Array<{ colons: number; quotes: number }> = [];
   let markers = 0;
   let brackets = 0;
-  let directives = 0;
   let allMarkers = 0;
   let allBrackets = 0;
-  let allDirectives = 0;
+  // Text directives whose `{` hasn't closed in this paragraph, and what all of them have read.
+  let unclosed = 0;
+  let reach = 0;
   // Lines as micromark ends them: a lone CR is a line ending too, and split on LF alone a
   // whole document of CR lines was one line, past every limit here.
   for (const line of markdown.split(/\r\n?|\n/)) {
@@ -274,8 +276,12 @@ function tooCostly(markdown: string): string | undefined {
     // line of a gap note's question is, they nest just the same.
     const content = line.slice(line.match(/^(?:[ \t]*(?:>|[*+-](?=[ \t]|$)|\d{1,9}[.)](?=[ \t]|$)))*/)?.[0].length ?? 0);
     const aside = content.match(/^\s*(:{3,})\s*([\p{L}{[])?/u);
-    if (aside?.[2]) asides.push(aside[1]?.length ?? 3);
-    else if (aside && /^\s*:{3,}\s*$/.test(content) && (aside[1]?.length ?? 0) >= (asides.at(-1) ?? Number.POSITIVE_INFINITY)) asides.pop();
+    const quotes = containers.filter((marker) => marker.endsWith(">")).length;
+    const open = asides.at(-1);
+    if (aside?.[2]) asides.push({ colons: aside[1]?.length ?? 3, quotes });
+    // A closer is indented under four spaces (more is code), and closes only the last
+    // container, in the same quote: one in a quote, or under one, left it open, and uncounted.
+    else if (open && /^ {0,3}:{3,}[ \t]*$/.test(content) && (aside?.[1]?.length ?? 0) >= open.colons && quotes === open.quotes) asides.pop();
     if (asides.length > MAX_NESTED_ASIDES) return `it nests over ${MAX_NESTED_ASIDES} ::: blocks`;
     // A blank line ends every quote; a list goes on past it.
     if (line.trim()) before = containers;
@@ -285,28 +291,36 @@ function tooCostly(markdown: string): string | undefined {
     if (fence) {
       if (run?.startsWith(fence.char) && run.length >= fence.length && !info.trim()) {
         fence = undefined;
-        markers = brackets = directives = 0;
+        markers = brackets = unclosed = 0;
         continue;
       }
     } else if (run && !(run.startsWith("`") && info.includes("`"))) {
       fence = { char: run.charAt(0), length: run.length };
-      markers = brackets = directives = 0;
+      markers = brackets = unclosed = 0;
       continue;
     } else if (!line.trim() || /^ {0,3}(?:[*+-]|1[.)])[ \t]+\S|^ {0,3}#{1,6}(?:[ \t]|$)/.test(line)) {
       // A new paragraph: after a blank line, or where an item or a heading interrupts one.
       // (Only a bullet or a `1.` can: a `2.` line inside a paragraph continues it.)
-      markers = brackets = directives = 0;
+      markers = brackets = unclosed = 0;
     }
     // Emphasis and strikethrough. An `_` inside a word (snake_case) can't be emphasis, and costs nothing.
     const lineMarkers = line.match(/[*~]|(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])/gu)?.length ?? 0;
     const lineBrackets = line.match(/[[\]]/g)?.length ?? 0;
-    const lineDirectives = line.match(/:(?=\p{L})/gu)?.length ?? 0;
     markers += lineMarkers;
     brackets += lineBrackets;
-    directives += lineDirectives;
     allMarkers += lineMarkers;
     allBrackets += lineBrackets;
-    allDirectives += lineDirectives;
+    // Each `:name{` still open reads on through this line; a `}` closes them all. Counted in
+    // code too: a fence inside an HTML block opens nothing, and what follows is parsed.
+    let at = 0;
+    for (const token of line.matchAll(/:\p{L}[\p{L}\p{N}_-]*\{|\}/gu)) {
+      const end = token.index + token[0].length;
+      reach += unclosed * (end - at);
+      unclosed = token[0] === "}" ? 0 : unclosed + 1;
+      at = end;
+    }
+    reach += unclosed * (line.length - at + 1);
+    if (reach > MAX_DIRECTIVE_REACH) return `its text directives read over ${MAX_DIRECTIVE_REACH} characters`;
     // Counted in code too, against a higher limit: a line that opens a fence inside an HTML
     // block opens nothing, and what follows is parsed.
     const limit = fence ? MAX_MARKERS_IN_CODE : MAX_MARKERS;
@@ -314,8 +328,6 @@ function tooCostly(markdown: string): string | undefined {
     if (brackets > limit) return `a paragraph has over ${limit} brackets`;
     if (allMarkers > MAX_MARKERS_IN_ALL) return `it has over ${MAX_MARKERS_IN_ALL} *, _ and ~`;
     if (allBrackets > 2 * MAX_MARKERS_IN_ALL) return `it has over ${2 * MAX_MARKERS_IN_ALL} brackets`;
-    if (directives > (fence ? MAX_DIRECTIVES_IN_CODE : MAX_DIRECTIVES)) return `a paragraph has over ${fence ? MAX_DIRECTIVES_IN_CODE : MAX_DIRECTIVES} colons before a letter`;
-    if (allDirectives > MAX_DIRECTIVES_IN_ALL) return `it has over ${MAX_DIRECTIVES_IN_ALL} colons before a letter`;
   }
   return undefined;
 }

@@ -182,9 +182,17 @@ describe("inert markdown", () => {
       // Nested inside a quote (every line of a gap note's question is), or closed by nothing shorter.
       "> :::a\n".repeat(21),
       "::::a\n\n:::\n\n".repeat(21),
-      // A text directive whose `{…}` never closes re-reads the rest of its paragraph, each time.
-      ":a{#".repeat(201),
-      Array.from({ length: 26 }, () => ":a{#".repeat(199)).join("\n\n"),
+      // A closer indented four spaces is code, and one in a quote doesn't close an aside outside it.
+      ":::a\n    :::\n".repeat(21),
+      ":::a\n> :::\n\n".repeat(21),
+      // A text directive whose `{…}` never closes reads the rest of its paragraph, each time,
+      // across lines; in all paragraphs, it adds up.
+      ":a{#".repeat(1_500),
+      `${":a{#".repeat(200)}${"x".repeat(20_000)}`,
+      `${":a{#".repeat(200)}\n${`${"x".repeat(79)}\n`.repeat(300)}`,
+      Array.from({ length: 30 }, () => ":a{#".repeat(300)).join("\n\n"),
+      // And in what reads as code, but follows a fence inside an HTML block, which opens nothing.
+      `<div>\n\`\`\`\n\n${":a{#".repeat(200)}${"x".repeat(20_000)}`,
       // Code to a line counter, but a fence inside an HTML block opens nothing: still counted.
       "<div>\n```\n\n" + "*_".repeat(1_001),
     ]) {
@@ -213,7 +221,15 @@ describe("inert markdown", () => {
     const quote = Array.from({ length: 5_000 }, (_, i) => `> line ${i}`).join("\n");
     const wrapped = Array.from({ length: 1_500 }, (_, i) => `- Item ${i} that is long\n  and wraps`).join("\n");
     const asides = Array.from({ length: 300 }, (_, i) => `:::note\nTip ${i}.\n:::`).join("\n\n");
-    for (const normal of [`# Rules\n\n${"-".repeat(120)}\n\n${" ".repeat(120)}\n\nText.`, json, psql, snake, list, steps, index, quote, wrapped, asides]) {
+    const quotedAsides = Array.from({ length: 300 }, (_, i) => `> :::note\n> Tip ${i}.\n> :::`).join("\n\n");
+    // Colons before letters that open no attributes, or close them at once, read nothing.
+    const routes = "| Route | Use |\n|---|---|\n" + Array.from({ length: 300 }, (_, i) => `| \`/pages/:page_id/incidents/:incident_id/${i}\` | x |`).join("\n");
+    const cpp = "```cpp\n" + Array.from({ length: 2_500 }, (_, i) => `std::string s${i} = std::to_string(${i});`).join("\n") + "\n```";
+    const css = "```css\n" + Array.from({ length: 2_500 }, (_, i) => `a.x${i}:hover{color:red}`).join("\n") + "\n```";
+    const logs = Array.from({ length: 3_000 }, (_, i) => `INFO:root:request ${i} took 3ms`).join("\n");
+    // One that never closes reads only to its paragraph's end.
+    const keys = Array.from({ length: 100 }, (_, i) => `Press :kbd{#key${i} then ${"wait ".repeat(200)}`).join("\n\n");
+    for (const normal of [`# Rules\n\n${"-".repeat(120)}\n\n${" ".repeat(120)}\n\nText.`, json, psql, snake, list, steps, index, quote, wrapped, asides, quotedAsides, routes, cpp, css, logs, keys]) {
       expect(unsafeMarkup(normal).tooCostly, normal.slice(0, 30)).toBeUndefined();
       expect(inertMarkdown(normal), normal.slice(0, 30)).toBe(normal);
     }

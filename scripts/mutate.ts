@@ -1964,7 +1964,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a person who holds the ticket keeps it",
     file: "apps/agents/src/scribe-jira/context.ts",
-    find: "  if (holder && holder !== ctx.botAccountId) {",
+    find: "  if (read && read.holder !== ctx.botAccountId && (read.holder || known?.held)) {",
     replace: "  if (false) {",
     evals: ["evals/jira-board.test.ts"],
   },
@@ -2090,8 +2090,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "first sight stays open until it finishes",
     file: "packages/jira/src/state.ts",
-    find: "    return this.patch(key, { lastStatus: this.data.issues[key]?.lastStatus ?? status, adopting: true });",
-    replace: "    return this.patch(key, { lastStatus: this.data.issues[key]?.lastStatus ?? status });",
+    find: "adopting: true, ...(spokenBefore",
+    replace: "adopting: undefined, ...(spokenBefore",
     evals: ["evals/jira-board.test.ts"],
   },
   {
@@ -2174,8 +2174,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a ticket whose holder can't be read is handed back only if the agent took it",
     file: "apps/agents/src/scribe-jira/context.ts",
-    find: "    () => (ctx.state.get(key)?.held ? undefined : null),",
-    replace: "    () => undefined,",
+    find: "  if (!read && !known?.held) return;\n",
+    replace: "",
     evals: ["evals/jira-board.test.ts"],
   },
   {
@@ -2286,8 +2286,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a recovery whose replies predate the ledger is a recovery, not a first sight begun again",
     file: "apps/agents/src/scribe-jira/issue.ts",
-    find: "    !history.some((comment) => comment.author?.accountId === ctx.botAccountId && Date.parse(comment.created) < Date.parse(entry.firstSeen));",
-    replace: "    true;",
+    find: "  const interrupted = entry?.adopting === true && spokenBefore === 0;",
+    replace: "  const interrupted = entry?.adopting === true;",
     evals: ["evals/jira-board.test.ts"],
   },
   {
@@ -2324,6 +2324,41 @@ export const MUTANTS: Mutant[] = [
     find: "      (index === more.length - 1 && /^\\p{Lu}/u.test(line) && /\\b(thanks|thank you|thx|cheers)\\b/i.test(index === 0 ? first : (more[index - 1] ?? \"\")) && isName(line, names.author)),",
     replace: "      isName(line, names.author),",
     evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "a ticket someone unassigned while the agent held it stays unassigned",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "  if (read && read.holder !== ctx.botAccountId && (read.holder || known?.held)) {",
+    replace: "  if (read && read.holder && read.holder !== ctx.botAccountId) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a restart is told from a first sight by the agent's count of replies, not by clocks",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "  const spokenBefore = entry?.adopting === true ? (entry.spokenBefore ?? spoken) : spoken;",
+    replace: "  const spokenBefore = spoken;",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a reposted draft is handed back",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "      if (ctx.state.get(key)?.held) await handBack(ctx, key, issue);\n    }\n  }",
+    replace: "    }\n  }",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a reposted draft goes to review",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "      // Shown now: the next move is a reviewer's, as after any draft.\n      await moveTo(ctx, key, ctx.config.jira.inReviewStatus);\n",
+    replace: "",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a recovered ticket still assigned to the agent is held",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "  if (issue.fields.assignee?.accountId === ctx.botAccountId) patch.held = true;\n",
+    replace: "",
+    evals: ["evals/jira-board.test.ts"],
   },
   {
     control: "a delegation ends by itself",

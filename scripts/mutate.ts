@@ -1607,8 +1607,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "markdown is parsed with GFM, as the sites parse it",
     file: "packages/core/src/inert.ts",
-    find: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm(), directive()], [gfm(), math()]];",
-    replace: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[directive()], [math()]];",
+    find: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm()], [gfm(), directive()], [gfm(), math()]];",
+    replace: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[], [directive()], [math()]];",
     evals: ["evals/inert.test.ts"],
   },
   {
@@ -2020,8 +2020,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "markdown is also read the way Quartz reads math",
     file: "packages/core/src/inert.ts",
-    find: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm(), directive()], [gfm(), math()]];",
-    replace: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm(), directive()]];",
+    find: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm()], [gfm(), directive()], [gfm(), math()]];",
+    replace: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm()], [gfm(), directive()]];",
     evals: ["evals/inert.test.ts"],
   },
   {
@@ -2223,8 +2223,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "markdown is read as Starlight reads it, with its directives",
     file: "packages/core/src/inert.ts",
-    find: "= [[gfm(), directive()], [gfm(), math()]];",
-    replace: "= [[gfm()], [gfm(), math()]];",
+    find: "= [[gfm()], [gfm(), directive()], [gfm(), math()]];",
+    replace: "= [[gfm()], [gfm()], [gfm(), math()]];",
     evals: ["evals/inert.test.ts"],
   },
   {
@@ -2296,6 +2296,13 @@ export const MUTANTS: Mutant[] = [
     find: "    if (known?.held) await handBack(ctx, key, issue);\n",
     replace: "",
     evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "markdown is also read as plain GFM",
+    file: "packages/core/src/inert.ts",
+    find: "= [[gfm()], [gfm(), directive()], [gfm(), math()]];",
+    replace: "= [[gfm(), directive()], [gfm(), math()]];",
+    evals: ["evals/inert.test.ts"],
   },
   {
     control: "a delegation ends by itself",

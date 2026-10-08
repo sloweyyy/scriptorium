@@ -119,6 +119,11 @@ describe("inert markdown", () => {
     expect(inertMarkdown(`:::note\n${fence}\n:::\n<img src=x onerror=alert(1)>\n${fence}`)).toBe(`:::note\n${fence}\n:::\n&lt;img src=x onerror=alert(1)>\n${fence}`);
   });
 
+  it("reads plain GFM too, as a renderer with neither directives nor math does", () => {
+    // A directive's attribute to one reading, math to the other, and a tag to a renderer that has neither.
+    expect(inertMarkdown(':x{a="$<img src=x onerror=alert(1)>$"}')).toBe(':x{a="$&lt;img src=x onerror=alert(1)>$"}');
+  });
+
   it("a code block kept whole stays whole after Quartz cuts its comments", () => {
     // Too costly to parse, so kept as code; Quartz then cut "%%x%%" from the raw text, which
     // joined two runs of three into a fence of six that closed a fence of four.

@@ -92,6 +92,16 @@ The model is untrusted too. It proposes; the platform decides what runs.
 - The model loop fails closed: a capped, truncated, refused or empty turn raises an error;
   it is never half an answer. (`evals/session.test.ts`)
 - Every reply says it is AI-generated and names its run.
+- Every page published to a site is inert. Both sites render raw HTML and any link
+  scheme, and text nobody vouched for reaches the vault (a typed question, an attached
+  PRD, a model's draft). `inertMarkdown` reads a page the way each site parses it (GFM, and
+  GFM with Quartz's `$…$` math) and escapes raw HTML. It unlinks a target that isn't
+  http(s), mailto or relative, or that holds a quote. It also breaks the syntax Quartz turns
+  back into HTML after parsing: a highlight, a transclusion's alias, comment pairs cut from
+  the raw text, external wikilinks, table pipes, and an interactive mermaid diagram. Text is
+  made inert when it is written and again as it leaves for a site, after its links are
+  transformed. Text too costly to parse safely is published as one code block.
+  (`evals/inert.test.ts`, `evals/publish.test.ts`)
 
 ### 7. Learning: nothing is learned without a human
 - Scribe's house rules and the Teammate's memories are both proposals until a listed human
@@ -160,6 +170,11 @@ The model is untrusted too. It proposes; the platform decides what runs.
     An unlinked approver who asked on Jira or GitHub can approve their own request in Slack.
   - Scribe's own replies on its doc tickets don't yet copy a comment's restriction (the
     Teammate's do). Keep Scribe's project out of Jira Service Management.
+  - The inert pass models the sites as configured by default (Quartz v4's
+    Obsidian-flavoured markdown and math, Starlight's GFM). Their configs live in the docs
+    and vault repos. A plugin added there that turns text into HTML needs the same
+    treatment here. Turning off Quartz's `highlight` and `comments` removes two of these
+    rewrites at the source.
 
 - **Set `SCRIPTORIUM_SIGNING_KEY`.** Without it, approvals are unsigned and the docs repo's
   internal branch is trusted. Rules approved before the key was set are unsigned and stop

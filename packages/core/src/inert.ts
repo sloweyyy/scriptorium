@@ -51,7 +51,7 @@ export function unsafeMarkup(markdown: string): { html: string[]; links: string[
 
 /** Real text is inert after a pass or two; a further one only follows a deliberate chain. */
 const MAX_PASSES = 4;
-/** About half a second of parsing: a 1,000,000-character page gets one pass, 250,000 four. */
+/** A 1,000,000-character page gets one pass (three readings, about a second), 250,000 four. */
 const MAX_PARSED = 1_000_000;
 const MAX_DEPTH = 20;
 /** A list nested by indentation alone: each line re-reads every level's indent (700 deep: 4 s). */
@@ -64,6 +64,13 @@ const MAX_MARKERS = 1_000;
 /** Fenced code isn't parsed for emphasis or links: a long JSON or SQL sample is normal. */
 const MAX_MARKERS_IN_CODE = 2_000;
 const MAX_MARKERS_IN_ALL = 50_000;
+/**
+ * Where a text directive may start (`:` before a letter). Each start whose `{…}` never closes
+ * re-reads the rest of its paragraph: ":a{#" 10,000 times took 10 s.
+ */
+const MAX_DIRECTIVES = 200;
+const MAX_DIRECTIVES_IN_CODE = 2_000;
+const MAX_DIRECTIVES_IN_ALL = 5_000;
 const REMOVED = "#unsafe-link-removed";
 const SAFE_SCHEMES = new Set(["http", "https", "mailto"]);
 
@@ -239,11 +246,14 @@ function tooCostly(markdown: string): string | undefined {
   let fence: { char: string; length: number } | undefined;
   let before: string[] = [];
   let opened = 0;
-  let asides = 0;
+  // The colons of each `:::` container still open: a closer shorter than its opener closes nothing.
+  const asides: number[] = [];
   let markers = 0;
   let brackets = 0;
+  let directives = 0;
   let allMarkers = 0;
   let allBrackets = 0;
+  let allDirectives = 0;
   // Lines as micromark ends them: a lone CR is a line ending too, and split on LF alone a
   // whole document of CR lines was one line, past every limit here.
   for (const line of markdown.split(/\r\n?|\n/)) {
@@ -259,10 +269,14 @@ function tooCostly(markdown: string): string | undefined {
     }
     opened += containers.length - carried;
     if (opened > MAX_OPENED) return `it opens over ${MAX_OPENED} quotes or lists`;
-    // A `:::name` opens a directive container (Starlight's asides), a bare `:::` closes one.
-    if (/^\s*:{3,}\s*[\p{L}{[]/u.test(line)) asides += 1;
-    else if (/^\s*:{3,}\s*$/.test(line)) asides = Math.max(0, asides - 1);
-    if (asides > MAX_NESTED_ASIDES) return `it nests over ${MAX_NESTED_ASIDES} ::: blocks`;
+    // A `:::name` opens a directive container (Starlight's asides), and a bare `:::` at least as
+    // long closes the last one. Read past any quote or list markers: inside a quote, as every
+    // line of a gap note's question is, they nest just the same.
+    const content = line.slice(line.match(/^(?:[ \t]*(?:>|[*+-](?=[ \t]|$)|\d{1,9}[.)](?=[ \t]|$)))*/)?.[0].length ?? 0);
+    const aside = content.match(/^\s*(:{3,})\s*([\p{L}{[])?/u);
+    if (aside?.[2]) asides.push(aside[1]?.length ?? 3);
+    else if (aside && /^\s*:{3,}\s*$/.test(content) && (aside[1]?.length ?? 0) >= (asides.at(-1) ?? Number.POSITIVE_INFINITY)) asides.pop();
+    if (asides.length > MAX_NESTED_ASIDES) return `it nests over ${MAX_NESTED_ASIDES} ::: blocks`;
     // A blank line ends every quote; a list goes on past it.
     if (line.trim()) before = containers;
     else if (before.some((marker) => marker.endsWith(">"))) before = before.slice(0, before.findIndex((marker) => marker.endsWith(">")));
@@ -271,25 +285,28 @@ function tooCostly(markdown: string): string | undefined {
     if (fence) {
       if (run?.startsWith(fence.char) && run.length >= fence.length && !info.trim()) {
         fence = undefined;
-        markers = brackets = 0;
+        markers = brackets = directives = 0;
         continue;
       }
     } else if (run && !(run.startsWith("`") && info.includes("`"))) {
       fence = { char: run.charAt(0), length: run.length };
-      markers = brackets = 0;
+      markers = brackets = directives = 0;
       continue;
     } else if (!line.trim() || /^ {0,3}(?:[*+-]|1[.)])[ \t]+\S|^ {0,3}#{1,6}(?:[ \t]|$)/.test(line)) {
       // A new paragraph: after a blank line, or where an item or a heading interrupts one.
       // (Only a bullet or a `1.` can: a `2.` line inside a paragraph continues it.)
-      markers = brackets = 0;
+      markers = brackets = directives = 0;
     }
     // Emphasis and strikethrough. An `_` inside a word (snake_case) can't be emphasis, and costs nothing.
     const lineMarkers = line.match(/[*~]|(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])/gu)?.length ?? 0;
     const lineBrackets = line.match(/[[\]]/g)?.length ?? 0;
+    const lineDirectives = line.match(/:(?=\p{L})/gu)?.length ?? 0;
     markers += lineMarkers;
     brackets += lineBrackets;
+    directives += lineDirectives;
     allMarkers += lineMarkers;
     allBrackets += lineBrackets;
+    allDirectives += lineDirectives;
     // Counted in code too, against a higher limit: a line that opens a fence inside an HTML
     // block opens nothing, and what follows is parsed.
     const limit = fence ? MAX_MARKERS_IN_CODE : MAX_MARKERS;
@@ -297,6 +314,8 @@ function tooCostly(markdown: string): string | undefined {
     if (brackets > limit) return `a paragraph has over ${limit} brackets`;
     if (allMarkers > MAX_MARKERS_IN_ALL) return `it has over ${MAX_MARKERS_IN_ALL} *, _ and ~`;
     if (allBrackets > 2 * MAX_MARKERS_IN_ALL) return `it has over ${2 * MAX_MARKERS_IN_ALL} brackets`;
+    if (directives > (fence ? MAX_DIRECTIVES_IN_CODE : MAX_DIRECTIVES)) return `a paragraph has over ${fence ? MAX_DIRECTIVES_IN_CODE : MAX_DIRECTIVES} colons before a letter`;
+    if (allDirectives > MAX_DIRECTIVES_IN_ALL) return `it has over ${MAX_DIRECTIVES_IN_ALL} colons before a letter`;
   }
   return undefined;
 }

@@ -2363,8 +2363,36 @@ export const MUTANTS: Mutant[] = [
   {
     control: "`:::` containers nested deep are too costly to parse",
     file: "packages/core/src/inert.ts",
-    find: "    if (asides > MAX_NESTED_ASIDES) return",
+    find: "    if (asides.length > MAX_NESTED_ASIDES) return",
     replace: "    if (false) return",
+    evals: ["evals/inert.test.ts"],
+  },
+  {
+    control: "a paragraph with many colons before a letter is too costly to parse",
+    file: "packages/core/src/inert.ts",
+    find: "    if (directives > (fence ? MAX_DIRECTIVES_IN_CODE : MAX_DIRECTIVES)) return",
+    replace: "    if (false) return",
+    evals: ["evals/inert.test.ts"],
+  },
+  {
+    control: "many colons before a letter in all are too costly to parse",
+    file: "packages/core/src/inert.ts",
+    find: "    if (allDirectives > MAX_DIRECTIVES_IN_ALL) return",
+    replace: "    if (false) return",
+    evals: ["evals/inert.test.ts"],
+  },
+  {
+    control: "`:::` containers inside a quote are counted",
+    file: "packages/core/src/inert.ts",
+    find: "    const aside = content.match(",
+    replace: "    const aside = line.match(",
+    evals: ["evals/inert.test.ts"],
+  },
+  {
+    control: "a `:::` shorter than its opener closes nothing",
+    file: "packages/core/src/inert.ts",
+    find: " && (aside[1]?.length ?? 0) >= (asides.at(-1) ?? Number.POSITIVE_INFINITY)) asides.pop();",
+    replace: ") asides.pop();",
     evals: ["evals/inert.test.ts"],
   },
   {

@@ -179,6 +179,12 @@ describe("inert markdown", () => {
       "> a\r\r".repeat(3_001),
       // `:::` containers each inside the last (micromark's directive reading is quadratic in depth).
       ":::a\n".repeat(21),
+      // Nested inside a quote (every line of a gap note's question is), or closed by nothing shorter.
+      "> :::a\n".repeat(21),
+      "::::a\n\n:::\n\n".repeat(21),
+      // A text directive whose `{…}` never closes re-reads the rest of its paragraph, each time.
+      ":a{#".repeat(201),
+      Array.from({ length: 26 }, () => ":a{#".repeat(199)).join("\n\n"),
       // Code to a line counter, but a fence inside an HTML block opens nothing: still counted.
       "<div>\n```\n\n" + "*_".repeat(1_001),
     ]) {

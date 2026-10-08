@@ -11,7 +11,7 @@ import {
   say,
   type Ctx,
 } from "./context";
-import { repostDraft, runDraft, runRevise } from "./drafting";
+import { hashDraft, repostDraft, runDraft, runRevise } from "./drafting";
 import { runLessonDecision } from "./lessons";
 import { runPublish } from "./publishing";
 import { dueForRemoteLinkCheck, lastDraftAttachment, remoteLinkFingerprint, sourceFingerprint } from "./source";
@@ -83,7 +83,7 @@ async function runWake(ctx: Ctx, issue: JiraIssue): Promise<void> {
 }
 
 /** Rebuild what the ledger lost from the evidence that outlives it: the ticket itself and the vault. */
-async function recoverState(ctx: Ctx, issue: JiraIssue, settled: JiraComment[], otherAgents: string[]): Promise<IssueState> {
+async function recoverState(ctx: Ctx, issue: JiraIssue, settled: JiraComment[], otherAgents: string[], interrupted: boolean): Promise<IssueState> {
   const key = issue.key;
   const attached = lastDraftAttachment(issue, ctx.botAccountId);
   // Engaged only where a draft was asked for: the label, a draft of its own on the ticket,
@@ -98,10 +98,12 @@ async function recoverState(ctx: Ctx, issue: JiraIssue, settled: JiraComment[], 
   // same contract questions on a ticket it greeted but could not draft — a duplicate, not
   // a retry. A wake still answers (it forces the draft), and if the PRD actually changed
   // during the downtime the fingerprint differs and the retry happens by itself.
+  // Rebuilt only for a lost ledger. On an interrupted first sight the ledger still knows what
+  // was judged: rebuilt, a greeting whose response was lost stopped the draft for good.
   const patch: Partial<IssueState> = {
     adopting: undefined,
     engaged: Boolean(attached) || autoDrafts(ctx, issue) || asked,
-    sourceFingerprint: sourceFingerprint(issue, ctx.state.get(key)?.remoteLinkFingerprint),
+    ...(interrupted ? {} : { sourceFingerprint: sourceFingerprint(issue, ctx.state.get(key)?.remoteLinkFingerprint) }),
   };
 
   if (attached) {
@@ -115,12 +117,14 @@ async function recoverState(ctx: Ctx, issue: JiraIssue, settled: JiraComment[], 
       // can actually see, rather than quietly starting a different one.
       const bytes = await ctx.client.downloadAttachment(attached.attachment);
       await ctx.state.saveDraft(key, bytes.toString("utf8"));
+      // Shown already, by this very first sight before it failed: not posted again.
+      const shown = ctx.state.get(key)?.postedDraftHash === hashDraft(bytes.toString("utf8"));
       // Not approvable as it stands: an attachment can exist without the comment that showed
       // it (its post failed), and nothing here proves which draft a reviewer read. It is
       // posted again, and an approval must come after that. Not on a ticket it already
       // published, where "nothing was published" would be false; an approval there is
       // still held and the draft shown first, by the publish step's own check.
-      if (!patch.publishedPath) patch.draftUnposted = true;
+      if (!patch.publishedPath && !shown) patch.draftUnposted = true;
     } catch {
       // The attachment is still proof that a draft exists; runRevise force-drafts when the
       // local copy is missing, so a failed download degrades to a redraft, not to silence.
@@ -139,6 +143,8 @@ async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{
   const key = issue.key;
   const history = await ctx.client.listComments(key);
   const otherAgents = await ctx.otherAgentIds();
+  // A first sight that began and failed, rather than a ledger that was lost.
+  const interrupted = ctx.state.get(key)?.adopting === true;
   // Until it finishes, the next tick starts first sight again (`adopting`).
   await ctx.state.seed(key, status);
 
@@ -155,7 +161,7 @@ async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{
   // still needs answering.
   if (settled.length) {
     await ctx.state.markProcessed(key, settled.map((comment) => comment.id));
-    const known = await recoverState(ctx, issue, settled, otherAgents);
+    const known = await recoverState(ctx, issue, settled, otherAgents, interrupted);
     console.log(`[scribe] ${key}: adopted after a restart, ${unprocessed.length} comment(s) to catch up on`);
     return { known, handled: false };
   }

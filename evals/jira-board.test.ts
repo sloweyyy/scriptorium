@@ -812,6 +812,34 @@ describe("board transitions", () => {
     expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
   });
 
+  it("a first sight that failed after showing its draft doesn't repost it as never having landed", async () => {
+    // The draft is posted and recorded; the write that closes first sight fails.
+    const original = JiraState.prototype.patch;
+    let failed = false;
+    const patch = vi.spyOn(JiraState.prototype, "patch").mockImplementation(async function (this: never, key: string, values: object) {
+      if (!failed && "adopting" in values && "lastUpdated" in values) {
+        failed = true;
+        throw new Error("disk full");
+      }
+      return original.call(this, key, values as never);
+    });
+    try {
+      (await startScribeJira(config(), vault)).stop();
+    } finally {
+      patch.mockRestore();
+    }
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.filter((comment) => comment.body.includes("posted again"))).toHaveLength(0);
+  });
+
+  it("a greeting whose response was lost is followed by the draft, on the next tick", async () => {
+    loseNextCommentResponse = true;
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.some((comment) => comment.body.includes("Draft ready"))).toBe(false);
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.some((comment) => comment.body.includes("Draft ready"))).toBe(true);
+  });
+
   it("hands a ticket back when the holder can't be read, and keeps who to give it to when the assign fails", async () => {
     const { handBack } = await import("@scriptorium/agents");
     const assigned: Array<string | null> = [];
@@ -823,10 +851,19 @@ describe("board transitions", () => {
         getIssue: async () => { throw new Error("jira 503"); },
         assign: async (_key: string, accountId: string | null) => { if (failAssign) throw new Error("jira 503"); assigned.push(accountId); },
       },
-      state: { get: () => ({ handBackTo: "writer-1" }), patch: async (_key: string, values: object) => patches.push(values) },
+      state: { get: () => known, patch: async (_key: string, values: object) => patches.push(values) },
     };
+    let known: object = {};
     const issue = { key: "DOC-9", fields: { assignee: { accountId: "writer-1" }, reporter: { accountId: "pm-1" } } };
-    // The snapshot predates the take: it shows the writer, while the agent holds it.
+    // Never taken (a "no PRD" reply on a writer's ticket): it stays with the writer.
+    await handBack(ctx as never, "DOC-9", issue as never);
+    expect(assigned).toEqual([]);
+    // Taken: recorded as held by the take itself.
+    const { takeTicket } = await import("@scriptorium/agents");
+    await takeTicket({ ...ctx, client: { ...ctx.client, assign: async () => undefined } } as never, "DOC-9", issue as never);
+    expect(patches).toContainEqual({ held: true });
+    // And then the snapshot predates the take and shows the writer, while the agent holds it.
+    known = { handBackTo: "writer-1", held: true };
     await handBack(ctx as never, "DOC-9", issue as never);
     expect(assigned).toEqual(["writer-1"]);
     failAssign = true;

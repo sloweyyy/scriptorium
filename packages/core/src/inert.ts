@@ -1,5 +1,6 @@
 import { parse, postprocess, preprocess } from "micromark";
 import { gfm } from "micromark-extension-gfm";
+import { math } from "micromark-extension-math";
 import { decodeString } from "micromark-util-decode-string";
 
 /**
@@ -97,7 +98,13 @@ const QUARTZ_TABLE_WIKILINK = /(!?\[\[[^\]]*?\]\]|\[\^[^\]]*?\])/g;
 /** Mermaid that can act on a click: Quartz runs it with `securityLevel: "loose"`. */
 const MERMAID_ACTIONS = /\b(?:click|call|href|links?)\b|javascript\s*:/i;
 /** Tokens whose text Quartz doesn't read as a note's text: a URL, code, raw HTML. */
-const NOT_TEXT = new Set(["resource", "definition", "codeText", "codeFenced", "codeIndented", "htmlFlow", "htmlText", "autolink", "literalAutolink", "literalAutolinkEmail", "literalAutolinkHttp", "literalAutolinkWww"]);
+const NOT_TEXT = new Set(["resource", "definition", "codeText", "codeFenced", "codeIndented", "htmlFlow", "htmlText", "autolink", "literalAutolink", "literalAutolinkEmail", "literalAutolinkHttp", "literalAutolinkWww", "mathText", "mathFlow"]);
+/**
+ * The two ways the sites parse: Starlight reads GFM; Quartz reads GFM and `$…$` math too,
+ * which pairs backticks differently (`` $`$ <img …> ` `` is a code span to one, math and a
+ * live tag to the other). Unsafe in either reading is unsafe.
+ */
+const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm()], [gfm(), math()]];
 /** Where one text node ends and the next begins, give or take: a block, a table cell. */
 const TEXT_ENDS = new Set(["paragraph", "atxHeading", "setextHeading", "tableData", "tableHeader", "tableRow"]);
 
@@ -107,7 +114,13 @@ const TEXT_ENDS = new Set(["paragraph", "atxHeading", "setextHeading", "tableDat
  */
 function scan(markdown: string): Found {
   const found: Found = { lessThan: new Set(), targets: [], breaks: new Set(), html: new Set(), links: new Set() };
-  const events = postprocess(parse({ extensions: [gfm()] }).document().write(preprocess()(markdown, undefined, true)));
+  for (const extensions of READINGS) read(markdown, extensions, found);
+  quartzSource(markdown, found);
+  return found;
+}
+
+function read(markdown: string, extensions: Array<ReturnType<typeof gfm>>, found: Found): void {
+  const events = postprocess(parse({ extensions }).document().write(preprocess()(markdown, undefined, true)));
   // micromark skips a leading byte-order mark and counts from after it: every offset was one
   // short, and `[x](javascript:…)` was read from its `(`, which has no scheme.
   const shift = markdown.charCodeAt(0) === 0xfeff ? 1 : 0;
@@ -171,8 +184,6 @@ function scan(markdown: string): Found {
     }
   }
   endRun();
-  quartzSource(markdown, found);
-  return found;
 }
 
 /** What Quartz finds in one text node's decoded text, and would write out as HTML. */
@@ -226,7 +237,9 @@ function tooCostly(markdown: string): string | undefined {
   let brackets = 0;
   let allMarkers = 0;
   let allBrackets = 0;
-  for (const line of markdown.split("\n")) {
+  // Lines as micromark ends them: a lone CR is a line ending too, and split on LF alone a
+  // whole document of CR lines was one line, past every limit here.
+  for (const line of markdown.split(/\r\n?|\n/)) {
     const containers = containerMarkers(line);
     if (containers.length > MAX_DEPTH) return `a line opens over ${MAX_DEPTH} quotes or lists`;
     if (Number.parseInt(containers.at(-1) ?? "0", 10) > MAX_COLUMN) return `a quote or list is indented over ${MAX_COLUMN} columns`;
@@ -288,6 +301,8 @@ function rewrite(markdown: string, { lessThan, targets, breaks }: Found): string
   let out = "";
   let at = 0;
   for (let index = 0; index < markdown.length; ) {
+    // The same target, found by both readings, is replaced once.
+    while (ordered[at] && (ordered[at]?.start ?? 0) < index) at += 1;
     const target = ordered[at];
     if (target && target.start === index) {
       out += target.text;
@@ -313,13 +328,28 @@ function unsafeScheme(url: string): string | undefined {
 /** Text that is already one code block, as `asCode` writes it: nothing inside can close it. */
 function isCode(markdown: string): boolean {
   const fence = markdown.match(/^(`{3,})\n/)?.[1];
-  return fence !== undefined && markdown.endsWith(`\n${fence}\n`) && !markdown.slice(fence.length + 1, -(fence.length + 2)).includes(fence);
+  if (fence === undefined || !markdown.endsWith(`\n${fence}\n`)) return false;
+  const inside = markdown.slice(fence.length + 1, -(fence.length + 2));
+  return !inside.includes(fence) && quartzSafe(inside) === inside;
 }
 
-/** The whole text as one fenced code block, the fence longer than any backtick run in it. */
+/**
+ * The whole text as one fenced code block, the fence longer than any backtick run in it.
+ * First what Quartz rewrites in the raw text, code included, before parsing: cutting a
+ * `%%…%%` from "```%%x%%```" made a run of six that closed a fence of four, and what
+ * followed rendered.
+ */
 function asCode(markdown: string): string {
+  const inside = quartzSafe(markdown);
   let longest = 2;
-  for (const run of markdown.matchAll(/`+/g)) longest = Math.max(longest, run[0].length);
+  for (const run of inside.matchAll(/`+/g)) longest = Math.max(longest, run[0].length);
   const fence = "`".repeat(longest + 1);
-  return `${fence}\n${markdown}\n${fence}\n`;
+  return `${fence}\n${inside}\n${fence}\n`;
+}
+
+/** The raw text with nothing left for Quartz to rewrite before it parses: no `%%` pair, no external wikilink, table pipes escaped. */
+function quartzSafe(markdown: string): string {
+  const found: Found = { lessThan: new Set(), targets: [], breaks: new Set(), html: new Set(), links: new Set() };
+  quartzSource(markdown, found);
+  return escapeTablePipes(found.breaks.size ? rewrite(markdown, found) : markdown);
 }

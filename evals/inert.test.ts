@@ -64,6 +64,9 @@ describe("inert markdown", () => {
       expect(unsafeMarkup(out), hostile).toEqual({ html: [], links: [] });
     }
     expect(inertMarkdown('[x](javascript:alert(1) "javascript:")')).toBe('[x](#unsafe-link-removed "javascript:")');
+    // Many at once, each found by both readings: all removed in one pass, not kept as code.
+    const many = Array.from({ length: 6 }, (_, n) => `[l${n}](javascript:alert(${n}))`).join(" ");
+    expect(inertMarkdown(many)).toBe(Array.from({ length: 6 }, (_, n) => `[l${n}](#unsafe-link-removed)`).join(" "));
   });
 
   it("a leading byte-order mark doesn't shift where a link target is read from", () => {
@@ -102,6 +105,29 @@ describe("inert markdown", () => {
     }
   });
 
+  it("reads as Quartz reads it with math, too: unsafe in either reading is unsafe", () => {
+    // To GFM a code span hides the tag; Quartz's `$…$` math takes the first backtick, and the tag is live.
+    expect(inertMarkdown("$`$ <img src=x onerror=alert(1)> `")).toBe("$`$ &lt;img src=x onerror=alert(1)> `");
+    const prose = "Price is $5 and `code <b>` and $x^2$";
+    expect(inertMarkdown(prose)).toBe(prose);
+  });
+
+  it("a code block kept whole stays whole after Quartz cuts its comments", () => {
+    // Too costly to parse, so kept as code; Quartz then cut "%%x%%" from the raw text, which
+    // joined two runs of three into a fence of six that closed a fence of four.
+    const hostile = `${"[a]".repeat(501)}\n\`\`\`%%x%%\`\`\`\n<img src=x onerror=alert(1)>`;
+    const kept = inertMarkdown(hostile);
+    const asQuartzReadsIt = kept.replace(/%%[\s\S]*?%%/g, "");
+    expect(asQuartzReadsIt).toBe(kept);
+    expect(/^(`{3,})\n[\s\S]*\n\1\n$/.test(kept)).toBe(true);
+    expect(inertMarkdown(kept)).toBe(kept);
+    // Text that arrives looking like one kept block is taken as one only if Quartz can't cut it open.
+    // (Over the limit for code too: 2,002 brackets.)
+    const looksKept = `\`\`\`\`\n${"[a]".repeat(1001)}\n\`\`\`%%x%%\`\`\`\n<img src=x onerror=alert(1)>\n\`\`\`\`\n`;
+    const rekept = inertMarkdown(looksKept);
+    expect(rekept.replace(/%%[\s\S]*?%%/g, "")).toBe(rekept);
+  });
+
   it("runs again until nothing is left, and a second run changes nothing", () => {
     // Escaped, an HTML block is a paragraph, and its link is live. A backtick inside an
     // escaped tag pairs with the one that kept a tag inside code.
@@ -136,6 +162,9 @@ describe("inert markdown", () => {
       "[a](".repeat(501),
       paragraphWithSteps, // a `2.` line continues a paragraph, so its count does too
       "````\n" + "- ".repeat(30),
+      // Lines ended by a lone CR, as micromark ends them too.
+      `x\r${"- ".repeat(25_000)}`,
+      "> a\r\r".repeat(3_001),
       // Code to a line counter, but a fence inside an HTML block opens nothing: still counted.
       "<div>\n```\n\n" + "*_".repeat(1_001),
     ]) {

@@ -204,6 +204,7 @@ function stubJira(): void {
     // A real PNG signature, then filler; "fake-png" serves a PDF under an image's name.
     const stored = uploaded.get(url.split("/attachment/content/")[1] ?? "");
     if (stored) return new Response(stored, { status: 200 });
+    if (url.includes("/attachment/content/missing-")) return new Response("gone", { status: 404 });
     if (url.includes("/attachment/content/fake-png")) fetched.push(url);
     if (url.includes("/attachment/content/fake-png")) return new Response("%PDF-1.7 not an image", { status: 200 });
     // Two versions of one design: the bytes say which is which.
@@ -1282,6 +1283,37 @@ describe("designs that fit one request", () => {
     const draftCall = vi.mocked(generateText).mock.calls[0]?.[0] as GenerateOptions;
     const sent = (draftCall.images ?? []).reduce((sum, image) => sum + Buffer.from(image.base64, "base64").length, 0);
     expect(sent).toBeLessThanOrEqual(18_000_000);
+  });
+
+  it("a design that can't be downloaded is left out and named, and the draft goes ahead", async () => {
+    const gone = { id: "missing-1", filename: "deleted.png", mimeType: "image/png", size: 30, created: "2026-08-20T09:00:00.000+0000", content: "https://example.atlassian.net/rest/api/2/attachment/content/missing-1" };
+    issue = { ...issue, fields: { ...(issue.fields as object), attachment: [gone] } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.some((comment) => comment.body.includes("Draft ready"))).toBe(true);
+    expect(comments.some((comment) => comment.body.includes("deleted.png") && comment.body.includes("couldn't be downloaded"))).toBe(true);
+  });
+
+  it("an empty newest PRD is refused, not passed over for the version it replaced", async () => {
+    const prd = (id: string, created: string) => ({ id, filename: `${id}.md`, mimeType: "text/markdown", created, content: `https://example.atlassian.net/rest/api/2/attachment/content/${id}` });
+    uploaded.set("prd-v1", Buffer.from(COMPLETE_PRD));
+    uploaded.set("prd-v2", Buffer.alloc(0));
+    issue = { ...issue, fields: { ...(issue.fields as object), description: "", attachment: [prd("prd-v1", "2026-08-20T08:00:00.000+0000"), prd("prd-v2", "2026-08-20T09:00:00.000+0000")] } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.some((comment) => comment.body.includes("Draft ready"))).toBe(false);
+    expect(comments.some((comment) => comment.body.includes("prd-v2.md (empty)"))).toBe(true);
+  });
+
+  it("follows a redirect to a relative location, from where it was asked for", async () => {
+    const { JiraClient } = await import("@scriptorium/jira");
+    const client = new JiraClient({ baseUrl: "https://example.atlassian.net", email: "a@b.example", apiToken: "t" } as never);
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", async (url: string | URL) => {
+      asked.push(String(url));
+      return asked.length === 1 ? new Response(null, { status: 302, headers: { location: "/file/abc" } }) : new Response("ok", { status: 200 });
+    });
+    const bytes = await client.downloadAttachment({ id: "x", filename: "x.md", mimeType: "text/markdown", content: "https://example.atlassian.net/rest/api/2/attachment/content/x" } as never);
+    expect(bytes.toString()).toBe("ok");
+    expect(asked[1]).toBe("https://example.atlassian.net/file/abc");
   });
 
   it("downloads stop at the design limit even when none of them turn out to be designs", async () => {

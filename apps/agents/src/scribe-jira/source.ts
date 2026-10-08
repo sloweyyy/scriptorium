@@ -194,22 +194,27 @@ export async function loadDesignImages(ctx: Ctx, issue: JiraIssue): Promise<{ im
       continue;
     }
     downloads += 1;
-    const bytes = await ctx.client.downloadAttachment(attachment, MAX_DESIGN_BYTES).catch((error: unknown) => {
-      if (error instanceof AttachmentTooLargeError) return undefined;
-      throw error;
-    });
-    if (!bytes) {
-      skipped.push(tooBig(attachment));
+    // Capped at what's left of the budget, so a design with no size given isn't fetched whole to be dropped.
+    const cap = Math.min(MAX_DESIGN_BYTES, MAX_DESIGN_TOTAL_BYTES - total);
+    // A design that can't be had (deleted since, a 5xx, a timeout) is left out and named, and
+    // the draft goes ahead: one bad image failed every draft and revision on the ticket.
+    const fetched = await ctx.client.downloadAttachment(attachment, cap).then(
+      (bytes) => ({ bytes }),
+      (error: unknown) => ({ error }),
+    );
+    if ("error" in fetched) {
+      skipped.push(
+        fetched.error instanceof AttachmentTooLargeError
+          ? cap < MAX_DESIGN_BYTES ? full(attachment) : tooBig(attachment)
+          : `${attachment.filename} (couldn't be downloaded: ${errorMessage(fetched.error)})`,
+      );
       continue;
     }
+    const bytes = fetched.bytes;
     // Sent as what it IS, never as what its name claims; not an image at all is left out, named.
     const actual = sniffImage(bytes);
     if (!actual) {
       skipped.push(`${attachment.filename} (named as an image, but it isn't one)`);
-      continue;
-    }
-    if (total + bytes.length > MAX_DESIGN_TOTAL_BYTES) {
-      skipped.push(full(attachment));
       continue;
     }
     total += bytes.length;
@@ -254,6 +259,12 @@ export async function loadSource(ctx: Ctx, issue: JiraIssue): Promise<PrdSource>
       });
       if (!bytes) {
         source.skipped.push(tooBig);
+        newestRefused = attachment.filename;
+        continue;
+      }
+      // An empty newest file is refused too: falling through, the older version it replaced was read.
+      if (!bytes.toString("utf8").trim()) {
+        source.skipped.push(`${attachment.filename} (empty)`);
         newestRefused = attachment.filename;
         continue;
       }

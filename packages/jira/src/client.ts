@@ -375,11 +375,14 @@ export class JiraClient {
     let response = first;
     if (first.status >= 300 && first.status < 400) {
       const location = first.headers.get("location");
+      await first.body?.cancel().catch(() => undefined);
       if (!location) throw new JiraError(first.status, attachment.content, "redirect without a location header");
-      response = await fetch(location, { redirect: "follow", signal });
+      // Relative to where it was asked for: a bare "/file/abc" isn't a URL fetch can follow.
+      response = await fetch(new URL(location, attachment.content), { redirect: "follow", signal });
     }
 
     if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
       throw new JiraError(response.status, attachment.content, response.statusText);
     }
     if (Number(response.headers.get("content-length") ?? 0) > maxBytes) {

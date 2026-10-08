@@ -101,7 +101,8 @@ The model is untrusted too. It proposes; the platform decides what runs.
   the raw text, external wikilinks, table pipes, and an interactive mermaid diagram. Text is
   made inert when it is written and again as it leaves for a site, after its links are
   transformed. Text too costly to parse safely is published as one code block.
-  (`evals/inert.test.ts`, `evals/publish.test.ts`)
+  (`evals/inert.test.ts`, `evals/publish.test.ts`; `evals/site-render.test.ts` renders inert
+  pages with satteri, the parser Astro 7 gives the public site, and finds nothing live)
 
 ### 7. Learning: nothing is learned without a human
 - Scribe's house rules and the Teammate's memories are both proposals until a listed human
@@ -171,7 +172,7 @@ The model is untrusted too. It proposes; the platform decides what runs.
   - Scribe's own replies on its doc tickets don't yet copy a comment's restriction (the
     Teammate's do). Keep Scribe's project out of Jira Service Management.
   - The inert pass models the sites as configured by default (Quartz v4's
-    Obsidian-flavoured markdown and math, Starlight's GFM). Their configs live in the docs
+    Obsidian-flavoured markdown and math, Starlight's GFM, rendered by satteri on Astro 7). Their configs live in the docs
     and vault repos. A plugin added there that turns text into HTML needs the same
     treatment here. Turning off Quartz's `highlight` and `comments` removes two of these
     rewrites at the source.

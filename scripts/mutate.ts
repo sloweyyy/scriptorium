@@ -2242,6 +2242,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-e2e.test.ts"],
   },
   {
+    control: "the public site's parser renders no tag from an inert page",
+    file: "packages/core/src/inert.ts",
+    find: "      for (let index = start; index < end; index += 1) if (markdown[index] === \"<\") found.lessThan.add(index);\n",
+    replace: "",
+    evals: ["evals/site-render.test.ts"],
+  },
+  {
+    control: "the public site's parser renders no script link from an inert page",
+    file: "packages/core/src/inert.ts",
+    find: "        found.targets.push({ start, end, text: REMOVED });\n",
+    replace: "",
+    evals: ["evals/site-render.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

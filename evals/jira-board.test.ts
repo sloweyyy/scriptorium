@@ -864,8 +864,11 @@ describe("board transitions", () => {
     expect(patches).toContainEqual({ held: true });
     // And then the snapshot predates the take and shows the writer, while the agent holds it.
     known = { handBackTo: "writer-1", held: true };
+    patches.length = 0;
     await handBack(ctx as never, "DOC-9", issue as never);
     expect(assigned).toEqual(["writer-1"]);
+    // Given back, the claim is spent: a later failed read must not give it to the writer again.
+    expect(patches).toEqual([{ handBackTo: undefined, held: undefined }]);
     failAssign = true;
     patches.length = 0;
     await handBack(ctx as never, "DOC-9", issue as never);
@@ -876,6 +879,50 @@ describe("board transitions", () => {
     patches.length = 0;
     await handBack(lead as never, "DOC-9", issue as never);
     expect(patches).toEqual([{ held: undefined, handBackTo: undefined }]);
+  });
+
+  it("a draft reposted after its comment failed goes to review and back to its owner", async () => {
+    failNextPostContaining = "Draft ready";
+    (await startScribeJira(config(), vault)).stop();
+    expect(assignments.at(-1)).toBe("bot-1");
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.some((comment) => comment.body.includes("posted again"))).toBe(true);
+    expect(status()).toBe("In Review");
+    expect(assignments.at(-1)).toBe("human-1");
+  });
+
+  it("after a lost ledger, a ticket still assigned to the agent is held, and handed back once its draft is shown", async () => {
+    failNextPostContaining = "Draft ready";
+    (await startScribeJira(config(), vault)).stop();
+    expect(assignments.at(-1)).toBe("bot-1");
+    issue = { ...issue, fields: { ...(issue.fields as object), attachment: ((issue.fields as { attachment?: object[] }).attachment ?? []).map((attachment) => ({ ...attachment, created: "2026-08-20T09:00:00.000+0000" })) } };
+    await fs.rm(path.join(tmpRoot, "state"), { recursive: true, force: true });
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.some((comment) => comment.body.includes("posted again"))).toBe(true);
+    expect(assignments.at(-1)).toBe("human-1");
+  });
+
+  it("a ticket someone unassigned while the agent held it stays unassigned", async () => {
+    const { handBack } = await import("@scriptorium/agents");
+    const assigned: Array<string | null> = [];
+    const patches: object[] = [];
+    const ctx = {
+      botAccountId: "bot-1",
+      client: { getIssue: async () => ({ fields: { assignee: null } }), assign: async (_key: string, accountId: string | null) => { assigned.push(accountId); } },
+      state: { get: () => ({ handBackTo: "writer-1", held: true }), patch: async (_key: string, values: object) => patches.push(values) },
+    };
+    await handBack(ctx as never, "DOC-9", { key: "DOC-9", fields: { reporter: { accountId: "pm-1" } } } as never);
+    expect(assigned).toEqual([]);
+    expect(patches).toEqual([{ held: undefined, handBackTo: undefined }]);
+  });
+
+  it("a greeting whose response was lost is followed by the draft even when Jira's clock is behind", async () => {
+    // Jira dated the greeting earlier than this host's clock dated the ledger entry.
+    loseNextCommentResponse = true;
+    afterPost = { text: "Reading this ticket now", run: () => { const greeting = comments.at(-1); if (greeting) greeting.created = "2020-01-01T00:00:00.000Z"; } };
+    (await startScribeJira(config(), vault)).stop();
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.some((comment) => comment.body.includes("Draft ready"))).toBe(true);
   });
 
   it("a ticket the agent took and then couldn't draft is given back, not left on the agent", async () => {

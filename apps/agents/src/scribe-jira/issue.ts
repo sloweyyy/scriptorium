@@ -107,6 +107,8 @@ async function recoverState(ctx: Ctx, issue: JiraIssue, settled: JiraComment[], 
     ...(interrupted ? {} : { sourceFingerprint: sourceFingerprint(issue, ctx.state.get(key)?.remoteLinkFingerprint) }),
   };
 
+  // Still assigned to the agent: it holds the ticket, and gives it back when nothing is left to do.
+  if (issue.fields.assignee?.accountId === ctx.botAccountId) patch.held = true;
   if (attached) {
     patch.hasDraft = true;
     patch.docSlug = attached.slug;
@@ -145,14 +147,13 @@ async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{
   const history = await ctx.client.listComments(key);
   const otherAgents = await ctx.otherAgentIds();
   // A first sight that began and failed, rather than a ledger that was lost: begun (the
-  // entry says so), and nothing the agent said here is older than the entry. A recovery from a
-  // lost ledger that failed partway is still one: its replies predate the entry.
+  // entry says so) on a ticket where the agent had said nothing yet. The count is kept from
+  // the first try: a reply posted since (the note of the failure) doesn't make it a recovery.
   const entry = ctx.state.get(key);
-  const interrupted =
-    entry?.adopting === true &&
-    !history.some((comment) => comment.author?.accountId === ctx.botAccountId && Date.parse(comment.created) < Date.parse(entry.firstSeen));
-  // Until it finishes, the next tick starts first sight again (`adopting`).
-  await ctx.state.seed(key, status);
+  const spoken = history.filter((comment) => comment.author?.accountId === ctx.botAccountId).length;
+  const spokenBefore = entry?.adopting === true ? (entry.spokenBefore ?? spoken) : spoken;
+  const interrupted = entry?.adopting === true && spokenBefore === 0;
+  await ctx.state.seed(key, status, spokenBefore);
 
   // The baseline, recorded once per ticket: without it, a ticket created WITH a linked
   // page would look like a ticket that just gained one on the very next tick, and get a
@@ -414,7 +415,12 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
   const saved = ctx.state.get(key);
   if (wanted && saved?.hasDraft && saved.draftUnposted) {
     const draft = await ctx.state.readDraft(key);
-    if (draft) await repostDraft(ctx, key, draft);
+    if (draft) {
+      await repostDraft(ctx, key, draft);
+      // Shown now: the next move is a reviewer's, as after any draft.
+      await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
+      if (ctx.state.get(key)?.held) await handBack(ctx, key, issue);
+    }
   }
 
   const approvedStatus = ctx.config.jira.approvedStatus.toLowerCase();

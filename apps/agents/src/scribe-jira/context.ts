@@ -202,21 +202,20 @@ function reporterId(issue: JiraIssue): string | undefined {
  * correctly as "unassigned, free for someone to pick up".
  */
 export async function handBack(ctx: Ctx, key: string, issue: JiraIssue): Promise<void> {
-  // A person who holds it now keeps it: a writer on a ticket the agent never took (it only
-  // replied "no PRD"), or someone who took it while the agent worked. Read live: the
-  // tick's snapshot is a model call old.
-  // Unread (the fetch failed), it is handed back only if the agent took it: the snapshot
-  // shows whoever had it before the take, and believing that left it with the agent; but a
-  // "no PRD" reply on a writer's ticket never took it, and moved it off them.
-  const holder = await ctx.client.getIssue(key).then(
-    (fresh) => fresh.fields.assignee?.accountId,
-    () => (ctx.state.get(key)?.held ? undefined : null),
+  // Read live: the tick's snapshot is a model call old. Unread (the fetch failed), it is
+  // handed back only if the agent took it: the snapshot shows whoever had it before the take,
+  // and believing that left it with the agent; but a "no PRD" reply on a writer's ticket never
+  // took it, and moved it off them.
+  const known = ctx.state.get(key);
+  const read = await ctx.client.getIssue(key).then(
+    (fresh) => ({ holder: fresh.fields.assignee?.accountId }),
+    () => undefined,
   );
-  if (holder === null) return;
-  if (holder && holder !== ctx.botAccountId) {
-    // A person holds it now: the agent's claim on it is over, and so is whom to give it to.
-    // Kept, a later failed read handed the ticket back to whoever had it before.
-    const known = ctx.state.get(key);
+  if (!read && !known?.held) return;
+  // A person holds it now, or cleared it while the agent held it: theirs, and the agent's
+  // claim on it is over (kept, a later failed read handed it back to whoever had it before).
+  // Unassigned and never taken, it goes on to whoever owes the next step.
+  if (read && read.holder !== ctx.botAccountId && (read.holder || known?.held)) {
     if (known?.held || known?.handBackTo) await ctx.state.patch(key, { held: undefined, handBackTo: undefined });
     return;
   }

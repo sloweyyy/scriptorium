@@ -93,6 +93,12 @@ export interface IssueState {
   /** The agent took the ticket (assigned itself) and hasn't handed it back. */
   held?: boolean;
   /**
+   * How many comments the agent had made on the ticket when first sight began. None: a first
+   * sight on a new ticket, which keeps its own record when begun again. Some: a recovery from
+   * a lost ledger. Counted, not timed: Jira's clock and this one differ.
+   */
+  spokenBefore?: number;
+  /**
    * Follow-ups a publish still owes: the Slack announcement and the lesson proposal. Set
    * when the publish lands, each cleared once done, so a failure between them (the
    * "Published" comment, say) is finished by the retry instead of skipped as "already done".
@@ -215,8 +221,8 @@ export class JiraState {
    * would look like a fresh approval and publish itself.
    */
   /** Begin first sight: a ticket's status, kept if it has one, and `adopting` until it is done. */
-  async seed(key: string, status: string): Promise<IssueState> {
-    return this.patch(key, { lastStatus: this.data.issues[key]?.lastStatus ?? status, adopting: true });
+  async seed(key: string, status: string, spokenBefore?: number): Promise<IssueState> {
+    return this.patch(key, { lastStatus: this.data.issues[key]?.lastStatus ?? status, adopting: true, ...(spokenBefore === undefined ? {} : { spokenBefore }) });
   }
 
   /**

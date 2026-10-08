@@ -1964,8 +1964,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a person who holds the ticket keeps it",
     file: "apps/agents/src/scribe-jira/context.ts",
-    find: "  if (holder === null || (holder && holder !== ctx.botAccountId)) return;\n",
-    replace: "",
+    find: "  if (holder && holder !== ctx.botAccountId) {",
+    replace: "  if (false) {",
     evals: ["evals/jira-board.test.ts"],
   },
   {
@@ -2275,6 +2275,27 @@ export const MUTANTS: Mutant[] = [
     find: "parts.slice(0, count).join(\" \"), names.author, names.bot)",
     replace: "parts.slice(0, count).join(\" \"), names.author)",
     evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "a ticket someone else holds drops the agent's claim on it",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "    if (known?.held || known?.handBackTo) await ctx.state.patch(key, { held: undefined, handBackTo: undefined });\n",
+    replace: "",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a recovery whose replies predate the ledger is a recovery, not a first sight begun again",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "    !history.some((comment) => comment.author?.accountId === ctx.botAccountId && Date.parse(comment.created) < Date.parse(entry.firstSeen));",
+    replace: "    true;",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a ticket the agent holds with nothing to do is given back",
+    file: "apps/agents/src/scribe-jira/drafting.ts",
+    find: "    if (known?.held) await handBack(ctx, key, issue);\n",
+    replace: "",
+    evals: ["evals/jira-board.test.ts"],
   },
   {
     control: "a delegation ends by itself",

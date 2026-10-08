@@ -183,6 +183,9 @@ export async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: bo
     // Recorded in the old form (the description's length): now in this one, so the next
     // same-length edit ("TBD" answered in place) is seen.
     if (known?.sourceFingerprint !== fingerprint) await ctx.state.patch(key, { sourceFingerprint: fingerprint });
+    // Nothing to do, yet the agent still holds the ticket (a draft that failed after it took
+    // it): given back, not left In Progress on the agent until someone comments `draft`.
+    if (known?.held) await handBack(ctx, key, issue);
     return;
   }
 

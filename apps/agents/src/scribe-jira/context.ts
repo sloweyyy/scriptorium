@@ -4,6 +4,7 @@ import type { AppConfig, Vault } from "@scriptorium/core";
 import {
   issueStatus,
   markdownToJira,
+  type CommentRestriction,
   type IssueState,
   type JiraClient,
   type JiraComment,
@@ -249,10 +250,10 @@ export async function takeTicket(ctx: Ctx, key: string, issue: JiraIssue): Promi
  * op-keyed effect — (issue, triggering comment, nth reply) — so a retry after a crash finds
  * the reply it already posted instead of posting it again.
  */
-export async function say(ctx: Ctx, key: string, markdown: string): Promise<JiraComment> {
+export async function say(ctx: Ctx, key: string, markdown: string, restriction?: CommentRestriction): Promise<JiraComment> {
   const trigger = ctx.triggers.get(key);
   if (!trigger) {
-    const comment = await ctx.client.addComment(key, markdownToJira(markdown));
+    const comment = await ctx.client.addComment(key, markdownToJira(markdown), { restriction });
     await ctx.state.markProcessed(key, [comment.id]);
     return comment;
   }
@@ -263,7 +264,7 @@ export async function say(ctx: Ctx, key: string, markdown: string): Promise<Jira
     ctx.effects,
     op,
     async () => {
-      const posted = await ctx.client.addComment(key, markdownToJira(markdown), { op });
+      const posted = await ctx.client.addComment(key, markdownToJira(markdown), { op, restriction });
       return { id: posted.id, created: posted.created };
     },
     { probe: async () => {

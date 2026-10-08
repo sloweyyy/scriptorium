@@ -46,6 +46,8 @@ interface StubComment {
   id: string;
   body: string;
   created: string;
+  visibility?: { type: string; value?: string };
+  jsdPublic?: boolean;
   author: { accountId: string; displayName: string };
   properties?: unknown;
 }
@@ -150,7 +152,7 @@ function stubJira(): void {
     if (url.includes("/comment") && method === "GET") return json({ comments });
     if (url.includes("/comment") && method === "POST") {
       if (failCommentPostIn > 0 && --failCommentPostIn === 0) throw new TypeError("fetch failed: connect ECONNRESET");
-      const body = JSON.parse(String(init?.body ?? "{}")) as { body: string; properties?: unknown };
+      const body = JSON.parse(String(init?.body ?? "{}")) as { body: string; properties?: unknown; visibility?: StubComment["visibility"] };
       // Jira's own limit: a longer comment is refused, every time.
       if (body.body.length > 32_767) return new Response(JSON.stringify({ errors: { comment: "too long" } }), { status: 400 });
       if (failNextPostContaining && body.body.includes(failNextPostContaining)) {
@@ -164,6 +166,7 @@ function stubJira(): void {
         created: new Date().toISOString(),
         author: { accountId: "bot-1", displayName: "Scribe" },
         ...(body.properties ? { properties: body.properties } : {}),
+        ...(body.visibility ? { visibility: body.visibility } : {}),
       };
       comments.push(posted);
       if (afterPost && body.body.includes(afterPost.text)) {
@@ -749,6 +752,49 @@ describe("board transitions", () => {
     expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
     expect(moves.slice(movesBefore)).toEqual([]);
     expect(assignments).toEqual([]);
+  });
+
+  it("a command in a restricted comment is answered at its restriction, and not acted on", async () => {
+    (await startScribeJira(config(), vault)).stop();
+    const developers = { type: "role", value: "Developers" };
+    comments.push({ ...human("r-approve", "approve"), visibility: developers });
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-21T10:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(await vault.listNotes("docs")).toHaveLength(0);
+    expect(comments.at(-1)?.body).toContain("only work from comments everyone on this ticket can see");
+    expect(comments.at(-1)?.visibility).toEqual(developers);
+  });
+
+  it("feedback in an internal note is not worked from, and nothing is said about it", async () => {
+    (await startScribeJira(config(), vault)).stop();
+    const said = comments.length;
+    const calls = vi.mocked(generateText).mock.calls.length;
+    comments.push({ ...human("r-internal", "rename the feature to Beacon Pro before this ships"), jsdPublic: false });
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-21T10:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
+    expect(comments.length).toBe(said + 1);
+  });
+
+  it("a comment whose restriction can't be read is neither acted on nor answered", async () => {
+    (await startScribeJira(config(), vault)).stop();
+    const said = comments.length;
+    comments.push({ ...human("r-odd", "approve"), visibility: { type: "team" } });
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-21T10:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(await vault.listNotes("docs")).toHaveLength(0);
+    expect(comments.length).toBe(said + 1);
+  });
+
+  it("after a lost ledger, a draft asked for in a restricted comment doesn't make the ticket one it drafts", async () => {
+    issue = { ...issue, fields: { ...(issue.fields as object), labels: [] } };
+    const developers = { type: "role", value: "Developers" };
+    comments.push({ ...human("r-draft", "draft"), visibility: developers }, { id: "bot-r", body: "I only work from comments everyone on this ticket can see…", created: new Date().toISOString(), author: { accountId: "bot-1", displayName: "Scribe" }, visibility: developers });
+    await fs.rm(path.join(tmpRoot, "state"), { recursive: true, force: true });
+    comments.push(human("h-chat", "the intro of the PRD needs work before anyone drafts this"));
+    const calls = vi.mocked(generateText).mock.calls.length;
+    (await startScribeJira(config(), vault)).stop();
+    expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
   });
 
   it("after a lost ledger, a published ticket isn't told its draft never reached it", async () => {

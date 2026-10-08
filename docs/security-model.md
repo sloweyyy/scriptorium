@@ -118,8 +118,13 @@ The model is untrusted too. It proposes; the platform decides what runs.
 - A Jira comment restricted to a role or group, or marked internal in Jira Service
   Management, is answered at the same visibility. A restriction it can't read is not
   answered at all. An approval outcome is said on the ticket only at a visibility the
-  process saw the request asked at. (`apps/agents/src/ingress.ts` `commentRestriction`;
+  process saw the request asked at. (`packages/jira/src/types.ts` `commentRestriction`;
   `evals/teammate-e2e.test.ts`, mutant in `scripts/mutate.ts`)
+- Scribe works only from comments everyone on the ticket can see. Its drafts, their
+  attachments, the published doc and lessons are public, so feedback or a command in a
+  restricted comment would be repeated in public. A restricted comment addressed to it is
+  answered once, at its own restriction, and not acted on. Plain prose in one is passed
+  over in silence. (`apps/agents/src/scribe-jira/issue.ts`; `evals/jira-board.test.ts`)
 
 - A plan (`propose_plan`) is one approval for several writes, bound by the args hash to the
   ordered steps. It can only hold steps whose own rule is the plan's rule (same approvers,
@@ -169,8 +174,6 @@ The model is untrusted too. It proposes; the platform decides what runs.
   - A card truncates long arguments; the approval is still bound to the full text by hash.
   - Separation of duties across surfaces holds only for accounts linked in `TEAMMATE_PEOPLE`.
     An unlinked approver who asked on Jira or GitHub can approve their own request in Slack.
-  - Scribe's own replies on its doc tickets don't yet copy a comment's restriction (the
-    Teammate's do). Keep Scribe's project out of Jira Service Management.
   - The inert pass models the sites as configured by default (Quartz v4's
     Obsidian-flavoured markdown and math, Starlight's GFM, rendered by satteri on Astro 7). Their configs live in the docs
     and vault repos. A plugin added there that turns text into HTML needs the same

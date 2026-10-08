@@ -1,5 +1,5 @@
 import { audit, docSlug } from "@scriptorium/core";
-import { issueStatus, parseCommand, splitAtLastOwnComment, type IssueState, type JiraComment, type JiraIssue } from "@scriptorium/jira";
+import { commentRestriction, issueStatus, parseCommand, splitAtLastOwnComment, type IssueState, type JiraComment, type JiraIssue } from "@scriptorium/jira";
 import {
   approvesCurrentDraft,
   authorName,
@@ -83,6 +83,15 @@ async function runWake(ctx: Ctx, issue: JiraIssue): Promise<void> {
   await runDraft(ctx, issue, { force: true });
 }
 
+/** Everyone on the ticket can see a comment with this restriction: none, and readable. */
+function unrestricted(restriction: ReturnType<typeof commentRestriction>): boolean {
+  return restriction !== "unreadable" && !restriction.visibility && !restriction.internal;
+}
+
+/** The answer to a restricted comment, said at its restriction. */
+const RESTRICTED =
+  "I only work from comments everyone on this ticket can see: my drafts, my replies and the published doc are public, so working from this one would repeat it in public. If it can be shared, say it in a comment without a restriction.";
+
 /** How the agent's note of a failure starts. */
 const ERROR_NOTE = "⚠️ I hit an error working this ticket:";
 
@@ -95,6 +104,7 @@ async function recoverState(ctx: Ctx, issue: JiraIssue, settled: JiraComment[], 
   // was engaged, so one where it had only answered `help` was drafted on the next comment,
   // taken from its assignee and moved across the board.
   const asked = settled.some((comment) => {
+    if (!unrestricted(commentRestriction(comment))) return false;
     const kind = parseCommand(comment, ctx.botAccountId, { hasDraft: Boolean(attached), otherAgents }).kind;
     return kind === "wake" || kind === "draft";
   });
@@ -327,6 +337,22 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
     // `hasDraft` is read fresh: a draft posted earlier in this same batch changes what a
     // mention means, and the parser needs the current answer, not the one from the top.
     const command = parseCommand(comment, ctx.botAccountId, { hasDraft: Boolean(ctx.state.get(key)?.hasDraft), otherAgents: otherAgents, botName: ctx.botName });
+
+    // Worked only from what everyone on the ticket can see: the draft, its attachment, the
+    // published doc and a lesson are all public, so feedback or a command in a restricted
+    // comment would be repeated in public. One addressed to the agent is answered once, at
+    // its own restriction; one whose restriction can't be read isn't answered at all.
+    const restriction = commentRestriction(comment);
+    if (!unrestricted(restriction)) {
+      if (restriction !== "unreadable" && command.kind !== "ignore" && command.kind !== "feedback" && command.kind !== "too-long") {
+        await attempt(comment.id, [comment.id], async () => {
+          await say(ctx, key, RESTRICTED, restriction);
+        });
+      } else {
+        await ctx.state.markProcessed(key, [comment.id]);
+      }
+      continue;
+    }
 
     // Someone else's conversation: on a mention-only ticket the agent has never taken part
     // in, plain prose is people talking to each other and must not trigger a revise.

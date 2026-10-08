@@ -178,7 +178,13 @@ export async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: bo
   const key = issue.key;
   const known = ctx.state.get(key);
   const fingerprint = sourceFingerprint(issue, known?.remoteLinkFingerprint);
-  if (!options.force && (known?.hasDraft || sameSource(known?.sourceFingerprint, issue, known?.remoteLinkFingerprint))) return;
+  if (!options.force && known?.hasDraft) return;
+  if (!options.force && sameSource(known?.sourceFingerprint, issue, known?.remoteLinkFingerprint)) {
+    // Recorded in the old form (the description's length): now in this one, so the next
+    // same-length edit ("TBD" answered in place) is seen.
+    if (known?.sourceFingerprint !== fingerprint) await ctx.state.patch(key, { sourceFingerprint: fingerprint });
+    return;
+  }
 
   // An upload still in progress is not a PRD yet. The fingerprint is deliberately NOT
   // recorded here, so the next tick — by which time the rest has landed — sees a source it
@@ -356,7 +362,18 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[], 
   };
   if (applied.length && !fresh.length) {
     await recordFeedback();
-    if (known0?.postedDraftHash !== hashDraft(draft)) await repostDraft(ctx, key, draft);
+    if (known0?.postedDraftHash !== hashDraft(draft)) {
+      // The comment the revision was going to post, posted (or found) as it was: a different
+      // text was a second comment for the same draft when the first had landed after all.
+      const comment = known0?.revision?.comment;
+      if (comment) {
+        await attachDraft(ctx, key, `draft-${known0?.docSlug ?? docSlug(issue.fields.summary)}.md`, draft);
+        const posted = await say(ctx, key, comment);
+        await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(draft), draftUnposted: false });
+      } else {
+        await repostDraft(ctx, key, draft);
+      }
+    }
     await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
     await handBack(ctx, key, issue);
     return;
@@ -371,35 +388,32 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[], 
   const pointsAtDesign = fresh.some((item) => REFERS_TO_DESIGN.test(item));
   const designs = pointsAtDesign ? await loadDesignImages(ctx, issue) : { images: [], names: [] };
   const result = await reviseDoc(ctx.vault, draft, fresh, designs.images, { withdrawn: await withdrawnLessons(ctx.config.jira.stateDir) });
-  await ctx.state.patch(key, { revision: { feedback: [...applied, ...fresh], draftHash: hashDraft(result.markdown) } });
+  const slug = ctx.state.get(key)?.docSlug ?? docSlug(issue.fields.summary);
+  const comment = draftComment({
+    markdown: result.markdown,
+    lintReport: formatLintFindings(result.lint),
+    appliedLessons: result.appliedLessons,
+    lessonVerdicts: result.lessonVerdicts,
+    source: {
+      images: designs.images,
+      imageNames: designs.names,
+      skipped: [],
+      origin: `${fresh.length} comment(s) of feedback`,
+    },
+    revision: true,
+    attachment: `draft-${slug}.md`,
+  });
+  // Recorded with the revision, before its draft is saved: the vault copy is stale from here
+  // (the next approve republishes; recorded later, a crash between left a published ticket
+  // that never published its revision), and a retry posts this same comment.
+  await ctx.state.patch(key, { revision: { feedback: [...applied, ...fresh], draftHash: hashDraft(result.markdown), comment }, draftPublished: false });
   await ctx.state.saveDraft(key, result.markdown);
-  // The vault copy is now stale relative to this draft: the next approve republishes.
-  await ctx.state.patch(key, { draftPublished: false });
   await moveTo(ctx, key, ctx.config.jira.inReviewStatus);
   await handBack(ctx, key, issue);
   await recordFeedback();
 
-  const known = ctx.state.get(key);
-  const slug = known?.docSlug ?? docSlug(issue.fields.summary);
   await attachDraft(ctx, key, `draft-${slug}.md`, result.markdown);
-  const posted = await say(
-    ctx,
-    key,
-    draftComment({
-      markdown: result.markdown,
-      lintReport: formatLintFindings(result.lint),
-      appliedLessons: result.appliedLessons,
-      lessonVerdicts: result.lessonVerdicts,
-      source: {
-        images: designs.images,
-        imageNames: designs.names,
-        skipped: [],
-        origin: `${fresh.length} comment(s) of feedback`,
-      },
-      revision: true,
-      attachment: `draft-${slug}.md`,
-    }),
-  );
+  const posted = await say(ctx, key, comment);
   // Shown: nothing is owed to the ticket, a first draft that never landed included.
   await ctx.state.patch(key, { draftPostedAt: posted.created, postedDraftHash: hashDraft(result.markdown), draftUnposted: false });
   await audit(ctx.config.auditFile, { type: "jira.draft.revised", actor: "scribe", issue: key, feedback: fresh });

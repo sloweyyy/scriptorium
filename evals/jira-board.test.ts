@@ -763,6 +763,78 @@ describe("board transitions", () => {
     expect(comments.slice(before).filter((comment) => comment.body.includes("posted again"))).toEqual([]);
   });
 
+  it("a fingerprint from before the description was hashed is brought up to date, so a same-length edit is then seen", async () => {
+    const settings = config();
+    const description = (issue.fields as { description: string }).description;
+    await fs.mkdir(settings.jira.stateDir, { recursive: true });
+    // Recorded before the upgrade: the description's length, not its words.
+    await fs.writeFile(
+      path.join(settings.jira.stateDir, "jira-state.json"),
+      JSON.stringify({ version: 1, issues: { "DOC-1": { processedComments: [], lastStatus: "To Do", lastUpdated: "2026-08-19T10:00:00.000+0000", sourceFingerprint: `|${description.trim().length}|` } } }),
+    );
+    (await startScribeJira(settings, vault)).stop();
+    expect(vi.mocked(generateText)).not.toHaveBeenCalled();
+    // The same length, different words: a new source.
+    issue = { ...issue, fields: { ...(issue.fields as object), description: description.replace("admins", "ADMINS"), updated: "2026-08-21T10:00:00.000+0000" } };
+    (await startScribeJira(settings, vault)).stop();
+    expect(vi.mocked(generateText)).toHaveBeenCalled();
+  });
+
+  it("after a lost ledger, a recovery whose first lookup failed still runs on the next tick", async () => {
+    (await startScribeJira(config(), vault)).stop();
+    const calls = vi.mocked(generateText).mock.calls.length;
+    const drafts = () => ((issue.fields as { attachment?: Array<{ filename: string }> }).attachment ?? []).filter((attachment) => attachment.filename.startsWith("draft-")).length;
+    const attached = drafts();
+    // Long since uploaded: nothing on the ticket is still arriving.
+    issue = { ...issue, fields: { ...(issue.fields as object), attachment: ((issue.fields as { attachment?: object[] }).attachment ?? []).map((attachment) => ({ ...attachment, created: "2026-08-20T09:00:00.000+0000" })) } };
+    await fs.rm(path.join(tmpRoot, "state"), { recursive: true, force: true });
+    // The other agents' accounts can't be read this time (the Teammate is down).
+    (await startScribeJira(config(), vault, { otherAgentIds: async () => { throw new Error("teammate unreachable"); } })).stop();
+    (await startScribeJira(config(), vault)).stop();
+    // Recovered from the ticket: its draft is known, so it isn't drafted again.
+    expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
+    expect(drafts()).toBe(attached);
+  });
+
+  it("after a lost ledger, a recovery that failed halfway is begun again on the next tick", async () => {
+    (await startScribeJira(config(), vault)).stop();
+    const calls = vi.mocked(generateText).mock.calls.length;
+    issue = { ...issue, fields: { ...(issue.fields as object), attachment: ((issue.fields as { attachment?: object[] }).attachment ?? []).map((attachment) => ({ ...attachment, created: "2026-08-20T09:00:00.000+0000" })) } };
+    await fs.rm(path.join(tmpRoot, "state"), { recursive: true, force: true });
+    // Seeded, then marking the old comments done fails.
+    const mark = vi.spyOn(JiraState.prototype, "markProcessed").mockRejectedValueOnce(new Error("disk full"));
+    try {
+      (await startScribeJira(config(), vault)).stop();
+    } finally {
+      mark.mockRestore();
+    }
+    (await startScribeJira(config(), vault)).stop();
+    expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
+  });
+
+  it("hands a ticket back when the holder can't be read, and keeps who to give it to when the assign fails", async () => {
+    const { handBack } = await import("@scriptorium/agents");
+    const assigned: Array<string | null> = [];
+    const patches: object[] = [];
+    let failAssign = false;
+    const ctx = {
+      botAccountId: "bot-1",
+      client: {
+        getIssue: async () => { throw new Error("jira 503"); },
+        assign: async (_key: string, accountId: string | null) => { if (failAssign) throw new Error("jira 503"); assigned.push(accountId); },
+      },
+      state: { get: () => ({ handBackTo: "writer-1" }), patch: async (_key: string, values: object) => patches.push(values) },
+    };
+    const issue = { key: "DOC-9", fields: { assignee: { accountId: "writer-1" }, reporter: { accountId: "pm-1" } } };
+    // The snapshot predates the take: it shows the writer, while the agent holds it.
+    await handBack(ctx as never, "DOC-9", issue as never);
+    expect(assigned).toEqual(["writer-1"]);
+    failAssign = true;
+    patches.length = 0;
+    await handBack(ctx as never, "DOC-9", issue as never);
+    expect(patches).toEqual([]);
+  });
+
   it("a ticket whose column the agent can't place is not moved: it knows nothing, so it moves nothing", async () => {
     const { moveTo } = await import("@scriptorium/agents");
     const transitionTo = vi.fn(async () => true);
@@ -1431,8 +1503,10 @@ describe("a crash or an error mid-batch loses nothing and repeats nothing (H4)",
     await tickWith(settings);
     // No second revise of the revision: the model wasn't asked again.
     expect(vi.mocked(generateText).mock.calls.length).toBe(modelCalls);
-    const reposts = comments.filter((comment) => comment.body.includes("Draft (posted again)"));
+    // The revision's own comment, posted as it would have been: once, with the step once.
+    const reposts = comments.filter((comment) => /Revised draft|posted again/.test(comment.body));
     expect(reposts).toHaveLength(1);
+    expect(reposts[0]?.body).toContain("Revised draft");
     expect(reposts[0]?.body.match(/Paste the snippet into your page\./g)).toHaveLength(1);
     await tickWith(settings, "approve");
     const [doc] = await vault.listNotes("docs");
@@ -1551,6 +1625,76 @@ describe("a crash or an error mid-batch loses nothing and repeats nothing (H4)",
     expect(comments.filter((comment) => comment.body.includes("Revised draft"))).toHaveLength(1);
     expect(comments.filter((comment) => comment.body.includes("posted again"))).toHaveLength(0);
     vi.mocked(generateText).mockImplementation(async () => CLEAN_DRAFT);
+  });
+
+  it("a revision whose comment landed but wasn't recorded is not posted a second time", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    vi.mocked(generateText).mockImplementation(async () => `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`);
+    // The comment lands; recording that it did fails.
+    const original = JiraState.prototype.patch;
+    let failed = false;
+    const patch = vi.spyOn(JiraState.prototype, "patch").mockImplementation(async function (this: never, key: string, values: object) {
+      if (!failed && "postedDraftHash" in values) {
+        failed = true;
+        throw new Error("disk full");
+      }
+      return original.call(this, key, values as never);
+    });
+    try {
+      await tickWith(settings, "add the paste step");
+    } finally {
+      patch.mockRestore();
+    }
+    await tickWith(settings);
+    expect(comments.filter((comment) => /Revised draft|posted again/.test(comment.body))).toHaveLength(1);
+  });
+
+  it("a published doc's revision is published on approval, even when recording the revision failed once", async () => {
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    await tickWith(settings, "approve");
+    expect(await vault.listNotes("docs")).toHaveLength(1);
+    vi.mocked(generateText).mockImplementation(async () => `${CLEAN_DRAFT}\n3. Paste the snippet into your page.`);
+    const original = JiraState.prototype.patch;
+    let failed = false;
+    const patch = vi.spyOn(JiraState.prototype, "patch").mockImplementation(async function (this: never, key: string, values: object) {
+      if (!failed && "draftPublished" in values && (values as { draftPublished?: boolean }).draftPublished === false) {
+        failed = true;
+        throw new Error("disk full");
+      }
+      return original.call(this, key, values as never);
+    });
+    try {
+      await tickWith(settings, "add the paste step");
+    } finally {
+      patch.mockRestore();
+    }
+    await tickWith(settings);
+    await tickWith(settings, "approve");
+    const [doc] = await vault.listNotes("docs");
+    expect((await vault.readNote(doc as string)).body).toContain("Paste the snippet into your page.");
+  });
+
+  it("a revision recorded before its comment was kept, and already shown, is not shown again", async () => {
+    const settings = config();
+    await fs.mkdir(path.join(settings.jira.stateDir, "drafts"), { recursive: true });
+    await fs.writeFile(path.join(settings.jira.stateDir, "drafts", "DOC-1.md"), CLEAN_DRAFT);
+    const shown = createHash("sha256").update(CLEAN_DRAFT.trim()).digest("hex");
+    await fs.writeFile(
+      path.join(settings.jira.stateDir, "jira-state.json"),
+      JSON.stringify({
+        version: 1,
+        issues: {
+          "DOC-1": { hasDraft: true, engaged: true, docSlug: "incident-timeline-embed", sourceFingerprint: "seeded", processedComments: [], lastStatus: "In Review", lastUpdated: "2026-08-20T10:00:00.000+0000", postedDraftHash: shown, revision: { feedback: ["shorten the intro"], draftHash: shown } },
+        },
+      }),
+    );
+    comments.push(human("h1", "shorten the intro"));
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "In Review" }, updated: "2026-08-20T15:00:00.000+0000" } };
+    (await startScribeJira(settings, vault)).stop();
+    expect(vi.mocked(generateText)).not.toHaveBeenCalled();
+    expect(comments.filter((comment) => /posted again|Revised draft/.test(comment.body))).toHaveLength(0);
   });
 
   it("a retry attaches the draft once, not once per attempt", async () => {

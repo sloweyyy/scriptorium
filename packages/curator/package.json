@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.128.0",
+    "@anthropic-ai/sdk": "^0.131.0",
     "@scriptorium/core": "workspace:*",
     "@scriptorium/runtime": "workspace:*",
     "chokidar": "^5.0.0",

@@ -12,7 +12,7 @@
     "@scriptorium/jira": "workspace:*",
     "@scriptorium/policy": "workspace:*",
     "@scriptorium/runtime": "workspace:*",
-    "@slack/web-api": "^8.1.1",
+    "@slack/web-api": "^8.2.0",
     "zod": "^4.6.5"
   }
 }

@@ -111,7 +111,11 @@ function plainApproval(body: string): string | undefined {
     .split("\n")
     .map((line) => line.replace(/(^|\s)[*_+]+|[*_+]+(?=\s|$)/g, "$1").trim())
     .filter(Boolean);
-  const [first = "", ...more] = lines;
+  const [line = "", ...more] = lines;
+  // A positive emoji may open it ("👍 Approved"): the command starts at the first letter.
+  const lead = line.match(/^[^\p{L}]*/u)?.[0] ?? "";
+  if (!isCourtesy(lead)) return undefined;
+  const first = line.slice(lead.length);
   const command = first.match(/^(approved|approve|publish|accept)\b(\s+lesson(\s+l-?\d{1,4})?\b|\s+(the\s+)?(doc|document|draft)\b)?/i);
   if (!command || !isCourtesy(first.slice(command[0].length))) return undefined;
   const courteous = more.every((line, index) =>
@@ -139,8 +143,10 @@ const COURTESY_WORDS = new Set(
 );
 /** Words that hold an approval back, even capitalised where a name would be ("Thanks, Not Yet"). */
 const HEDGES = new Set(
-  "not no yet wait hold stop but never later pending unless until after before only cancel reject hang dont don't don’t do maybe if nope nah block blocked revert undo mind hmm actually except first".split(" "),
+  "not no yet wait waiting hold stop but never later pending unless until after before only cancel reject hang dont don't don’t do maybe if nope nah block blocked revert undo mind hmm actually except first legal review approval sign signed signoff next week tomorrow today tonight soon asap eod eow monday tuesday wednesday thursday friday saturday sunday".split(" "),
 );
+/** A screenshot as Jira writes it: "!shot.png!" or "!shot.png|thumbnail!". Not any text between two "!". */
+const SCREENSHOT = /![^!\n|]+?\.(?:png|jpe?g|gif|webp|svg|bmp)(?:\|[^!\n]*)?!/gi;
 const POSITIVE_EMOJI = /[\u{1F3FB}-\u{1F3FF}]|👍|🎉|✅|☑️|✔️|🙏|😊|🙂|😀|😃|😄|😁|☺️|🚀|❤️|❤|💯|👏|🥳|✨|🙌|💪|⭐|🌟|️|‍/gu;
 /** Jira's own: (y) (/) (*) (on), and the smileys. */
 const POSITIVE_EMOTICONS = /\((?:y|\/|\*|on)\)|:-?\)|:-?D|;-?\)/g;
@@ -148,7 +154,8 @@ const POSITIVE_SHORTCODES = /:(?:\+1|thumbsup|thumbs_up|tada|white_check_mark|he
 const NAME = /^\p{Lu}[\p{Ll}'’.-]*(\s+\p{Lu}[\p{Ll}'’.-]*){0,2}$/u;
 
 function isName(text: string): boolean {
-  return NAME.test(text) && !text.split(/\s+/).some((word) => HEDGES.has(word.toLowerCase().replace(/[.,!]+$/, "")));
+  // Word by word, hyphens too: "— Not-yet" and "— Waiting On Legal" are hedges, not names.
+  return NAME.test(text) && !text.split(/[\s\-–—]+/).some((word) => HEDGES.has(word.toLowerCase().replace(/[.,!]+$/, "")));
 }
 
 /** A sign-off: "— Phuc", "-- Mai Anh". Not "- not before Friday", which is a bullet. */
@@ -160,7 +167,7 @@ function isSignOff(line: string): boolean {
 /** Courtesy words, positive emoji and punctuation only: "?" isn't courtesy, nor is any other word. */
 function isCourtesy(text: string): boolean {
   const rest = text
-    .replace(/![^!\n]+!/g, " ") // a screenshot, as Jira writes it
+    .replace(SCREENSHOT, " ")
     .replace(POSITIVE_EMOJI, " ")
     .replace(POSITIVE_EMOTICONS, " ")
     .replace(POSITIVE_SHORTCODES, " ")
@@ -168,7 +175,7 @@ function isCourtesy(text: string): boolean {
     .replace(/\b([Tt]hanks|[Tt]hank you|[Tt]hx|[Cc]heers|[Kk]udos)\b([\s,]+)(\p{Lu}[\p{Ll}'’-]*(?:\s+\p{Lu}[\p{Ll}'’-]*)?)/gu, (match, thanks: string, _gap: string, name: string) => (isName(name) ? thanks : match));
   return rest
     .split(/\s+/)
-    .map((token) => token.replace(/^[.,!…:;"'’“”]+|[.,!…:;"'’“”]+$/g, "").toLowerCase())
+    .map((token) => token.replace(/^[.,!…:;"'’“”\-–—]+|[.,!…:;"'’“”\-–—]+$/g, "").toLowerCase())
     .filter(Boolean)
     .every((word) => COURTESY_WORDS.has(word));
 }

@@ -1894,7 +1894,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a hedge is never a name",
     file: "packages/jira/src/commands.ts",
-    find: "  return NAME.test(text) && !text.split(/\\s+/).some((word) => HEDGES.has(word.toLowerCase().replace(/[.,!]+$/, \"\")));",
+    find: "  return NAME.test(text) && !text.split(/[\\s\\-–—]+/).some((word) => HEDGES.has(word.toLowerCase().replace(/[.,!]+$/, \"\")));",
     replace: "  return NAME.test(text);",
     evals: ["evals/jira.test.ts"],
   },
@@ -2100,6 +2100,34 @@ export const MUTANTS: Mutant[] = [
     find: "    while (ordered[at] && (ordered[at]?.start ?? 0) < index) at += 1;\n",
     replace: "",
     evals: ["evals/inert.test.ts"],
+  },
+  {
+    control: "only an image's markup between two ! is a screenshot",
+    file: "packages/jira/src/commands.ts",
+    find: "    .replace(SCREENSHOT, \" \")",
+    replace: "    .replace(/![^!\\n]+!/g, \" \")",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "a hedge inside a hyphenated name is a hedge",
+    file: "packages/jira/src/commands.ts",
+    find: "  return NAME.test(text) && !text.split(/[\\s\\-\u2013\u2014]+/).some(",
+    replace: "  return NAME.test(text) && !text.split(/\\s+/).some(",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "a dash is punctuation in a friendly approval",
+    file: "packages/jira/src/commands.ts",
+    find: "/^[.,!\u2026:;\"'\u2019\u201c\u201d\\-\u2013\u2014]+|[.,!\u2026:;\"'\u2019\u201c\u201d\\-\u2013\u2014]+$/g",
+    replace: "/^[.,!\u2026:;\"'\u2019\u201c\u201d]+|[.,!\u2026:;\"'\u2019\u201c\u201d]+$/g",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "a positive emoji may open an approval, any other doesn't",
+    file: "packages/jira/src/commands.ts",
+    find: "  if (!isCourtesy(lead)) return undefined;\n",
+    replace: "",
+    evals: ["evals/jira.test.ts"],
   },
   {
     control: "a delegation ends by itself",

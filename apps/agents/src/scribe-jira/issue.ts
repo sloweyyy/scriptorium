@@ -6,6 +6,7 @@ import {
   autoDrafts,
   engaged,
   errorMessage,
+  handBack,
   mayApproveOnJira,
   moveTo,
   say,
@@ -143,8 +144,13 @@ async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{
   const key = issue.key;
   const history = await ctx.client.listComments(key);
   const otherAgents = await ctx.otherAgentIds();
-  // A first sight that began and failed, rather than a ledger that was lost.
-  const interrupted = ctx.state.get(key)?.adopting === true;
+  // A first sight that began and failed, rather than a ledger that was lost: begun (the
+  // entry says so), and nothing the agent said here is older than the entry. A recovery from a
+  // lost ledger that failed partway is still one: its replies predate the entry.
+  const entry = ctx.state.get(key);
+  const interrupted =
+    entry?.adopting === true &&
+    !history.some((comment) => comment.author?.accountId === ctx.botAccountId && Date.parse(comment.created) < Date.parse(entry.firstSeen));
   // Until it finishes, the next tick starts first sight again (`adopting`).
   await ctx.state.seed(key, status);
 
@@ -289,6 +295,8 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
       await ctx.state.patch(key, { failing: undefined });
       await ctx.state.markProcessed(key, markDone, settled);
       await say(ctx, key, `⚠️ I tried that ${MAX_COMMAND_ATTEMPTS} times and it kept failing:\n\n{{${errorMessage(error)}}}\n\nI've set that comment aside. Comment again once the cause is fixed.`);
+      // Set aside, it is no longer the agent's to hold.
+      if (ctx.state.get(key)?.held) await handBack(ctx, key, issue);
     } finally {
       ctx.triggers.delete(key);
     }

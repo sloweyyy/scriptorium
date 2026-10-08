@@ -870,6 +870,40 @@ describe("board transitions", () => {
     patches.length = 0;
     await handBack(ctx as never, "DOC-9", issue as never);
     expect(patches).toEqual([]);
+    // Seen held by someone else (they took it while the agent worked): the claim is dropped,
+    // so a later unreadable holder doesn't hand it back to the person before them.
+    const lead = { ...ctx, client: { ...ctx.client, getIssue: async () => ({ fields: { assignee: { accountId: "lead-1" } } }) } };
+    patches.length = 0;
+    await handBack(lead as never, "DOC-9", issue as never);
+    expect(patches).toEqual([{ held: undefined, handBackTo: undefined }]);
+  });
+
+  it("a ticket the agent took and then couldn't draft is given back, not left on the agent", async () => {
+    issue = { ...issue, fields: { ...(issue.fields as object), assignee: { accountId: "writer-1", displayName: "Writer" } } };
+    vi.mocked(generateText).mockRejectedValueOnce(new Error("model overloaded"));
+    (await startScribeJira(config(), vault)).stop();
+    expect(assignments).toEqual(["bot-1"]);
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-21T10:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(assignments.at(-1)).toBe("writer-1");
+  });
+
+  it("after a lost ledger, a recovery that failed partway is still a recovery, not a first sight begun again", async () => {
+    issue = { ...issue, fields: { ...(issue.fields as object), description: "" } };
+    (await startScribeJira(config(), vault)).stop();
+    const told = () => comments.filter((comment) => /PRD/.test(comment.body) && comment.author?.accountId === "bot-1").length;
+    const before = told();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await fs.rm(path.join(tmpRoot, "state"), { recursive: true, force: true });
+    const mark = vi.spyOn(JiraState.prototype, "markProcessed").mockRejectedValueOnce(new Error("disk full"));
+    try {
+      (await startScribeJira(config(), vault)).stop();
+    } finally {
+      mark.mockRestore();
+    }
+    (await startScribeJira(config(), vault)).stop();
+    // Its "no PRD" reply predates the ledger: the source it judged is rebuilt, and not told again.
+    expect(told()).toBe(before);
   });
 
   it("a ticket whose column the agent can't place is not moved: it knows nothing, so it moves nothing", async () => {

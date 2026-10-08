@@ -212,7 +212,14 @@ export async function handBack(ctx: Ctx, key: string, issue: JiraIssue): Promise
     (fresh) => fresh.fields.assignee?.accountId,
     () => (ctx.state.get(key)?.held ? undefined : null),
   );
-  if (holder === null || (holder && holder !== ctx.botAccountId)) return;
+  if (holder === null) return;
+  if (holder && holder !== ctx.botAccountId) {
+    // A person holds it now: the agent's claim on it is over, and so is whom to give it to.
+    // Kept, a later failed read handed the ticket back to whoever had it before.
+    const known = ctx.state.get(key);
+    if (known?.held || known?.handBackTo) await ctx.state.patch(key, { held: undefined, handBackTo: undefined });
+    return;
+  }
   // To whoever had it when the agent took it, and only otherwise to its reporter: always
   // the reporter replaced the person doing the work.
   const before = ctx.state.get(key)?.handBackTo;

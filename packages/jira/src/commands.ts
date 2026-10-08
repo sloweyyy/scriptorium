@@ -117,7 +117,8 @@ function plainApproval(body: string, names: Names, botAccountId?: string): strin
   // an approval that published. Anyone but the agent may be mentioned only on a cc line.
   for (const raw of reply.split("\n")) {
     const others = [...raw.matchAll(/\[~accountid:([^\]]+)\]/gi)].some((mention) => mention[1] !== botAccountId);
-    if (others && !/^[\s*_]*cc\b/i.test(raw)) return undefined;
+    // Thanking someone by mention is courtesy too ("Thanks [~dev] 🙏"); asking them isn't.
+    if (others && !/^[\s*_]*(cc|thanks|thank you|thx|cheers|kudos)\b/i.test(raw.replace(/\[~accountid:[^\]]+\]/gi, "").trim())) return undefined;
   }
   const lines = plainText(reply)
     .split("\n")
@@ -128,9 +129,14 @@ function plainApproval(body: string, names: Names, botAccountId?: string): strin
   const first = line.replace(LEADING_COURTESY, "");
   const command = first.match(/^(approved|approve|publish|accept)\b(\s+lesson(\s+l-?\d{1,4})?\b|\s+(the\s+)?(doc|document|draft)\b)?/i);
   if (!command || !isCourtesy(first.slice(command[0].length), names)) return undefined;
-  // "Approve please, team" asks the team for their approval: please, said to a group.
-  const said = [first.slice(command[0].length), ...more].join(" ");
-  if (/\b(please|pls)\b/i.test(said) && /\b(team|everyone|all|folks|guys|y'?all)\b/i.test(said)) return undefined;
+  // A group is courtesy only thanked or praised ("Thanks, team!", "Great job everyone").
+  // Addressed, it is asked: "Approve please, team", "Approve, everyone 🙏".
+  for (const line of [first.slice(command[0].length), ...more]) {
+    const plain = line.replace(/\ball (good|set|done|fine)\b/gi, " ");
+    for (const group of plain.matchAll(/\b(team|everyone|everybody|all|folks|guys|y'?all)\b/gi)) {
+      if (!/\b(thanks|thank you|thx|cheers|kudos|great|good|nice|well done|awesome|amazing|perfect|excellent|brilliant|congrats|appreciated)\b/i.test(plain.slice(0, group.index))) return undefined;
+    }
+  }
   // A line may also be a sign-off, screenshots, or the author's name signing a thanks: last,
   // capitalised, after a line that thanks ("Thanks,\nPhuc"). "Approve\nmai" is "tomorrow".
   const courteous = more.every(

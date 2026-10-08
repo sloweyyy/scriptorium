@@ -9,6 +9,7 @@ import {
   handBack,
   mayApproveOnJira,
   moveTo,
+  retryPendingMove,
   say,
   type Ctx,
 } from "./context";
@@ -234,6 +235,8 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
   // LEDGER — mixing a stale issue with a fresh ledger once turned the agent's own move
   // into a "human approval" and published without one.
   const lastStatusAtTickStart = known.lastStatus;
+  // Before the gate below: a move put off on a tick that changed nothing else is still owed.
+  await retryPendingMove(ctx, key, status);
 
   const autoDraft = autoDrafts(ctx, issue);
 

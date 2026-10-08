@@ -60,6 +60,10 @@ let failCommentPostIn = 0;
 let failRevisionPosts = false;
 /** Run once, right after a comment containing `text` is stored: a human acting mid-tick. */
 let afterPost: { text: string; run: () => void } | undefined;
+/** The next read of the issue itself fails, as a 503 would. */
+let failNextIssueRead = false;
+/** The next transition fails the same way. */
+let failNextTransition = false;
 /** Fail the next comment post containing this text, once. */
 let failNextPostContaining: string | undefined;
 /** A search that returns an older view of the ticket than a fetch does: a second caller's snapshot. */
@@ -185,6 +189,10 @@ function stubJira(): void {
       return json({ transitions: board.map((name, index) => ({ id: String(index + 1), name, to: { name } })) });
     }
     if (url.includes("/transitions") && method === "POST") {
+      if (failNextTransition) {
+        failNextTransition = false;
+        throw new TypeError("fetch failed: connect ECONNRESET");
+      }
       const body = JSON.parse(String(init?.body ?? "{}")) as { transition: { id: string } };
       const target = board[Number(body.transition.id) - 1];
       if (target) {
@@ -228,6 +236,10 @@ function stubJira(): void {
     }
     if (url.includes("/attachments") || url.includes("/attachment")) return json([]);
     if (url.includes("expand=changelog")) return json({ ...issue, changelog: { histories: changelog } });
+    if (failNextIssueRead && url.includes("/rest/api/2/issue/") && method === "GET") {
+      failNextIssueRead = false;
+      throw new TypeError("fetch failed: connect ECONNRESET");
+    }
     if (url.includes("/rest/api/2/issue/")) return json(issue);
     return new Response("unexpected call", { status: 500 });
   });
@@ -249,6 +261,8 @@ beforeEach(async () => {
   failNextPostContaining = undefined;
   staleSearch = undefined;
   afterPost = undefined;
+  failNextIssueRead = false;
+  failNextTransition = false;
   uploaded = new Map();
   moves = [];
   changelog = [];
@@ -1278,6 +1292,48 @@ describe("who may approve on Jira", () => {
     run.stop();
     expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(0);
     expect(comments.at(-1)?.body).toContain("couldn't tell who approved");
+  });
+
+  async function refusedBoardMove(failing: "read" | "transition" = "read"): Promise<AppConfig> {
+    const settings = config();
+    const stateDir = settings.jira.stateDir;
+    await fs.mkdir(path.join(stateDir, "drafts"), { recursive: true });
+    await fs.writeFile(path.join(stateDir, "drafts", "DOC-1.md"), CLEAN_DRAFT);
+    await fs.writeFile(
+      path.join(stateDir, "jira-state.json"),
+      JSON.stringify({ version: 1, issues: { "DOC-1": { hasDraft: true, engaged: true, docSlug: "incident-timeline-embed", sourceFingerprint: "seeded", processedComments: [], lastStatus: "In Review", lastUpdated: "2026-08-20T10:00:00.000+0000" } } }),
+    );
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Done" }, updated: "2026-08-20T15:00:00.000+0000" } };
+    changelog = [];
+    // Refused, and the read before putting it back fails, or the move itself.
+    afterPost = {
+      text: "couldn't tell who approved",
+      run: () => {
+        if (failing === "read") failNextIssueRead = true;
+        else failNextTransition = true;
+      },
+    };
+    (await startScribeJira(settings, vault)).stop();
+    expect(status()).toBe("Done");
+    return settings;
+  }
+
+  for (const failing of ["read", "transition"] as const) {
+    it(`a refused board move that couldn't be put back (its ${failing} failed) is put back on the next tick`, async () => {
+      const settings = await refusedBoardMove(failing);
+      (await startScribeJira(settings, vault)).stop();
+      expect(status()).toBe("In Review");
+      expect(comments.filter((comment) => comment.body.includes("couldn't tell who approved"))).toHaveLength(1);
+      expect(comments.filter((comment) => comment.body.includes("*Published* —"))).toHaveLength(0);
+    });
+  }
+
+  it("a move put off is dropped once someone has moved the ticket on", async () => {
+    const settings = await refusedBoardMove();
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "In Progress" }, updated: "2026-08-20T16:00:00.000+0000" } };
+    (await startScribeJira(settings, vault)).stop();
+    (await startScribeJira(settings, vault)).stop();
+    expect(status()).toBe("In Progress");
   });
 });
 

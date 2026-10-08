@@ -1,6 +1,7 @@
 import { audit, commitVault } from "@scriptorium/core";
 import {
   approveLesson,
+  describeReach,
   distillLesson,
   findLessonByText,
   LessonChangedError,
@@ -70,8 +71,8 @@ export async function proposeLesson(ctx: Ctx, key: string, approvedBy: string): 
  * kept, or whose comment failed to post), which otherwise could never be approved.
  */
 async function showProposal(ctx: Ctx, key: string, id: string, relPath: string, origin: string): Promise<void> {
-  const body = (await ctx.vault.readNote(relPath)).body;
-  const bodyHash = lessonBodyHash(body);
+  const { body, frontmatter } = await ctx.vault.readNote(relPath);
+  const bodyHash = lessonBodyHash(body, frontmatter.scope);
   await ctx.state.patch(key, { proposedLessons: { ...ctx.state.get(key)?.proposedLessons, [id]: { bodyHash } } });
   const posted = await say(
     ctx,
@@ -81,7 +82,7 @@ async function showProposal(ctx: Ctx, key: string, id: string, relPath: string, 
       "",
       ...body.trim().split("\n").map((line) => `> ${line}`),
       "",
-      `Comment \`approve lesson ${id}\` and it applies to every future draft; \`reject lesson ${id}\` and I forget it.`,
+      `Comment \`approve lesson ${id}\` and it applies to ${describeReach(frontmatter.scope)}; \`reject lesson ${id}\` and I forget it.`,
       "It stays a proposal until you say so — the system doesn't get to decide what it learns.",
     ].join("\n"),
   );
@@ -149,7 +150,7 @@ export async function runLessonDecision(
     } catch (error) {
       if (!(error instanceof LessonChangedError)) throw error;
       await audit(ctx.config.auditFile, { type: "lesson.approve.held", actor, issue: key, id, reason: "changed-since-proposed" });
-      await say(ctx, key, `Lesson ${id}'s text changed after it was proposed here, so I won't sign it: what you'd approve isn't what was shown. Reject it, and give the feedback again for a fresh proposal.`);
+      await say(ctx, key, `Lesson ${id}'s text or scope changed after it was proposed here, so I won't sign it: what you'd approve isn't what was shown. Reject it, and give the feedback again for a fresh proposal.`);
       return;
     }
     if (!lesson) {
@@ -164,7 +165,7 @@ export async function runLessonDecision(
       ctx,
       key,
       [
-        `**Lesson ${id} approved** by ${actor} — it now applies to every future draft.`,
+        `**Lesson ${id} approved** by ${actor} — it now applies to ${describeReach(lesson.scope)}.`,
         "",
         `It is a file (\`${lesson.relPath}\`) with provenance, not a weight: readable, versioned in git, and revocable — comment \`revoke lesson ${id}\` on any ticket to withdraw it.`,
       ].join("\n"),

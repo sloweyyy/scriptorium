@@ -189,6 +189,35 @@ describe("deciding a lesson", () => {
   });
 });
 
+describe("a rule's scope", () => {
+  it("is part of what an approval binds, unless it is global", async () => {
+    const { lessonBodyHash, LessonChangedError } = await import("@scriptorium/scribe");
+    const saved = await saveLesson(vault, { text: "Name the role that can do this.", scope: "audience:workspace admins", author: "PM", sourceThread: "DOC-9" });
+    const note = await vault.readNote(saved.relPath);
+    const shown = lessonBodyHash(note.body, note.frontmatter.scope);
+    // A global rule's hash is its text's alone, as before scopes were read.
+    expect(lessonBodyHash(note.body, "global")).toBe(lessonBodyHash(note.body));
+    expect(shown).not.toBe(lessonBodyHash(note.body));
+    await vault.writeNote(saved.relPath, note.body, { ...note.frontmatter, scope: "global" });
+    await expect(approveLesson(vault, saved.id, "PM", undefined, shown)).rejects.toBeInstanceOf(LessonChangedError);
+    await vault.writeNote(saved.relPath, note.body, note.frontmatter);
+    expect((await approveLesson(vault, saved.id, "PM", undefined, shown))?.status).toBe("approved");
+  });
+
+  it("reads global, an audience, or nothing it can apply", async () => {
+    const { describeReach, lessonApplies } = await import("@scriptorium/scribe");
+    expect(describeReach(undefined)).toBe("every future draft");
+    expect(describeReach(" Global ")).toBe("every future draft");
+    expect(describeReach("audience: workspace admins")).toBe("every future draft for workspace admins");
+    expect(describeReach("audience:")).toContain("isn't one I can read");
+    expect(lessonApplies({ scope: "" }, undefined)).toBe(true);
+    expect(lessonApplies({ scope: "AUDIENCE:Admins" }, " admins ")).toBe(true);
+    expect(lessonApplies({ scope: "audience:admins" }, undefined)).toBe(false);
+    expect(lessonApplies({ scope: "audience:admins" }, "end users")).toBe(false);
+    expect(lessonApplies({ scope: "person:U123" }, "admins")).toBe(false);
+  });
+});
+
 describe("revoking a lesson", () => {
   it("only a rule in force can be revoked, from any ticket; a revoked rule is not revived by approve", async () => {
     const { lessonDecisionCheck } = await import("@scriptorium/scribe");

@@ -1371,6 +1371,50 @@ describe("a lesson learned on one ticket shapes the next (TODO #6)", () => {
     expect(comments.at(-1)?.body).toContain("changed after it was proposed");
   });
 
+  it("a proposal whose scope was widened after it was shown is not signed", async () => {
+    await learnOnDoc1(null);
+    const { listLessons } = await import("@scriptorium/scribe");
+    const proposed = (await listLessons(vault)).find((lesson) => lesson.id === "L-001")!;
+    const note = await vault.readNote(proposed.relPath);
+    await vault.writeNote(proposed.relPath, note.body, { ...note.frontmatter, scope: "audience:everyone else" });
+    comments.push(human("late", "approve lesson L-001"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T20:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect((await listLessons(vault)).find((lesson) => lesson.id === "L-001")?.status).toBe("proposed");
+    expect(comments.at(-1)?.body).toContain("text or scope changed after it was proposed");
+  });
+
+  it("a draft and its revision follow the house rules for the PRD's audience, and only those", async () => {
+    await vault.writeNote("_lessons/L-001-admins.md", "MARKER-ADMINS is a house rule.", { id: "L-001", status: "approved", scope: "audience:Workspace Admins" });
+    await vault.writeNote("_lessons/L-002-users.md", "MARKER-USERS is a house rule.", { id: "L-002", status: "approved", scope: "audience:end users" });
+    const prompts = () => vi.mocked(generateText).mock.calls.map(([options]) => (options as GenerateOptions).prompt ?? "");
+    (await startScribeJira(config(), vault)).stop();
+    expect(prompts().some((prompt) => prompt.includes("MARKER-ADMINS"))).toBe(true);
+    vi.mocked(generateText).mockClear();
+    comments.push(human("f1", "shorten the intro"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T13:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(prompts()).toHaveLength(1);
+    expect(prompts()[0]).toContain("MARKER-ADMINS");
+    expect(prompts().join("\n")).not.toContain("MARKER-USERS");
+  });
+
+  it("a rule for one audience says so when it is shown, and when it is approved", async () => {
+    const { listLessons, saveLesson } = await import("@scriptorium/scribe");
+    const settings = config();
+    (await startScribeJira(settings, vault)).stop();
+    await saveLesson(vault, { text: RULE, scope: "audience:workspace admins", status: "proposed", sourceThread: "https://example.atlassian.net/browse/DOC-1" });
+    comments.push(human("a1", "approve lesson L-001"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T13:00:00.000+0000" } };
+    (await startScribeJira(settings, vault)).stop();
+    expect(comments.at(-1)?.body).toContain("it applies to every future draft for workspace admins");
+    comments.push(human("a2", "approve lesson L-001"));
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-20T14:00:00.000+0000" } };
+    (await startScribeJira(settings, vault)).stop();
+    expect((await listLessons(vault)).find((lesson) => lesson.id === "L-001")?.status).toBe("approved");
+    expect(comments.at(-1)?.body).toContain("it now applies to every future draft for workspace admins");
+  });
+
   it("a publish whose 'Published' comment failed still proposes its lesson on the retry, once", async () => {
     const proposals = () => comments.filter((comment) => comment.body.includes("Proposed house rule L-001"));
     failNextPostContaining = "Published";

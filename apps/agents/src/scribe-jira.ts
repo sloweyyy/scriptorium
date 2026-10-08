@@ -59,6 +59,7 @@ export async function startScribeJira(config: AppConfig, vault: Vault, options: 
     client,
     state,
     botAccountId: me.accountId,
+    botName: me.displayName,
     otherAgentIds: knownAccounts(options.otherAgentIds ?? []),
     locks: new Map(),
     effects: new FileEffectLedger(path.join(config.jira.stateDir, "effects.json")),

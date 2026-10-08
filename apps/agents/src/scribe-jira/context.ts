@@ -17,6 +17,8 @@ export interface Ctx {
   client: JiraClient;
   state: JiraState;
   botAccountId: string;
+  /** The agent's display name on Jira. */
+  botName?: string;
   /**
    * Other agents' Jira accounts (the Teammate): never feedback, never a command. A lookup,
    * because it can fail — and until it has succeeded, no comment is read (see knownAccounts).

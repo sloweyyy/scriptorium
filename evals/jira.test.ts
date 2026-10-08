@@ -100,6 +100,14 @@ describe("jira comment commands", () => {
     // Asking someone else for their approval is not this one ("Legal, please approve").
     expect(phuc("[~accountid:557058:legal] approve please 🙏")).toBe("unclear");
     expect(phuc("approve please [~accountid:557058:legal]")).toBe("unclear");
+    // On a later line, or after a line that only mentions the agent.
+    expect(phuc("Approve\n[~accountid:557058:legal] please 🙏")).toBe("unclear");
+    expect(phuc("[~accountid:bot-1]\n[~accountid:557058:legal] approve please")).toBe("unclear");
+    // Please, said to a group, asks them.
+    for (const body of ["Approve please, team", "approve please everyone", "Approve pls all 🙏"]) expect(phuc(body), body).toBe("unclear");
+    // A bare name is a signature only last, capitalised, after thanks: "mai" is "tomorrow".
+    expect(parseCommand(comment("Approve\nmai", "human-1", "1", "Nguyễn Thị Mai"), "bot-1").kind).toBe("unclear");
+    expect(parseCommand(comment("Approve\nMai\nthanks", "human-1", "1", "Nguyễn Thị Mai"), "bot-1").kind).toBe("unclear");
     // Addressed to the agent, or with a cc after it, it still is.
     expect(phuc("[~accountid:bot-1] approve")).toBe("approve-doc");
     expect(phuc("Approve\ncc [~accountid:557058:legal]")).toBe("approve-doc");

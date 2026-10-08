@@ -2230,8 +2230,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "an approval addressed to someone else is not this one",
     file: "packages/jira/src/commands.ts",
-    find: "  if ([...opening.matchAll(/\\[~accountid:([^\\]]+)\\]/gi)].some((mention) => mention[1] !== botAccountId)) return undefined;",
-    replace: "",
+    find: "    const others = [...raw.matchAll(/\\[~accountid:([^\\]]+)\\]/gi)].some((mention) => mention[1] !== botAccountId);",
+    replace: "    const others = false;",
     evals: ["evals/jira.test.ts"],
   },
   {
@@ -2258,8 +2258,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "screenshots count only on a line of their own",
     file: "packages/jira/src/commands.ts",
-    find: " || isName(line, names.author) || SCREENSHOTS.test(line));",
-    replace: " || isName(line, names.author) || /![^!]+!/.test(line));",
+    find: "      SCREENSHOTS.test(line) ||",
+    replace: "      /![^!]+!/.test(line) ||",
     evals: ["evals/jira.test.ts"],
   },
   {
@@ -2303,6 +2303,27 @@ export const MUTANTS: Mutant[] = [
     find: "= [[gfm()], [gfm(), directive()], [gfm(), math()]];",
     replace: "= [[gfm(), directive()], [gfm(), math()]];",
     evals: ["evals/inert.test.ts"],
+  },
+  {
+    control: "anyone but the agent is mentioned only on a cc line",
+    file: "packages/jira/src/commands.ts",
+    find: "    if (others && !/^[\\s*_]*cc\\b/i.test(raw)) return undefined;",
+    replace: "    if (others && raw === reply.split(\"\\n\")[0] && !/^[\\s*_]*cc\\b/i.test(raw)) return undefined;",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "please, said to a group, asks them",
+    file: "packages/jira/src/commands.ts",
+    find: "  if (/\\b(please|pls)\\b/i.test(said) && /\\b(team|everyone|all|folks|guys|y'?all)\\b/i.test(said)) return undefined;",
+    replace: "",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "a bare name signs only a thanks, last",
+    file: "packages/jira/src/commands.ts",
+    find: "      (index === more.length - 1 && /^\\p{Lu}/u.test(line) && /\\b(thanks|thank you|thx|cheers)\\b/i.test(index === 0 ? first : (more[index - 1] ?? \"\")) && isName(line, names.author)),",
+    replace: "      isName(line, names.author),",
+    evals: ["evals/jira.test.ts"],
   },
   {
     control: "a delegation ends by itself",

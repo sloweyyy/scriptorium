@@ -112,10 +112,13 @@ function plainApproval(body: string, names: Names, botAccountId?: string): strin
   // A quote, panel or code block after the command is read like any other line: its words
   // aren't courtesy, so it makes the comment a question.
   const reply = withoutLeadingQuotes(body);
-  // Addressed to someone else ("[~legal] approve please"): their approval asked for, not this
-  // one given. The mention is stripped below, and the rest read as an approval that published.
-  const opening = reply.split("\n").find((line) => line.trim()) ?? "";
-  if ([...opening.matchAll(/\[~accountid:([^\]]+)\]/gi)].some((mention) => mention[1] !== botAccountId)) return undefined;
+  // Addressed to someone else ("[~legal] approve please", "Approve\n[~legal] please"): their
+  // approval asked for, not this one given. A mention is stripped below, and the rest read as
+  // an approval that published. Anyone but the agent may be mentioned only on a cc line.
+  for (const raw of reply.split("\n")) {
+    const others = [...raw.matchAll(/\[~accountid:([^\]]+)\]/gi)].some((mention) => mention[1] !== botAccountId);
+    if (others && !/^[\s*_]*cc\b/i.test(raw)) return undefined;
+  }
   const lines = plainText(reply)
     .split("\n")
     .map((line) => line.replace(/(^|\s)[*_+]+|[*_+]+(?=\s|$)/g, "$1").trim())
@@ -125,8 +128,18 @@ function plainApproval(body: string, names: Names, botAccountId?: string): strin
   const first = line.replace(LEADING_COURTESY, "");
   const command = first.match(/^(approved|approve|publish|accept)\b(\s+lesson(\s+l-?\d{1,4})?\b|\s+(the\s+)?(doc|document|draft)\b)?/i);
   if (!command || !isCourtesy(first.slice(command[0].length), names)) return undefined;
-  // A line may also be a sign-off, the author's name alone ("Thanks,\nPhuc"), or screenshots.
-  const courteous = more.every((line) => isCourtesy(line, names) || isSignOff(line, names) || isName(line, names.author) || SCREENSHOTS.test(line));
+  // "Approve please, team" asks the team for their approval: please, said to a group.
+  const said = [first.slice(command[0].length), ...more].join(" ");
+  if (/\b(please|pls)\b/i.test(said) && /\b(team|everyone|all|folks|guys|y'?all)\b/i.test(said)) return undefined;
+  // A line may also be a sign-off, screenshots, or the author's name signing a thanks: last,
+  // capitalised, after a line that thanks ("Thanks,\nPhuc"). "Approve\nmai" is "tomorrow".
+  const courteous = more.every(
+    (line, index) =>
+      isCourtesy(line, names) ||
+      isSignOff(line, names) ||
+      SCREENSHOTS.test(line) ||
+      (index === more.length - 1 && /^\p{Lu}/u.test(line) && /\b(thanks|thank you|thx|cheers)\b/i.test(index === 0 ? first : (more[index - 1] ?? "")) && isName(line, names.author)),
+  );
   return courteous ? command[0].toLowerCase() : undefined;
 }
 

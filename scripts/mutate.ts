@@ -1880,8 +1880,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "only a positive emoji is tone",
     file: "packages/jira/src/commands.ts",
-    find: "    .replace(POSITIVE_EMOJI, \" \")",
-    replace: "    .replace(/\\p{Extended_Pictographic}/gu, \" \")",
+    find: "  const rest = text\n    .replace(POSITIVE_EMOJI, \" \")",
+    replace: "  const rest = text\n    .replace(/\\p{Extended_Pictographic}/gu, \" \")",
     evals: ["evals/jira.test.ts"],
   },
   {
@@ -2307,8 +2307,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "anyone but the agent is mentioned only on a cc or thanks line",
     file: "packages/jira/src/commands.ts",
-    find: "    if (others && !/^[\\s*_]*(cc|thanks|thank you|thx|cheers|kudos)\\b/i.test(raw.replace(/\\[~accountid:[^\\]]+\\]/gi, \"\").trim())) return undefined;",
-    replace: "    if (others && raw === reply.split(\"\\n\")[0] && !/^[\\s*_]*(cc|thanks|thank you|thx|cheers|kudos)\\b/i.test(raw.replace(/\\[~accountid:[^\\]]+\\]/gi, \"\").trim())) return undefined;",
+    find: "    if (!copiedIn(said) && !onlyThanks(",
+    replace: "    if (raw === reply.split(\"\\n\")[0] && !copiedIn(said) && !onlyThanks(",
     evals: ["evals/jira.test.ts"],
   },
   {
@@ -2391,14 +2391,14 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a group addressed, not thanked, is asked",
     file: "packages/jira/src/commands.ts",
-    find: "      if (!/\\b(thanks|thank you|thx|cheers|kudos|great|good|nice|well done|awesome|amazing|perfect|excellent|brilliant|congrats|appreciated)\\b/i.test(plain.slice(0, group.index))) return undefined;",
+    find: "      if (asks || !/\\b(thanks|thank you|thx|ty|cheers|kudos|great|good|nice|well done|awesome|amazing|perfect|excellent|lovely|brilliant|congrats|congratulations|appreciated|lgtm)\\b/i.test(plain.slice(0, group.index))) return undefined;",
     replace: "",
     evals: ["evals/jira.test.ts"],
   },
   {
     control: "a group thanked or praised is courtesy",
     file: "packages/jira/src/commands.ts",
-    find: "      if (!/\\b(thanks|thank you|thx|cheers|kudos|great|good|nice|well done|awesome|amazing|perfect|excellent|brilliant|congrats|appreciated)\\b/i.test(plain.slice(0, group.index))) return undefined;",
+    find: "      if (asks || !/\\b(thanks|thank you|thx|ty|cheers|kudos|great|good|nice|well done|awesome|amazing|perfect|excellent|lovely|brilliant|congrats|congratulations|appreciated|lgtm)\\b/i.test(plain.slice(0, group.index))) return undefined;",
     replace: "      return undefined;",
     evals: ["evals/jira.test.ts"],
   },
@@ -2412,8 +2412,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "someone thanked by mention is courtesy",
     file: "packages/jira/src/commands.ts",
-    find: "(cc|thanks|thank you|thx|cheers|kudos)\\b/i.test(raw.replace(",
-    replace: "(cc)\\b/i.test(raw.replace(",
+    find: "function onlyThanks(text: string): boolean {\n  const said = words(text);\n",
+    replace: "function onlyThanks(text: string): boolean {\n  return false;\n  const said = words(text);\n",
     evals: ["evals/jira.test.ts"],
   },
   {
@@ -2618,6 +2618,41 @@ export const MUTANTS: Mutant[] = [
     find: "    if (!unrestricted(commentRestriction(comment))) return false;\n",
     replace: "",
     evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "please said with a group asks it, thanked or not",
+    file: "packages/jira/src/commands.ts",
+    find: "      if (asks || !/\\b(thanks|thank you|thx|ty|",
+    replace: "      if (!/\\b(thanks|thank you|thx|ty|",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "a thanks to someone by mention says nothing else",
+    file: "packages/jira/src/commands.ts",
+    find: "  return /^(thanks|thank|thx|ty|cheers|kudos)$/.test(said[0] ?? \"\") && said.every((word) => THANKS_ONLY.has(word));",
+    replace: "  return /^(thanks|thank|thx|ty|cheers|kudos)$/.test(said[0] ?? \"\");",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "a cc asks nothing of whoever it copies in",
+    file: "packages/jira/src/commands.ts",
+    find: "  return said[0] === \"cc\" && said.every((word) => word === \"cc\" || word === \"and\" || word === \"fyi\");",
+    replace: "  return said[0] === \"cc\";",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "an approval may thank someone by mention on its own line",
+    file: "packages/jira/src/commands.ts",
+    find: "!onlyThanks(said.replace(LEADING_COURTESY, \"\").replace(COMMAND, \"\"))",
+    replace: "!onlyThanks(said.replace(LEADING_COURTESY, \"\"))",
+    evals: ["evals/jira.test.ts"],
+  },
+  {
+    control: "a group thanked as friends do is courtesy",
+    file: "packages/jira/src/commands.ts",
+    find: "|perfect|excellent|lovely|brilliant|congrats|congratulations|appreciated|lgtm)\\b/i.test(plain.slice(0, group.index))",
+    replace: "|perfect|excellent|brilliant|congrats|appreciated)\\b/i.test(plain.slice(0, group.index))",
+    evals: ["evals/jira.test.ts"],
   },
   {
     control: "a delegation ends by itself",

@@ -1607,8 +1607,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "markdown is parsed with GFM, as the sites parse it",
     file: "packages/core/src/inert.ts",
-    find: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm()], [gfm(), math()]];",
-    replace: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[], [math()]];",
+    find: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm(), directive()], [gfm(), math()]];",
+    replace: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[directive()], [math()]];",
     evals: ["evals/inert.test.ts"],
   },
   {
@@ -2020,8 +2020,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "markdown is also read the way Quartz reads math",
     file: "packages/core/src/inert.ts",
-    find: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm()], [gfm(), math()]];",
-    replace: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm()]];",
+    find: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm(), directive()], [gfm(), math()]];",
+    replace: "const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm(), directive()]];",
     evals: ["evals/inert.test.ts"],
   },
   {
@@ -2254,6 +2254,13 @@ export const MUTANTS: Mutant[] = [
     find: "        found.targets.push({ start, end, text: REMOVED });\n",
     replace: "",
     evals: ["evals/site-render.test.ts"],
+  },
+  {
+    control: "markdown is read as Starlight reads it, with its directives",
+    file: "packages/core/src/inert.ts",
+    find: "= [[gfm(), directive()], [gfm(), math()]];",
+    replace: "= [[gfm()], [gfm(), math()]];",
+    evals: ["evals/inert.test.ts"],
   },
   {
     control: "a delegation ends by itself",

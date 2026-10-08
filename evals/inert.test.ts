@@ -112,6 +112,13 @@ describe("inert markdown", () => {
     expect(inertMarkdown(prose)).toBe(prose);
   });
 
+  it("reads as Starlight reads it, with its `:::` asides: a container can end inside a fence", () => {
+    // To GFM the fence holds the tag; a directive container closes at its `:::`, and the tag
+    // after it is live HTML.
+    const fence = "```";
+    expect(inertMarkdown(`:::note\n${fence}\n:::\n<img src=x onerror=alert(1)>\n${fence}`)).toBe(`:::note\n${fence}\n:::\n&lt;img src=x onerror=alert(1)>\n${fence}`);
+  });
+
   it("a code block kept whole stays whole after Quartz cuts its comments", () => {
     // Too costly to parse, so kept as code; Quartz then cut "%%x%%" from the raw text, which
     // joined two runs of three into a fence of six that closed a fence of four.

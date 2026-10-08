@@ -1,5 +1,6 @@
 import { parse, postprocess, preprocess } from "micromark";
 import { gfm } from "micromark-extension-gfm";
+import { directive } from "micromark-extension-directive";
 import { math } from "micromark-extension-math";
 import { decodeString } from "micromark-util-decode-string";
 
@@ -100,11 +101,11 @@ const MERMAID_ACTIONS = /\b(?:click|call|href|links?)\b|javascript\s*:/i;
 /** Tokens whose text Quartz doesn't read as a note's text: a URL, code, raw HTML. */
 const NOT_TEXT = new Set(["resource", "definition", "codeText", "codeFenced", "codeIndented", "htmlFlow", "htmlText", "autolink", "literalAutolink", "literalAutolinkEmail", "literalAutolinkHttp", "literalAutolinkWww", "mathText", "mathFlow"]);
 /**
- * The two ways the sites parse: Starlight reads GFM; Quartz reads GFM and `$…$` math too,
- * which pairs backticks differently (`` $`$ <img …> ` `` is a code span to one, math and a
- * live tag to the other). Unsafe in either reading is unsafe.
+ * The two ways the sites parse. Starlight reads GFM and `:::` directives (its asides);
+ * Quartz reads GFM and `$…$` math, which pairs backticks differently (`` $`$ <img …> ` `` is
+ * a code span to one, math and a live tag to the other). Unsafe in either reading is unsafe.
  */
-const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm()], [gfm(), math()]];
+const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm(), directive()], [gfm(), math()]];
 /** Where one text node ends and the next begins, give or take: a block, a table cell. */
 const TEXT_ENDS = new Set(["paragraph", "atxHeading", "setextHeading", "tableData", "tableHeader", "tableRow"]);
 

@@ -203,20 +203,21 @@ export async function handBack(ctx: Ctx, key: string, issue: JiraIssue): Promise
   // A person who holds it now keeps it: a writer on a ticket the agent never took (it only
   // replied "no PRD"), or someone who took it while the agent worked. Read live: the
   // tick's snapshot is a model call old.
-  // Unread (the fetch failed), the agent is taken to hold it: the snapshot shows whoever had
-  // it before the agent took it, and believing that left the ticket with the agent.
+  // Unread (the fetch failed), it is handed back only if the agent took it: the snapshot
+  // shows whoever had it before the take, and believing that left it with the agent; but a
+  // "no PRD" reply on a writer's ticket never took it, and moved it off them.
   const holder = await ctx.client.getIssue(key).then(
     (fresh) => fresh.fields.assignee?.accountId,
-    () => undefined,
+    () => (ctx.state.get(key)?.held ? undefined : null),
   );
-  if (holder && holder !== ctx.botAccountId) return;
+  if (holder === null || (holder && holder !== ctx.botAccountId)) return;
   // To whoever had it when the agent took it, and only otherwise to its reporter: always
   // the reporter replaced the person doing the work.
   const before = ctx.state.get(key)?.handBackTo;
   const reporter = reporterId(issue);
   const to = before && before !== ctx.botAccountId ? before : reporter && reporter !== ctx.botAccountId ? reporter : null;
   // Given back: a later take records its own. Not given (the assign failed): kept for the next try.
-  if ((await assignTo(ctx, key, to)) && before) await ctx.state.patch(key, { handBackTo: undefined });
+  if ((await assignTo(ctx, key, to)) && (before || ctx.state.get(key)?.held)) await ctx.state.patch(key, { handBackTo: undefined, held: undefined });
 }
 
 /** Take the ticket to draft it, remembering whose it was so it goes back to them. */
@@ -225,7 +226,7 @@ export async function takeTicket(ctx: Ctx, key: string, issue: JiraIssue): Promi
   // Who had it at this take, nobody included: someone who held it weeks ago doesn't get an
   // unassigned ticket back.
   if (current !== ctx.botAccountId) await ctx.state.patch(key, { handBackTo: current });
-  await assignTo(ctx, key, ctx.botAccountId);
+  if (await assignTo(ctx, key, ctx.botAccountId)) await ctx.state.patch(key, { held: true });
 }
 
 /** Post a markdown comment as Jira wiki markup, and remember it so it never reads as feedback. */

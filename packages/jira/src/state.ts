@@ -90,6 +90,8 @@ export interface IssueState {
    * was drafted from scratch.
    */
   adopting?: boolean;
+  /** The agent took the ticket (assigned itself) and hasn't handed it back. */
+  held?: boolean;
   /**
    * Follow-ups a publish still owes: the Slack announcement and the lesson proposal. Set
    * when the publish lands, each cleared once done, so a failure between them (the

@@ -56,7 +56,10 @@ const MAX_PARSED = 1_000_000;
 const MAX_DEPTH = 20;
 /** A list nested by indentation alone: each line re-reads every level's indent (700 deep: 4 s). */
 const MAX_COLUMN = 64;
-const MAX_OPENED = 3_000;
+/** Each is parsed three ways (see READINGS): 3,000 one-line quotes took 4 s. */
+const MAX_OPENED = 1_500;
+/** `:::` containers left open, each inside the last: 1,000 deep took a second a reading. */
+const MAX_NESTED_ASIDES = 20;
 const MAX_MARKERS = 1_000;
 /** Fenced code isn't parsed for emphasis or links: a long JSON or SQL sample is normal. */
 const MAX_MARKERS_IN_CODE = 2_000;
@@ -236,6 +239,7 @@ function tooCostly(markdown: string): string | undefined {
   let fence: { char: string; length: number } | undefined;
   let before: string[] = [];
   let opened = 0;
+  let asides = 0;
   let markers = 0;
   let brackets = 0;
   let allMarkers = 0;
@@ -255,6 +259,10 @@ function tooCostly(markdown: string): string | undefined {
     }
     opened += containers.length - carried;
     if (opened > MAX_OPENED) return `it opens over ${MAX_OPENED} quotes or lists`;
+    // A `:::name` opens a directive container (Starlight's asides), a bare `:::` closes one.
+    if (/^\s*:{3,}\s*[\p{L}{[]/u.test(line)) asides += 1;
+    else if (/^\s*:{3,}\s*$/.test(line)) asides = Math.max(0, asides - 1);
+    if (asides > MAX_NESTED_ASIDES) return `it nests over ${MAX_NESTED_ASIDES} ::: blocks`;
     // A blank line ends every quote; a list goes on past it.
     if (line.trim()) before = containers;
     else if (before.some((marker) => marker.endsWith(">"))) before = before.slice(0, before.findIndex((marker) => marker.endsWith(">")));

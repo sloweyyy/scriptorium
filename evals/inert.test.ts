@@ -177,6 +177,8 @@ describe("inert markdown", () => {
       // Lines ended by a lone CR, as micromark ends them too.
       `x\r${"- ".repeat(25_000)}`,
       "> a\r\r".repeat(3_001),
+      // `:::` containers each inside the last (micromark's directive reading is quadratic in depth).
+      ":::a\n".repeat(21),
       // Code to a line counter, but a fence inside an HTML block opens nothing: still counted.
       "<div>\n```\n\n" + "*_".repeat(1_001),
     ]) {
@@ -204,7 +206,8 @@ describe("inert markdown", () => {
     const index = Array.from({ length: 15_000 }, (_, i) => `- [[docs/feature-${i}|Feature ${i}]]`).join("\n");
     const quote = Array.from({ length: 5_000 }, (_, i) => `> line ${i}`).join("\n");
     const wrapped = Array.from({ length: 1_500 }, (_, i) => `- Item ${i} that is long\n  and wraps`).join("\n");
-    for (const normal of [`# Rules\n\n${"-".repeat(120)}\n\n${" ".repeat(120)}\n\nText.`, json, psql, snake, list, steps, index, quote, wrapped]) {
+    const asides = Array.from({ length: 300 }, (_, i) => `:::note\nTip ${i}.\n:::`).join("\n\n");
+    for (const normal of [`# Rules\n\n${"-".repeat(120)}\n\n${" ".repeat(120)}\n\nText.`, json, psql, snake, list, steps, index, quote, wrapped, asides]) {
       expect(unsafeMarkup(normal).tooCostly, normal.slice(0, 30)).toBeUndefined();
       expect(inertMarkdown(normal), normal.slice(0, 30)).toBe(normal);
     }

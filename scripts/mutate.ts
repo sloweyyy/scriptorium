@@ -2361,6 +2361,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "`:::` containers nested deep are too costly to parse",
+    file: "packages/core/src/inert.ts",
+    find: "    if (asides > MAX_NESTED_ASIDES) return",
+    replace: "    if (false) return",
+    evals: ["evals/inert.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

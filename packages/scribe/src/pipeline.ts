@@ -1,6 +1,7 @@
 import { generateText, type ImageInput, type Vault } from "@scriptorium/core";
-import { checkLessons, listLessons, renderLessonsForPrompt, type Lesson, type LessonVerdict } from "./lessons";
+import { checkLessons, listLessons, renderLessonsForPrompt, selectLessons, type Lesson, type LessonVerdict } from "./lessons";
 import { lintDoc, type LintFinding } from "./lint";
+import { checkContract } from "./contract";
 import {
   buildDistillPrompt,
   buildDraftPrompt,
@@ -32,9 +33,26 @@ function judge(markdown: string, lessons: readonly Lesson[]): Pick<DraftResult, 
   return { lint: [...lintDoc(markdown), ...broken], lessonVerdicts };
 }
 
+export interface LessonOptions {
+  withdrawn?: ReadonlySet<string>;
+  /** Who the doc is for, as its PRD says: a rule scoped to another audience is left out. */
+  audience?: string;
+}
+
+/** The approved rules for one draft. */
+async function lessonsFor(vault: Vault, options: LessonOptions): Promise<Lesson[]> {
+  return selectLessons(await listLessons(vault, { status: "approved", withdrawn: options.withdrawn }), options.audience);
+}
+
+/** Who a PRD is for, wherever its author wrote it. */
+export function prdAudience(prdRaw: string): string | undefined {
+  const audience = checkContract(prdRaw).frontmatter.audience;
+  return typeof audience === "string" && audience.trim() ? audience.trim() : undefined;
+}
+
 /** PRD (+ designs) -> first draft. Caller must have passed the input contract first. */
-export async function draftDoc(vault: Vault, prdRaw: string, images: ImageInput[] = [], options: { withdrawn?: ReadonlySet<string> } = {}): Promise<DraftResult> {
-  const lessons = await listLessons(vault, { status: "approved", withdrawn: options.withdrawn });
+export async function draftDoc(vault: Vault, prdRaw: string, images: ImageInput[] = [], options: LessonOptions = {}): Promise<DraftResult> {
+  const lessons = await lessonsFor(vault, { ...options, audience: options.audience ?? prdAudience(prdRaw) });
   const markdown = await generateText({
     system: DOC_SYSTEM_PROMPT,
     prompt: buildDraftPrompt({ prdRaw, lessonsBlock: renderLessonsForPrompt(lessons) }),
@@ -55,9 +73,9 @@ export async function reviseDoc(
   currentDraft: string,
   feedback: string[],
   images: ImageInput[] = [],
-  options: { withdrawn?: ReadonlySet<string> } = {},
+  options: LessonOptions = {},
 ): Promise<DraftResult> {
-  const lessons = await listLessons(vault, { status: "approved", withdrawn: options.withdrawn });
+  const lessons = await lessonsFor(vault, options);
   const markdown = await generateText({
     system: DOC_SYSTEM_PROMPT,
     prompt: buildRevisePrompt({

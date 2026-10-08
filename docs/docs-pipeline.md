@@ -65,8 +65,10 @@ other surface without anyone prompting it.
    - a pull request opens against the content repo;
    - the commit records the approver's name.
 5. **Scribe then proposes a lesson** distilled from the feedback. `approve lesson L-007` makes
-   it a house rule applied to every future draft. `reject lesson L-007` records who rejected
-   it and keeps the note as evidence that the rule was judged, not silently dropped.
+   it a house rule applied to every future draft, or, when its `scope` is `audience:<who>`,
+   to every draft whose PRD names that audience. The scope is part of what was shown and of
+   what is signed. `reject lesson L-007` records who rejected it and keeps the note as
+   evidence that the rule was judged, not silently dropped.
 
 `help` in a comment prints the commands. **Nothing publishes without step 4.**
 

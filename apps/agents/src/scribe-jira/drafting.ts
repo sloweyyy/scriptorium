@@ -274,7 +274,8 @@ export async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: bo
   await takeTicket(ctx, key, issue);
 
   const withdrawn = await withdrawnLessons(ctx.config.jira.stateDir);
-  let result = await draftDoc(ctx.vault, source.markdown, source.images, { withdrawn });
+  const audience = typeof contract.frontmatter.audience === "string" ? contract.frontmatter.audience.trim() || undefined : undefined;
+  let result = await draftDoc(ctx.vault, source.markdown, source.images, { withdrawn, audience });
   if (!lintOk(result.lint)) {
     // Deterministic checks get one machine round-trip before a human is asked to read anything.
     result = await reviseDoc(
@@ -282,7 +283,7 @@ export async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: bo
       result.markdown,
       result.lint.map((finding) => `[${finding.code}] ${finding.message}`),
       [],
-      { withdrawn },
+      { withdrawn, audience },
     );
   }
 
@@ -295,6 +296,7 @@ export async function runDraft(ctx: Ctx, issue: JiraIssue, options: { force?: bo
     sourcePrd: `prd/${slug}`,
     appliedLessons: result.appliedLessons,
     askedForFields: [],
+    audience,
   });
 
   await attachDraft(ctx, key, `draft-${slug}.md`, result.markdown);
@@ -390,7 +392,9 @@ export async function runRevise(ctx: Ctx, issue: JiraIssue, feedback: string[], 
   // a design: see REFERS_TO_DESIGN for why the default is text-only.
   const pointsAtDesign = fresh.some((item) => REFERS_TO_DESIGN.test(item));
   const designs = pointsAtDesign ? await loadDesignImages(ctx, issue) : { images: [], names: [] };
-  const result = await reviseDoc(ctx.vault, draft, fresh, designs.images, { withdrawn: await withdrawnLessons(ctx.config.jira.stateDir) });
+  // Its PRD's audience, from when it was drafted. Not known after a lost ledger: then only
+  // the rules for every audience apply.
+  const result = await reviseDoc(ctx.vault, draft, fresh, designs.images, { withdrawn: await withdrawnLessons(ctx.config.jira.stateDir), audience: ctx.state.get(key)?.audience });
   const slug = ctx.state.get(key)?.docSlug ?? docSlug(issue.fields.summary);
   const comment = draftComment({
     markdown: result.markdown,

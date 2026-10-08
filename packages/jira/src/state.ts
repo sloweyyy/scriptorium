@@ -27,6 +27,8 @@ export interface IssueState {
   engaged?: boolean;
   /** Contract fields already asked about, so the same question is not posted twice. */
   askedForFields?: string[];
+  /** Who the draft is for, as its PRD said: a revise applies the same scoped house rules. */
+  audience?: string;
   /**
    * Which source those questions were asked ABOUT.
    *

@@ -128,6 +128,49 @@ export async function listLessons(vault: Vault, options: { status?: LessonStatus
   return lessons.sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/**
+ * Which drafts a rule shapes, from its scope. `global` (or none): every draft.
+ * `audience:<who>`: drafts whose PRD names that audience, compared without case or spacing.
+ * Anything else shapes no draft: a scope that can't be read is no reason to apply a rule
+ * everywhere.
+ *
+ * Every approved rule went into every draft, and adherence falls as the list grows: a rule
+ * learned on an admin guide crowded out the rules that applied to an end-user one.
+ */
+export type LessonReach = { kind: "global" } | { kind: "audience"; who: string } | { kind: "unreadable"; scope: string };
+
+export function lessonReach(scope: unknown): LessonReach {
+  const text = typeof scope === "string" ? scope.trim() : scope === undefined || scope === null ? "" : String(scope);
+  if (!text || text.toLowerCase() === "global") return { kind: "global" };
+  const who = /^audience:(.+)$/i.exec(text)?.[1]?.trim();
+  return who ? { kind: "audience", who } : { kind: "unreadable", scope: text };
+}
+
+/** Does this rule shape a draft for this audience? An unknown audience matches only global rules. */
+export function lessonApplies(lesson: Pick<Lesson, "scope">, audience: string | undefined): boolean {
+  const reach = lessonReach(lesson.scope);
+  if (reach.kind === "global") return true;
+  return reach.kind === "audience" && audience !== undefined && sameAudience(reach.who, audience);
+}
+
+function sameAudience(a: string, b: string): boolean {
+  const normal = (text: string) => text.toLowerCase().replace(/\s+/g, " ").trim();
+  return normal(a) === normal(b);
+}
+
+/** Where a rule applies, in words for the person deciding it. */
+export function describeReach(scope: unknown): string {
+  const reach = lessonReach(scope);
+  if (reach.kind === "global") return "every future draft";
+  if (reach.kind === "audience") return `every future draft for ${reach.who}`;
+  return `no draft: its scope \`${reach.scope}\` isn't one I can read`;
+}
+
+/** The rules for one draft, in id order. */
+export function selectLessons(lessons: Lesson[], audience: string | undefined): Lesson[] {
+  return lessons.filter((lesson) => lessonApplies(lesson, audience));
+}
+
 export function renderLessonsForPrompt(lessons: Lesson[]): string {
   if (!lessons.length) return "";
   return [
@@ -187,9 +230,15 @@ export async function saveLesson(vault: Vault, input: NewLesson): Promise<Lesson
 /** The rule text changed after it was proposed: what would be signed is not what was shown. */
 export class LessonChangedError extends Error {}
 
-/** The sha256 a proposal binds: the rule's text as stored, trimmed. */
-export function lessonBodyHash(body: string): string {
-  return createHash("sha256").update(body.replace(/\r\n/g, "\n").trim()).digest("hex");
+/**
+ * The sha256 a proposal binds: the rule's text as stored, trimmed, and its scope unless it is
+ * global. Changed after it was shown, a rule for one audience was signed for every draft.
+ */
+export function lessonBodyHash(body: string, scope?: unknown): string {
+  const text = body.replace(/\r\n/g, "\n").trim();
+  const reach = lessonReach(scope);
+  const bound = reach.kind === "global" ? text : `${text}\u0000scope=${typeof scope === "string" ? scope.trim() : String(scope)}`;
+  return createHash("sha256").update(bound).digest("hex");
 }
 
 /**
@@ -201,7 +250,7 @@ export async function approveLesson(vault: Vault, id: string, approvedBy: string
   const lesson = (await listLessons(vault)).find((candidate) => candidate.id === id);
   if (!lesson) return undefined;
   const note = await vault.readNote(lesson.relPath);
-  if (expectedBodyHash !== undefined && lessonBodyHash(note.body) !== expectedBodyHash) {
+  if (expectedBodyHash !== undefined && lessonBodyHash(note.body, note.frontmatter.scope) !== expectedBodyHash) {
     throw new LessonChangedError(`Lesson ${id} changed after it was proposed.`);
   }
   const terms = approvalTerms(note.frontmatter);

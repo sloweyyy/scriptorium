@@ -76,6 +76,32 @@ describe("only approved lessons shape a draft", () => {
   });
 });
 
+describe("a house rule applies only where its scope says", () => {
+  beforeEach(async () => {
+    await vault.writeNote("_lessons/L-005-rule.md", "MARKER-SUBSCRIBERS is a house rule.", { id: "L-005", status: "approved", scope: "audience:  Subscribers " });
+    await vault.writeNote("_lessons/L-006-rule.md", "MARKER-ADMINS is a house rule.", { id: "L-006", status: "approved", scope: "audience: workspace admins" });
+    // A scope it can't read shapes no draft, rather than every draft.
+    await vault.writeNote("_lessons/L-007-rule.md", "MARKER-UNREADABLE is a house rule.", { id: "L-007", status: "approved", scope: "team:docs" });
+  });
+
+  it("a draft gets the rules for everyone and for its PRD's audience, in id order", async () => {
+    const result = await draftDoc(vault, PRD);
+    expect(lastPrompt()).toContain("MARKER-SUBSCRIBERS");
+    for (const marker of ["MARKER-ADMINS", "MARKER-UNREADABLE"]) expect(lastPrompt()).not.toContain(marker);
+    expect(result.appliedLessons).toEqual(["L-001", "L-005"]);
+  });
+
+  it("an audience named in the PRD's body counts as much as one in its frontmatter", async () => {
+    const prd = ["---", "feature: Digest emails", "user_goal: get one email a day", "---", "# Digest emails", "", "**Audience:** Workspace  Admins"].join("\n");
+    expect((await draftDoc(vault, prd)).appliedLessons).toEqual(["L-001", "L-006"]);
+  });
+
+  it("a revise gets the rules for the audience it is given; with none, only the rules for everyone", async () => {
+    expect((await reviseDoc(vault, "# Draft", ["shorten"], [], { audience: "workspace admins" })).appliedLessons).toEqual(["L-001", "L-006"]);
+    expect((await reviseDoc(vault, "# Draft", ["shorten"])).appliedLessons).toEqual(["L-001"]);
+  });
+});
+
 describe("applied is not the same as obeyed", () => {
   it("a rule with a check is judged on the draft; a broken rule is a lint error, so the revise round runs", async () => {
     await vault.writeNote("_lessons/L-010-timezone.md", "Always state the timezone for any scheduled time.", {

@@ -902,6 +902,31 @@ describe("board transitions", () => {
     expect(assignments.at(-1)).toBe("human-1");
   });
 
+  it("after a lost ledger, a reposted draft leaves a column a person chose", async () => {
+    failNextPostContaining = "Draft ready";
+    (await startScribeJira(config(), vault)).stop();
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Blocked" }, attachment: ((issue.fields as { attachment?: object[] }).attachment ?? []).map((attachment) => ({ ...attachment, created: "2026-08-20T09:00:00.000+0000" })) } };
+    await fs.rm(path.join(tmpRoot, "state"), { recursive: true, force: true });
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.some((comment) => comment.body.includes("posted again"))).toBe(true);
+    expect(status()).toBe("Blocked");
+  });
+
+  it("a ticket whose status can't be read isn't moved", async () => {
+    const { moveTo } = await import("@scriptorium/agents");
+    const transitionTo = vi.fn(async () => true);
+    const ctx = { config: { jira: { approvedStatus: "Approved" } }, client: { getIssue: async () => { throw new Error("jira 503"); }, transitionTo }, state: { get: () => ({ lastStatus: "In Progress" }), patch: async () => ({}) } };
+    await moveTo(ctx as never, "DOC-9", "In Review");
+    expect(transitionTo).not.toHaveBeenCalled();
+  });
+
+  it("a new ticket whose first sight failed before it began is greeted and drafted next time", async () => {
+    (await startScribeJira(config(), vault, { otherAgentIds: async () => { throw new Error("teammate unreachable"); } })).stop();
+    expect(comments.some((comment) => comment.body.includes("Draft ready"))).toBe(false);
+    (await startScribeJira(config(), vault)).stop();
+    expect(comments.some((comment) => comment.body.includes("Draft ready"))).toBe(true);
+  });
+
   it("a ticket someone unassigned while the agent held it stays unassigned", async () => {
     const { handBack } = await import("@scriptorium/agents");
     const assigned: Array<string | null> = [];

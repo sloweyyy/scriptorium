@@ -88,9 +88,11 @@ export const DISTILL_SYSTEM_PROMPT = `You review one piece of feedback given on 
 Reply with exactly one line:
 - "DOC_ONLY" if the feedback is specific to this document (a typo, a wrong fact, a missing step).
 - "LESSON: <one-sentence imperative rule>" if the feedback expresses a preference that should apply to every future document (style, structure, terminology, what to include or avoid).
+- "AUDIENCE_LESSON: <one-sentence imperative rule>" if it should apply to every future document written for the same readers as this one, and not to documents for other readers (what an administrator must be told that an end user need not be, for example). Only when you are told who this document is for.
 
 The rule must be self-contained and actionable without seeing the original feedback.`;
 
-export function buildDistillPrompt(feedback: string): string {
-  return `Feedback given on a draft:\n"""\n${feedback.trim()}\n"""`;
+export function buildDistillPrompt(feedback: string, audience?: string): string {
+  const readers = audience ? `\n\nThis document is written for:\n"""\n${audience}\n"""` : "";
+  return `Feedback given on a draft:\n"""\n${feedback.trim()}\n"""${readers}`;
 }

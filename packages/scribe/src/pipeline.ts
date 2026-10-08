@@ -114,17 +114,32 @@ export async function reviseDoc(
  * in judging feedback must read exactly like doc-specific feedback did already: the
  * "nothing generalizes" line, not a leaked error attached to a success.
  */
-export async function distillLesson(feedback: string): Promise<string | null> {
+export interface DistilledLesson {
+  text: string;
+  /** `global`, or `audience:<who>` for a rule that holds only for the readers this doc had. */
+  scope: string;
+}
+
+/**
+ * With the doc's audience, a rule can be proposed for those readers only. Without it, a rule
+ * the model judged audience-only is no rule at all: proposed for everyone, it would be wider
+ * than the feedback meant, and nothing proposed is the safe direction.
+ */
+export async function distillLesson(feedback: string, audience?: string): Promise<DistilledLesson | null> {
+  const readers = audience?.replace(/\s+/g, " ").trim() || undefined;
   let reply: string;
   try {
     reply = await generateText({
       system: DISTILL_SYSTEM_PROMPT,
-      prompt: buildDistillPrompt(feedback),
+      prompt: buildDistillPrompt(feedback, readers),
       maxTokens: 1000,
     });
   } catch {
     return null;
   }
-  const match = reply.match(/^LESSON:\s*(.+)$/m);
-  return match?.[1]?.trim() ?? null;
+  const match = reply.match(/^(AUDIENCE_LESSON|LESSON):\s*(.+)$/m);
+  const text = match?.[2]?.trim();
+  if (!text) return null;
+  if (match?.[1] === "LESSON") return { text, scope: "global" };
+  return readers ? { text, scope: `audience:${readers}` } : null;
 }

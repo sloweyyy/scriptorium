@@ -101,11 +101,13 @@ const MERMAID_ACTIONS = /\b(?:click|call|href|links?)\b|javascript\s*:/i;
 /** Tokens whose text Quartz doesn't read as a note's text: a URL, code, raw HTML. */
 const NOT_TEXT = new Set(["resource", "definition", "codeText", "codeFenced", "codeIndented", "htmlFlow", "htmlText", "autolink", "literalAutolink", "literalAutolinkEmail", "literalAutolinkHttp", "literalAutolinkWww", "mathText", "mathFlow"]);
 /**
- * The two ways the sites parse. Starlight reads GFM and `:::` directives (its asides);
- * Quartz reads GFM and `$…$` math, which pairs backticks differently (`` $`$ <img …> ` `` is
- * a code span to one, math and a live tag to the other). Unsafe in either reading is unsafe.
+ * The ways the sites parse. Starlight reads GFM and `:::` directives (its asides); Quartz
+ * reads GFM and `$…$` math, which pairs backticks differently (`` $`$ <img …> ` `` is a code
+ * span to one, math and a live tag to the other). And plain GFM, as a renderer with neither
+ * does: `:x{a="$<img …>$"}` is a directive's attribute to one reading and math to the other,
+ * and a live tag only to the reading with neither. Unsafe in any reading is unsafe.
  */
-const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm(), directive()], [gfm(), math()]];
+const READINGS: Array<Array<ReturnType<typeof gfm>>> = [[gfm()], [gfm(), directive()], [gfm(), math()]];
 /** Where one text node ends and the next begins, give or take: a block, a table cell. */
 const TEXT_ENDS = new Set(["paragraph", "atxHeading", "setextHeading", "tableData", "tableHeader", "tableRow"]);
 

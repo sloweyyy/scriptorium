@@ -83,6 +83,13 @@ describe("jira comment commands", () => {
       expect(parseCommand(comment(body), "bot-1").kind, body).toBe("unclear");
     }
     expect(parseCommand(comment("approve lesson L-004, thanks but only for admin docs"), "bot-1")).toMatchObject({ kind: "unclear", suggestion: "approve lesson L-004" });
+    // Text between two "!" isn't a screenshot unless it names an image; a hedge in a name is a hedge.
+    for (const body of ["Approve! Not until legal signs off!", "Approved, thanks! But wait for legal!", "Approve\nGreat work! But hold till Friday!", "Approve\n— Waiting On Legal", "Approve\nThanks,\nNext Week", "Approve\n— Not-yet", "🛑 Approve"]) {
+      expect(parseCommand(comment(body), "bot-1").kind, body).toBe("unclear");
+    }
+    for (const body of ["Approved — thanks!", "Approved - great job", "👍 Approved"]) {
+      expect(parseCommand(comment(body), "bot-1").kind, body).toBe("approve-doc");
+    }
     // And a friendly approval stays one.
     for (const body of ["Approve\n\nThanks a lot!", "Approve\nLooks great", "Approve\nThanks for the quick turnaround", "Approve\n:tada:", "Approve (y)", "Approve\n\nThanks,\nPhuc", "Approve\n— Mai Anh", "Approve!!", "approve 👍🏽", "{quote}Draft ready{quote}\napprove"]) {
       expect(parseCommand(comment(body), "bot-1").kind, body).toBe("approve-doc");

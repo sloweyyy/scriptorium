@@ -104,7 +104,9 @@ describe("jira comment commands", () => {
     expect(phuc("Approve\n[~accountid:557058:legal] please 🙏")).toBe("unclear");
     expect(phuc("[~accountid:bot-1]\n[~accountid:557058:legal] approve please")).toBe("unclear");
     // Please, said to a group, asks them.
-    for (const body of ["Approve please, team", "approve please everyone", "Approve pls all 🙏"]) expect(phuc(body), body).toBe("unclear");
+    for (const body of ["Approve please, team", "approve please everyone", "Approve pls all 🙏", "Approve, everyone 🙏", "Approve the doc, team 🙏", "Approve this, folks!"]) expect(phuc(body), body).toBe("unclear");
+    // Thanked or praised, a group is courtesy; "all good" addresses nobody; thanks by mention is thanks.
+    for (const body of ["Approved\n\nGreat job, team!", "Approved, thanks everyone!", "Approve please — all good 👍", "Approved\nThanks [~accountid:557058:dev] 🙏"]) expect(phuc(body), body).toBe("approve-doc");
     // A bare name is a signature only last, capitalised, after thanks: "mai" is "tomorrow".
     expect(parseCommand(comment("Approve\nmai", "human-1", "1", "Nguyễn Thị Mai"), "bot-1").kind).toBe("unclear");
     expect(parseCommand(comment("Approve\nMai\nthanks", "human-1", "1", "Nguyễn Thị Mai"), "bot-1").kind).toBe("unclear");

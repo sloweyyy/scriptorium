@@ -97,6 +97,30 @@ describe("jira comment commands", () => {
     for (const body of ["Approve\n— Postponed", "Approve\nThanks,\nHolding", "Approve\n— Revisit", "Approve\n— Tbd", "Approve\n— Mai Anh", "Approve\nlook again", "Approve! But fix the typo in hero.png!", "Approved! see a.png| not until Friday!"]) {
       expect(phuc(body), body).toBe("unclear");
     }
+    // Asking someone else for their approval is not this one ("Legal, please approve").
+    expect(phuc("[~accountid:557058:legal] approve please 🙏")).toBe("unclear");
+    expect(phuc("approve please [~accountid:557058:legal]")).toBe("unclear");
+    // Addressed to the agent, or with a cc after it, it still is.
+    expect(phuc("[~accountid:bot-1] approve")).toBe("approve-doc");
+    expect(phuc("Approve\ncc [~accountid:557058:legal]")).toBe("approve-doc");
+    // The agent thanked by name, the author's name in its other forms, a pasted screenshot.
+    const as = (displayName: string, body: string) => parseCommand(comment(body, "human-1", "1", displayName), "bot-1", { hasDraft: true, botName: "Scribe" }).kind;
+    for (const [displayName, body] of [
+      ["Reviewer", "Approved, thanks Scribe!"],
+      ["Reviewer", "Approved, thanks again!"],
+      ["Reviewer", "Approve\nThanks for the help, great effort"],
+      ["Phúc Trương", "Approve\n— Phuc"],
+      ["Truong, Phuc", "Approve\n— Phuc"],
+      ["Sean O'Brien", "Approve\n— O'Brien"],
+      ["Phuc Truong", "approve, thanks phuc"],
+      ["Phuc Truong", "Approved, thanks!\nPhuc"],
+      ["Reviewer", "Approve\n!Screenshot 2026-10-08 at 10.15.32.png|thumbnail!"],
+    ]) {
+      expect(as(displayName as string, body as string), body).toBe("approve-doc");
+    }
+    // Thanking anyone else by name is still something said, and so is a screenshot inside a sentence.
+    expect(as("Reviewer", "Approved, thanks Minh!")).toBe("unclear");
+    expect(as("Reviewer", "Approve !Wait for legal hero.png!")).toBe("unclear");
     // And a friendly approval stays one.
     for (const body of ["Approve\n\nThanks a lot!", "Approve\nLooks great", "Approve\nThanks for the quick turnaround", "Approve\n:tada:", "Approve (y)", "Approve!!", "approve 👍🏽", "{quote}Draft ready{quote}\napprove"]) {
       expect(parseCommand(comment(body), "bot-1").kind, body).toBe("approve-doc");

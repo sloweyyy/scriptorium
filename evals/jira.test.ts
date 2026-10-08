@@ -14,8 +14,8 @@ import {
 } from "@scriptorium/jira";
 import { newestFirst, prdFrontmatter, safeDesignName, sameSource, sourceFingerprint } from "@scriptorium/agents";
 
-function comment(body: string, accountId = "human-1", id = "1"): JiraComment {
-  return { id, body, created: new Date().toISOString(), author: { accountId, displayName: "Reviewer" } };
+function comment(body: string, accountId = "human-1", id = "1", displayName = "Reviewer"): JiraComment {
+  return { id, body, created: new Date().toISOString(), author: { accountId, displayName } };
 }
 
 describe("jira comment commands", () => {
@@ -53,7 +53,7 @@ describe("jira comment commands", () => {
     expect(parseCommand(comment("{panel}\napprove\n{panel}\nThat is what you told me to type, but the intro is still wrong"), "bot-1").kind).not.toBe("approve-doc");
     expect(parseCommand(comment("{panel:title=What to type}approve{panel}"), "bot-1").kind).not.toBe("approve-doc");
     // A friendly approval is still an approval: praise, a sign-off, a cc, a screenshot.
-    for (const body of ["Approved\n\nGreat job, team!", "approve\n\nThanks Phuc!", "Approve\n\ncc [~accountid:557058:abc]", "Approve\n\n— Phuc", "Approve\n!screenshot.png|thumbnail!"]) {
+    for (const body of ["Approved\n\nGreat job, team!", "Approve\n\ncc [~accountid:557058:abc]", "Approve\n!screenshot.png|thumbnail!"]) {
       expect(parseCommand(comment(body), "bot-1").kind, body).toBe("approve-doc");
     }
     // Any other words after it are a question, however they're phrased: a hedge list missed these.
@@ -87,11 +87,18 @@ describe("jira comment commands", () => {
     for (const body of ["Approve! Not until legal signs off!", "Approved, thanks! But wait for legal!", "Approve\nGreat work! But hold till Friday!", "Approve\n— Waiting On Legal", "Approve\nThanks,\nNext Week", "Approve\n— Not-yet", "🛑 Approve"]) {
       expect(parseCommand(comment(body), "bot-1").kind, body).toBe("unclear");
     }
-    for (const body of ["Approved — thanks!", "Approved - great job", "👍 Approved"]) {
+    for (const body of ["Approved — thanks!", "Approved - great job", "👍 Approved", "(y) Approve", ":+1: Approved"]) {
       expect(parseCommand(comment(body), "bot-1").kind, body).toBe("approve-doc");
     }
+    // A name is the author's own, signing off or thanked; any other capitalised word is
+    // something said ("— Postponed", "Thanks,\nHolding").
+    const phuc = (body: string) => parseCommand(comment(body, "human-1", "1", "Phuc Truong"), "bot-1").kind;
+    for (const body of ["approve\n\nThanks Phuc!", "Approve\n\n— Phuc", "Approve\n\nThanks,\nPhuc", "Approve\n— Phuc Truong"]) expect(phuc(body), body).toBe("approve-doc");
+    for (const body of ["Approve\n— Postponed", "Approve\nThanks,\nHolding", "Approve\n— Revisit", "Approve\n— Tbd", "Approve\n— Mai Anh", "Approve\nlook again", "Approve! But fix the typo in hero.png!", "Approved! see a.png| not until Friday!"]) {
+      expect(phuc(body), body).toBe("unclear");
+    }
     // And a friendly approval stays one.
-    for (const body of ["Approve\n\nThanks a lot!", "Approve\nLooks great", "Approve\nThanks for the quick turnaround", "Approve\n:tada:", "Approve (y)", "Approve\n\nThanks,\nPhuc", "Approve\n— Mai Anh", "Approve!!", "approve 👍🏽", "{quote}Draft ready{quote}\napprove"]) {
+    for (const body of ["Approve\n\nThanks a lot!", "Approve\nLooks great", "Approve\nThanks for the quick turnaround", "Approve\n:tada:", "Approve (y)", "Approve!!", "approve 👍🏽", "{quote}Draft ready{quote}\napprove"]) {
       expect(parseCommand(comment(body), "bot-1").kind, body).toBe("approve-doc");
     }
     expect(parseCommand(comment("approve lesson L-004\n\nthank you"), "bot-1").kind).toBe("approve-lesson");

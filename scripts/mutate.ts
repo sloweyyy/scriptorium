@@ -2564,6 +2564,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-board.test.ts"],
   },
   {
+    control: "a lease is held only if the read-back still shows it",
+    file: "packages/runtime/src/lease.ts",
+    find: "    this.held = after?.owner === this.owner;",
+    replace: "    this.held = true;",
+    evals: ["evals/lease.test.ts"],
+  },
+  {
     control: "a delegation ends by itself",
     file: "apps/agents/src/teammate-bot/control.ts",
     find: "  const active = (control.delegations ?? []).filter((entry) => Date.parse(entry.until) > now);",

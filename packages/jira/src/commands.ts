@@ -117,8 +117,12 @@ function plainApproval(body: string, names: Names, botAccountId?: string): strin
   // an approval that published. Anyone but the agent may be mentioned only on a cc line.
   for (const raw of reply.split("\n")) {
     const others = [...raw.matchAll(/\[~accountid:([^\]]+)\]/gi)].some((mention) => mention[1] !== botAccountId);
-    // Thanking someone by mention is courtesy too ("Thanks [~dev] 🙏"); asking them isn't.
-    if (others && !/^[\s*_]*(cc|thanks|thank you|thx|cheers|kudos)\b/i.test(raw.replace(/\[~accountid:[^\]]+\]/gi, "").trim())) return undefined;
+    if (!others) continue;
+    // Copying someone in, or thanking them and nothing else, is courtesy: "cc [~legal]",
+    // "Thanks [~dev] for the help 🙏", "Approved, thanks [~dev]!". Anything more asks them:
+    // "Thanks, [~legal] please", "Thanks [~legal], please ship it".
+    const said = raw.replace(/\[~accountid:[^\]]+\]/gi, " ").replace(/(^|\s)[*_+]+|[*_+]+(?=\s|$)/g, "$1").trim();
+    if (!copiedIn(said) && !onlyThanks(said.replace(LEADING_COURTESY, "").replace(COMMAND, ""))) return undefined;
   }
   const lines = plainText(reply)
     .split("\n")
@@ -127,14 +131,17 @@ function plainApproval(body: string, names: Names, botAccountId?: string): strin
   const [line = "", ...more] = lines;
   // A positive emoji or emoticon may open it ("👍 Approved", "(y) approve").
   const first = line.replace(LEADING_COURTESY, "");
-  const command = first.match(/^(approved|approve|publish|accept)\b(\s+lesson(\s+l-?\d{1,4})?\b|\s+(the\s+)?(doc|document|draft)\b)?/i);
+  const command = first.match(COMMAND);
   if (!command || !isCourtesy(first.slice(command[0].length), names)) return undefined;
   // A group is courtesy only thanked or praised ("Thanks, team!", "Great job everyone").
-  // Addressed, it is asked: "Approve please, team", "Approve, everyone 🙏".
-  for (const line of [first.slice(command[0].length), ...more]) {
+  // Addressed, it is asked: "Approve please, team", "Approve, everyone 🙏". And with a
+  // "please" anywhere, it is asked even thanked: "Approve please, thanks everyone".
+  const after = [first.slice(command[0].length), ...more];
+  const asks = after.some((line) => /\b(please|pls|plz)\b/i.test(line));
+  for (const line of after) {
     const plain = line.replace(/\ball (good|set|done|fine)\b/gi, " ");
     for (const group of plain.matchAll(/\b(team|everyone|everybody|all|folks|guys|y'?all)\b/gi)) {
-      if (!/\b(thanks|thank you|thx|cheers|kudos|great|good|nice|well done|awesome|amazing|perfect|excellent|brilliant|congrats|appreciated)\b/i.test(plain.slice(0, group.index))) return undefined;
+      if (asks || !/\b(thanks|thank you|thx|ty|cheers|kudos|great|good|nice|well done|awesome|amazing|perfect|excellent|lovely|brilliant|congrats|congratulations|appreciated|lgtm)\b/i.test(plain.slice(0, group.index))) return undefined;
     }
   }
   // A line may also be a sign-off, screenshots, or the author's name signing a thanks: last,
@@ -149,6 +156,35 @@ function plainApproval(body: string, names: Names, botAccountId?: string): strin
   return courteous ? command[0].toLowerCase() : undefined;
 }
 
+/** The approval command a comment opens with, and what it approves. */
+const COMMAND = /^(approved|approve|publish|accept)\b(\s+lesson(\s+l-?\d{1,4})?\b|\s+(the\s+)?(doc|document|draft)\b)?/i;
+
+/** What a thanks to someone may say: who for and how much, never what to do. */
+const THANKS_ONLY = new Set("thanks thank you thx ty cheers kudos for the this that your help great quick work job effort turnaround so very really much a lot many again appreciated and".split(" "));
+
+/** The words of a line, tone and punctuation off. */
+function words(text: string): string[] {
+  return text
+    .replace(POSITIVE_EMOJI, " ")
+    .replace(POSITIVE_EMOTICONS, " ")
+    .replace(POSITIVE_SHORTCODES, " ")
+    .toLowerCase()
+    .split(/[^\p{L}'’]+/u)
+    .filter(Boolean);
+}
+
+/** Thanks and nothing else: "thanks for the quick turnaround". */
+function onlyThanks(text: string): boolean {
+  const said = words(text);
+  return /^(thanks|thank|thx|ty|cheers|kudos)$/.test(said[0] ?? "") && said.every((word) => THANKS_ONLY.has(word));
+}
+
+/** A cc line, with nothing asked of whoever it copies in: "cc [~legal]", "cc [~a] and [~b], fyi". */
+function copiedIn(text: string): boolean {
+  const said = words(text);
+  return said[0] === "cc" && said.every((word) => word === "cc" || word === "and" || word === "fyi");
+}
+
 /** Quotes a comment opens with: the reviewer replying to something, before their own words. */
 function withoutLeadingQuotes(body: string): string {
   let rest = body.trimStart();
@@ -161,7 +197,7 @@ function withoutLeadingQuotes(body: string): string {
 
 /** What may come with an approval: thanks, praise, a cc. Any other word is something said. */
 const COURTESY_WORDS = new Set(
-  "thanks thank you thx ty cheers kudos please pls cc great good nice well done job work team everyone all folks guys awesome amazing perfect excellent lovely brilliant looks lgtm ship it appreciated much so a lot many congrats congratulations really very again for the this quick turnaround help effort".split(" "),
+  "thanks thank you thx ty cheers kudos please pls cc fyi great good nice well done job work team everyone all folks guys awesome amazing perfect excellent lovely brilliant looks lgtm ship it appreciated much so a lot many congrats congratulations really very again for the this quick turnaround help effort".split(" "),
 );
 /**
  * A line of screenshots as Jira writes them: "!shot.png!", "!Screenshot 2026-10-08 at

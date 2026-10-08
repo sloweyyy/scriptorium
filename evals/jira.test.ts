@@ -104,9 +104,11 @@ describe("jira comment commands", () => {
     expect(phuc("Approve\n[~accountid:557058:legal] please 🙏")).toBe("unclear");
     expect(phuc("[~accountid:bot-1]\n[~accountid:557058:legal] approve please")).toBe("unclear");
     // Please, said to a group, asks them.
-    for (const body of ["Approve please, team", "approve please everyone", "Approve pls all 🙏", "Approve, everyone 🙏", "Approve the doc, team 🙏", "Approve this, folks!"]) expect(phuc(body), body).toBe("unclear");
+    for (const body of ["Approve please, team", "approve please everyone", "Approve pls all 🙏", "Approve, everyone 🙏", "Approve the doc, team 🙏", "Approve this, folks!", "Approve please, thanks everyone", "Approve pls\nThanks team!"]) expect(phuc(body), body).toBe("unclear");
+    // A thanks to someone by mention says nothing else; more than thanks asks them.
+    for (const body of ["Approve\nThanks, [~accountid:557058:legal] please 🙏", "Approve\nThanks [~accountid:557058:legal], please ship it", "Approve\ncc [~accountid:557058:legal] please approve", "Approve\ncc [~accountid:557058:legal] please", "Approve\nThanks [~accountid:557058:legal], can you check the intro"]) expect(phuc(body), body).toBe("unclear");
     // Thanked or praised, a group is courtesy; "all good" addresses nobody; thanks by mention is thanks.
-    for (const body of ["Approved\n\nGreat job, team!", "Approved, thanks everyone!", "Approve please — all good 👍", "Approved\nThanks [~accountid:557058:dev] 🙏"]) expect(phuc(body), body).toBe("approve-doc");
+    for (const body of ["Approved\n\nGreat job, team!", "Approved, thanks everyone!", "Approve please — all good 👍", "Approved\nThanks [~accountid:557058:dev] 🙏", "Approved, thanks [~accountid:557058:dev]!", "Approved, ty team", "Approved, lovely work team", "Approved, congratulations team", "Approved\ncc [~accountid:557058:legal], fyi"]) expect(phuc(body), body).toBe("approve-doc");
     // A bare name is a signature only last, capitalised, after thanks: "mai" is "tomorrow".
     expect(parseCommand(comment("Approve\nmai", "human-1", "1", "Nguyễn Thị Mai"), "bot-1").kind).toBe("unclear");
     expect(parseCommand(comment("Approve\nMai\nthanks", "human-1", "1", "Nguyễn Thị Mai"), "bot-1").kind).toBe("unclear");

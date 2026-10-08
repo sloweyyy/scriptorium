@@ -1852,7 +1852,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a move the ticket doesn't need still records where it is",
     file: "apps/agents/src/scribe-jira/context.ts",
-    find: "    if (currentStatus?.toLowerCase() === target) {\n      await ctx.state.patch(key, { lastStatus: statusName });\n",
+    find: "    if (currentStatus?.toLowerCase() === target) {\n      await ctx.state.patch(key, { lastStatus: statusName, pendingMove: undefined });\n",
     replace: "    if (currentStatus?.toLowerCase() === target) {\n",
     evals: ["evals/jira-board.test.ts"],
   },
@@ -1866,7 +1866,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a ticket already where the agent would move it is recorded there",
     file: "apps/agents/src/scribe-jira/context.ts",
-    find: "    if (live?.toLowerCase() === target) {\n      await ctx.state.patch(key, { lastStatus: statusName });\n",
+    find: "    if (live?.toLowerCase() === target) {\n      await ctx.state.patch(key, { lastStatus: statusName, pendingMove: undefined });\n",
     replace: "    if (live?.toLowerCase() === target) {\n",
     evals: ["evals/jira-board.test.ts"],
   },
@@ -2681,6 +2681,34 @@ export const MUTANTS: Mutant[] = [
     find: " && quotes === open.quotes) asides.pop();",
     replace: ") asides.pop();",
     evals: ["evals/inert.test.ts"],
+  },
+  {
+    control: "a move whose status couldn't be read is put off, not dropped",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "    if (live === undefined) {\n      console.warn(`[scribe] ${key}: couldn't read its status, so I'm not moving it to \"${statusName}\" yet`);\n      await later();",
+    replace: "    if (live === undefined) {\n      console.warn(`[scribe] ${key}: couldn't read its status, so I'm not moving it to \"${statusName}\" yet`);",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a move that failed is put off, not dropped",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "    await later().catch(() => undefined);\n",
+    replace: "",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a move put off is made on the next tick",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "  await retryPendingMove(ctx, key, status);\n",
+    replace: "",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a move put off is made only from where it was meant",
+    file: "apps/agents/src/scribe-jira/context.ts",
+    find: "  if (status.toLowerCase() === pending.from.toLowerCase()) await moveTo(ctx, key, pending.to, status);",
+    replace: "  if (true) await moveTo(ctx, key, pending.to, status);",
+    evals: ["evals/jira-board.test.ts"],
   },
   {
     control: "a delegation ends by itself",

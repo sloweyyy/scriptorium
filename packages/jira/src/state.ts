@@ -30,6 +30,12 @@ export interface IssueState {
   /** Who the draft is for, as its PRD said: a revise applies the same scoped house rules. */
   audience?: string;
   /**
+   * A move the agent meant to make but couldn't check was safe (its read of the status, or
+   * the move, failed), from the column it last knew. Made on a later tick while the ticket is
+   * still there; dropped once it isn't.
+   */
+  pendingMove?: { to: string; from: string };
+  /**
    * Which source those questions were asked ABOUT.
    *
    * Part of the dedup key because "the same question" is only the same when it is about

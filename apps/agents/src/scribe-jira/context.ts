@@ -126,12 +126,20 @@ export function errorMessage(error: unknown): string {
 export async function moveTo(ctx: Ctx, key: string, statusName: string, currentStatus?: string): Promise<void> {
   if (!statusName) return;
   const target = statusName.toLowerCase();
+  // Where it was when this move was meant: a move that couldn't be made is made later only from there.
+  const from = currentStatus ?? ctx.state.get(key)?.lastStatus;
+  const later = async (): Promise<void> => {
+    if (from) await ctx.state.patch(key, { pendingMove: { to: statusName, from } });
+  };
+  const settled = async (): Promise<void> => {
+    if (ctx.state.get(key)?.pendingMove) await ctx.state.patch(key, { pendingMove: undefined });
+  };
   try {
     // Already there: recorded all the same, so the next move starts from where it is. A
     // ticket a person had put in In Progress before asking for a draft stayed In Progress,
     // because the move to In Review didn't know the column it was leaving.
     if (currentStatus?.toLowerCase() === target) {
-      await ctx.state.patch(key, { lastStatus: statusName });
+      await ctx.state.patch(key, { lastStatus: statusName, pendingMove: undefined });
       return;
     }
     // `currentStatus` is what the caller last saw, which may be a model call ago.
@@ -140,13 +148,15 @@ export async function moveTo(ctx: Ctx, key: string, statusName: string, currentS
       .then((fresh) => issueStatus(fresh))
       .catch(() => undefined);
     if (live?.toLowerCase() === target) {
-      await ctx.state.patch(key, { lastStatus: statusName });
+      await ctx.state.patch(key, { lastStatus: statusName, pendingMove: undefined });
       return;
     }
-    // Where it is couldn't be read: not moved. Moved blind, a column a person had just chosen
-    // was overridden.
+    // Where it is couldn't be read: not moved now, since moved blind, a column a person had
+    // just chosen was overridden. Made on a later tick if it is still where it was: a refused
+    // drag to Approved left in place said an approval had counted.
     if (live === undefined) {
-      console.warn(`[scribe] ${key}: couldn't read its status, so I'm not moving it to "${statusName}"`);
+      console.warn(`[scribe] ${key}: couldn't read its status, so I'm not moving it to "${statusName}" yet`);
+      await later();
       return;
     }
     // Any column a person chose while the agent worked stays theirs: Approved above all (the
@@ -157,17 +167,31 @@ export async function moveTo(ctx: Ctx, key: string, statusName: string, currentS
     const known = [currentStatus, ctx.state.get(key)?.lastStatus].filter((name): name is string => Boolean(name)).map((name) => name.toLowerCase());
     if (live && !known.includes(live.toLowerCase())) {
       console.warn(`[scribe] ${key}: someone moved it to "${live}" while I worked, so I'm not moving it to "${statusName}"`);
+      await settled();
       return;
     }
     const moved = await ctx.client.transitionTo(key, statusName);
-    if (moved) await ctx.state.patch(key, { lastStatus: statusName });
+    if (moved) {
+      await ctx.state.patch(key, { lastStatus: statusName, pendingMove: undefined });
+      return;
+    }
+    await settled();
     // A workflow that does not offer the column is a legitimate configuration, but silence
     // here is indistinguishable from success — and a board that never moves looks like the
     // agent is inert rather than like the project is missing a status.
-    else console.warn(`[scribe] ${key}: workflow offers no transition to "${statusName}" from "${currentStatus ?? "its current status"}"`);
+    console.warn(`[scribe] ${key}: workflow offers no transition to "${statusName}" from "${currentStatus ?? "its current status"}"`);
   } catch (error) {
     console.warn(`[scribe] ${key}: could not move to "${statusName}": ${errorMessage(error)}`);
+    await later().catch(() => undefined);
   }
+}
+
+/** A move an earlier tick couldn't make: made now if the ticket is still where it was, else dropped. */
+export async function retryPendingMove(ctx: Ctx, key: string, status: string): Promise<void> {
+  const pending = ctx.state.get(key)?.pendingMove;
+  if (!pending) return;
+  if (status.toLowerCase() === pending.from.toLowerCase()) await moveTo(ctx, key, pending.to, status);
+  else await ctx.state.patch(key, { pendingMove: undefined });
 }
 
 /**

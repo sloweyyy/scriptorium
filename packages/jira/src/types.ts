@@ -72,3 +72,23 @@ export interface JiraTransition {
 export function issueStatus(issue: JiraIssue): string {
   return issue.fields.status?.name ?? "unknown";
 }
+
+/**
+ * A comment's restriction, from its REST or webhook JSON: a role/group `visibility`, or JSM's
+ * internal flag (`jsdPublic: false`, or the `sd.public.comment` property). A visibility we
+ * cannot read is "unreadable": the comment is not answered, since a reply can't match it.
+ */
+export function commentRestriction(comment: unknown): CommentRestriction | "unreadable" {
+  const c = (comment ?? {}) as { visibility?: unknown; jsdPublic?: unknown; properties?: unknown };
+  const restriction: CommentRestriction = {};
+  if (c.visibility !== undefined && c.visibility !== null) {
+    const v = c.visibility as { type?: unknown; value?: unknown; identifier?: unknown };
+    if ((v.type !== "role" && v.type !== "group") || typeof v.value !== "string") return "unreadable";
+    restriction.visibility = { type: v.type, value: v.value, ...(typeof v.identifier === "string" ? { identifier: v.identifier } : {}) };
+  }
+  const internalProperty = Array.isArray(c.properties)
+    ? (c.properties as Array<{ key?: unknown; value?: { internal?: unknown } }>).some((property) => property.key === "sd.public.comment" && property.value?.internal === true)
+    : false;
+  if (c.jsdPublic === false || internalProperty) restriction.internal = true;
+  return restriction;
+}

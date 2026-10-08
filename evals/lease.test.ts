@@ -54,12 +54,13 @@ describe("the scheduler lease", () => {
   });
 
   it("a concurrent writer that won the race is caught by the read-back", async () => {
-    const a = new Lease(file, 180_000, "a", 40);
+    const a = new Lease(file, 180_000, "a", 500);
     const b = new Lease(file, 180_000, "b", 0);
     const t = Date.parse("2026-09-29T10:00:00Z");
-    // a writes, then waits to read back; b writes in that window and wins.
+    // a writes, then waits to read back; b writes in that window and wins. Written once a's
+    // write has landed, not after a fixed 10 ms: on a loaded machine a wrote after b, and won.
     const aResult = a.acquire(t);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    while (!(await fs.readFile(file, "utf8").catch(() => "")).includes('"a"')) await new Promise((resolve) => setTimeout(resolve, 2));
     await fs.writeFile(file, JSON.stringify({ owner: "b", until: new Date(t + 180_000).toISOString() }));
     expect(await aResult).toBe(false);
     expect(b.owner).toBe("b");

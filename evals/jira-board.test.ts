@@ -1278,10 +1278,10 @@ describe("webhook nudges", () => {
 describe("a lesson learned on one ticket shapes the next (TODO #6)", () => {
   const RULE = "Always state the timezone for any scheduled time.";
 
-  async function learnOnDoc1(decision: "approve lesson" | "reject lesson" | null): Promise<void> {
+  async function learnOnDoc1(decision: "approve lesson" | "reject lesson" | null, answer = "LESSON"): Promise<void> {
     const { DISTILL_SYSTEM_PROMPT } = await import("@scriptorium/scribe");
     vi.mocked(generateText).mockImplementation(async (options: GenerateOptions) =>
-      options.system === DISTILL_SYSTEM_PROMPT ? `LESSON: ${RULE}` : CLEAN_DRAFT,
+      options.system === DISTILL_SYSTEM_PROMPT ? `${answer}: ${RULE}` : CLEAN_DRAFT,
     );
     const settings = config();
     let clock = 13;
@@ -1397,6 +1397,14 @@ describe("a lesson learned on one ticket shapes the next (TODO #6)", () => {
     expect(prompts()).toHaveLength(1);
     expect(prompts()[0]).toContain("MARKER-ADMINS");
     expect(prompts().join("\n")).not.toContain("MARKER-USERS");
+  });
+
+  it("feedback that holds only for the doc's readers is proposed for that audience, and says so", async () => {
+    const { listLessons } = await import("@scriptorium/scribe");
+    await learnOnDoc1(null, "AUDIENCE_LESSON");
+    const proposed = (await listLessons(vault)).find((lesson) => lesson.id === "L-001");
+    expect(proposed?.scope).toBe("audience:workspace admins");
+    expect(comments.find((comment) => comment.body.includes("Proposed house rule L-001"))?.body).toContain("it applies to every future draft for workspace admins");
   });
 
   it("a rule for one audience says so when it is shown, and when it is approved", async () => {

@@ -26,11 +26,12 @@ export async function proposeLesson(ctx: Ctx, key: string, approvedBy: string): 
   // this ticket must not re-distill it into a duplicate proposal.
   await ctx.state.patch(key, { feedback: [], feedbackAuthors: [] });
 
-  const rule = await distillLesson(feedback.join("\n"));
-  if (!rule) {
+  const distilled = await distillLesson(feedback.join("\n"), known?.audience);
+  if (!distilled) {
     await say(ctx, key, "_Nothing here generalizes — the feedback was specific to this document, so I'm not proposing a rule._");
     return;
   }
+  const rule = distilled.text;
 
   // A rule a human already ruled on is not a new proposal. Only checkable now that a
   // rejected lesson leaves its note behind — while rejection deleted the note, the
@@ -51,13 +52,14 @@ export async function proposeLesson(ctx: Ctx, key: string, approvedBy: string): 
 
   const lesson = await saveLesson(ctx.vault, {
     text: rule,
+    scope: distilled.scope,
     author: approvedBy,
     sourceThread: ctx.client.issueUrl(key),
     status: "proposed",
     reservedIds: await withdrawnLessons(ctx.config.jira.stateDir),
   });
   await ctx.state.patch(key, { pendingLessonId: lesson.id });
-  await audit(ctx.config.auditFile, { type: "lesson.proposed", actor: "scribe", issue: key, id: lesson.id, text: rule });
+  await audit(ctx.config.auditFile, { type: "lesson.proposed", actor: "scribe", issue: key, id: lesson.id, text: rule, scope: distilled.scope });
   // Durable the moment it exists: a proposal that lives only in this container is one
   // redeploy away from vanishing — and its id being reissued to a different rule.
   await pushInternalPlane(ctx.config, ctx.vault, `lessons: propose ${lesson.id} (${key})`);

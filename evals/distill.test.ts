@@ -35,7 +35,19 @@ describe("distilling feedback into a lesson", () => {
 
   it("still returns the rule when the call succeeds", async () => {
     vi.mocked(generateText).mockResolvedValueOnce("LESSON: Always specify the timezone.");
-    await expect(distillLesson("Some feedback.")).resolves.toBe("Always specify the timezone.");
+    await expect(distillLesson("Some feedback.")).resolves.toEqual({ text: "Always specify the timezone.", scope: "global" });
+  });
+
+  it("scopes a rule the model judged audience-only to the doc's readers, told who they are", async () => {
+    vi.mocked(generateText).mockResolvedValueOnce("AUDIENCE_LESSON: Name the role that can change this setting.");
+    await expect(distillLesson("Some feedback.", " Workspace\n  admins ")).resolves.toEqual({ text: "Name the role that can change this setting.", scope: "audience:Workspace admins" });
+    expect(vi.mocked(generateText).mock.calls.at(-1)?.[0]?.prompt).toContain("This document is written for:\n\"\"\"\nWorkspace admins\n");
+  });
+
+  it("proposes nothing for an audience-only rule when the doc's readers aren't known, rather than a rule for everyone", async () => {
+    vi.mocked(generateText).mockResolvedValueOnce("AUDIENCE_LESSON: Name the role that can change this setting.");
+    await expect(distillLesson("Some feedback.")).resolves.toBeNull();
+    expect(vi.mocked(generateText).mock.calls.at(-1)?.[0]?.prompt).not.toContain("written for");
   });
 
   it("still returns null for feedback the model judges doc-specific", async () => {

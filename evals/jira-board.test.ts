@@ -157,7 +157,8 @@ function stubJira(): void {
       return json({ issues: [staleSearch ?? issue] });
     }
     if (/\/issue\/[A-Z]+-\d+(\?|$)/.test(url) && method === "GET") fetched.push(url);
-    if (url.includes("/comment") && method === "GET") return json({ comments });
+    // Entity properties (a JSM internal note's `sd.public.comment`) come back only when asked for, as Jira's do.
+    if (url.includes("/comment") && method === "GET") return json({ comments: url.includes("expand=properties") ? comments : comments.map(({ properties: _properties, ...rest }) => rest) });
     if (url.includes("/comment") && method === "POST") {
       if (failCommentPostIn > 0 && --failCommentPostIn === 0) throw new TypeError("fetch failed: connect ECONNRESET");
       const body = JSON.parse(String(init?.body ?? "{}")) as { body: string; properties?: unknown; visibility?: StubComment["visibility"] };
@@ -798,6 +799,35 @@ describe("board transitions", () => {
     (await startScribeJira(config(), vault)).stop();
     expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
     expect(comments.length).toBe(said + 1);
+  });
+
+  it("feedback in an internal note marked only by its property is not worked from", async () => {
+    (await startScribeJira(config(), vault)).stop();
+    const said = comments.length;
+    const attachments = uploaded.size;
+    const calls = vi.mocked(generateText).mock.calls.length;
+    comments.push({ ...human("r-internal-prop", "rename the feature to Beacon Pro before this ships"), properties: [{ key: "sd.public.comment", value: { internal: true } }] });
+    issue = { ...issue, fields: { ...(issue.fields as object), updated: "2026-08-21T10:00:00.000+0000" } };
+    (await startScribeJira(config(), vault)).stop();
+    expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
+    expect(comments.length).toBe(said + 1);
+    expect(uploaded.size).toBe(attachments);
+    expect(comments.filter((comment) => comment.author.accountId === "bot-1" && comment.body.includes("Beacon Pro"))).toHaveLength(0);
+  });
+
+  it("after a lost ledger, a draft asked for in an internal note marked only by its property doesn't make the ticket one it drafts", async () => {
+    issue = { ...issue, fields: { ...(issue.fields as object), labels: [] } };
+    const internal = [{ key: "sd.public.comment", value: { internal: true } }];
+    comments.push(
+      { ...human("r-draft-prop", "[~accountid:bot-1] draft"), properties: internal },
+      { id: "bot-r", body: "I only work from comments everyone on this ticket can see…", created: new Date().toISOString(), author: { accountId: "bot-1", displayName: "Scribe" }, properties: internal },
+    );
+    await fs.rm(path.join(tmpRoot, "state"), { recursive: true, force: true });
+    comments.push(human("h-chat", "the intro of the PRD needs work before anyone drafts this"));
+    const calls = vi.mocked(generateText).mock.calls.length;
+    (await startScribeJira(config(), vault)).stop();
+    expect(vi.mocked(generateText).mock.calls.length).toBe(calls);
+    expect(moves).toEqual([]);
   });
 
   it("a comment whose restriction can't be read is neither acted on nor answered", async () => {
@@ -1465,6 +1495,63 @@ describe("the end of a tick acts on what the tick did", () => {
     expect(status()).toBe("In Review");
     expect(published()).toHaveLength(0);
   });
+
+  it("a drag held after a revise whose own moves couldn't be made is still put back to review", async () => {
+    const settings = config();
+    settings.jira.approvers = ["pm-1"];
+    await seedInReview(settings);
+    // An approver's drag older than the draft on the ticket, and feedback in the same snapshot.
+    const file = path.join(settings.jira.stateDir, "jira-state.json");
+    const saved = JSON.parse(await fs.readFile(file, "utf8")) as { issues: Record<string, Record<string, unknown>> };
+    saved.issues["DOC-1"] = { ...saved.issues["DOC-1"], draftPostedAt: "2026-08-20T10:00:00.000+0000" };
+    await fs.writeFile(file, JSON.stringify(saved));
+    comments.push({ id: "h1", body: "the intro should name the audience", created: new Date().toISOString(), author: PM });
+    changelog = [{ author: PM, created: "2026-08-20T09:00:00.000+0000", items: [{ field: "status", toString: "Done" }] }];
+    // The revise's move to In Progress fails; its move to In Review then finds the drag and leaves it.
+    failNextTransition = true;
+    (await startScribeJira(settings, vault)).stop();
+    expect(comments.filter((comment) => comment.body.includes("you haven't seen yet"))).toHaveLength(1);
+    expect(moves).toContain("In Review");
+    expect(status()).toBe("In Review");
+    expect(published()).toHaveLength(0);
+  });
+
+  // The drag is answered and put back, then the tick's last read of the ticket fails. A second
+  // caller holding the view of the drag (a webhook nudge, a lagging search) must not answer it again.
+  for (const answer of ["refused", "held"] as const) {
+    it(`a drag ${answer} and put back, whose last read failed, is not answered again from a view of the drag`, async () => {
+      const settings = config();
+      settings.jira.approvers = ["pm-1"];
+      await seedInReview(settings);
+      const text = answer === "refused" ? "Only the configured approvers" : "you haven't seen yet";
+      if (answer === "refused") changelog = [{ author: SOMEONE, items: [{ field: "status", toString: "Done" }] }];
+      else {
+        const file = path.join(settings.jira.stateDir, "jira-state.json");
+        const saved = JSON.parse(await fs.readFile(file, "utf8")) as { issues: Record<string, Record<string, unknown>> };
+        saved.issues["DOC-1"] = { ...saved.issues["DOC-1"], draftPostedAt: "2026-08-20T10:00:00.000+0000" };
+        await fs.writeFile(file, JSON.stringify(saved));
+        changelog = [{ author: PM, created: "2026-08-20T09:00:00.000+0000", items: [{ field: "status", toString: "Done" }] }];
+      }
+      const view = issue;
+      afterTransition = () => {
+        failNextIssueRead = true;
+      };
+      (await startScribeJira(settings, vault)).stop();
+      expect(comments.filter((comment) => comment.body.includes(text))).toHaveLength(1);
+      expect(moves).toEqual(["In Review"]);
+      expect((await ledger(settings)).lastUpdated).toBe("2026-08-20T10:00:00.000+0000");
+
+      // Later than the ledger's last read, and still showing the drag.
+      staleSearch = view;
+      const reads = fetched.filter((url) => url.includes("/rest/api/2/issue/DOC-1")).length;
+      (await startScribeJira(settings, vault)).stop();
+      expect(fetched.filter((url) => url.includes("/rest/api/2/issue/DOC-1")).length).toBeGreaterThan(reads);
+      expect(comments.filter((comment) => comment.body.includes(text))).toHaveLength(1);
+      expect(moves).toEqual(["In Review"]);
+      expect(status()).toBe("In Review");
+      expect(published()).toHaveLength(0);
+    });
+  }
 
   it("a non-approver's drag with no approval in the tick is still refused and put back", async () => {
     const settings = config();

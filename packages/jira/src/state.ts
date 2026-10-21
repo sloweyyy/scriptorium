@@ -68,6 +68,12 @@ export interface IssueState {
   sourcePrd?: string;
   /** `updated` from the last poll — lets an untouched issue skip its comment fetch. */
   lastUpdated?: string;
+  /**
+   * `updated` of the view the last finished tick worked from. Ahead of `lastUpdated` when that
+   * tick's final read failed: a second view of the same moment (a webhook nudge, a lagging
+   * search) is then read again rather than acted on, or a drag it answered was answered twice.
+   */
+  handledThrough?: string;
   /** Last failure reported on the ticket, so a repeating error is not commented every poll. */
   lastError?: string;
   /**

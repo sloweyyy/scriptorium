@@ -125,6 +125,12 @@ The model is untrusted too. It proposes; the platform decides what runs.
   restricted comment would be repeated in public. A restricted comment addressed to it is
   answered once, at its own restriction, and not acted on. Plain prose in one is passed
   over in silence. (`apps/agents/src/scribe-jira/issue.ts`; `evals/jira-board.test.ts`)
+  The Teammate's `jira_get_issue` read follows the same rule: its answer can be posted to a
+  public channel or an unrestricted reply, so a role/group-restricted, JSM-internal or
+  unreadable-visibility comment never reaches its output. It says only how many it left
+  out, and restricted comments don't push public ones out of the latest five.
+  (`packages/connectors/src/jira.ts`; `evals/jira-connector.test.ts`, mutants in
+  `scripts/mutate.ts`)
 
 - A plan (`propose_plan`) is one approval for several writes, bound by the args hash to the
   ordered steps. It can only hold steps whose own rule is the plan's rule (same approvers,

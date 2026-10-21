@@ -634,9 +634,23 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a documented 0 is 0, not the default",
     file: "packages/core/src/config.ts",
-    find: "digestWeekday: envNumber(\"TEAMMATE_DIGEST_WEEKDAY\", 1, { min: 0, max: 6 }),",
-    replace: "digestWeekday: envNumber(\"TEAMMATE_DIGEST_WEEKDAY\", 1),",
+    find: "envNumber(\"TEAMMATE_DIGEST_WEEKDAY\", 1, { min: 0, max: 7 })",
+    replace: "envNumber(\"TEAMMATE_DIGEST_WEEKDAY\", 1, { max: 7 })",
     evals: ["evals/config.test.ts"],
+  },
+  {
+    control: "a digest weekday of 0 loads as Sunday (7), not as a day before Monday",
+    file: "packages/core/src/config.ts",
+    find: "{ min: 0, max: 7 }) || 7,",
+    replace: "{ min: 0, max: 7 }),",
+    evals: ["evals/config.test.ts"],
+  },
+  {
+    control: "a digest scheduled for weekday 0 waits for Sunday, not the first check of the week",
+    file: "apps/agents/src/digest.ts",
+    find: "const scheduled = schedule.weekday || 7;",
+    replace: "const scheduled = schedule.weekday;",
+    evals: ["evals/digest.test.ts"],
   },
   {
     control: "an empty Scribe space list never inherits the Teammate's",

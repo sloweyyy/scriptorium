@@ -34,14 +34,21 @@ describe("settings fail closed", () => {
     expect(loadConfig().teammate.dailyTokens).toBeUndefined();
   });
 
-  it("a documented 0 means 0: never nudge, Sunday, midnight", () => {
+  it("a documented 0 means 0: never nudge, midnight; a weekday of 0 is Sunday", () => {
     setEnv({ TEAMMATE_APPROVAL_NUDGE_HOURS: "0", TEAMMATE_DIGEST_WEEKDAY: "0", TEAMMATE_DIGEST_HOUR: "0" });
     const { teammate } = loadConfig();
     expect(teammate.approvalNudgeHours).toBe(0);
-    expect(teammate.digestWeekday).toBe(0);
+    expect(teammate.digestWeekday).toBe(7);
     expect(teammate.digestHour).toBe(0);
     setEnv({ TEAMMATE_DIGEST_HOUR: "24" });
     expect(() => loadConfig()).toThrow(/TEAMMATE_DIGEST_HOUR/);
+  });
+
+  it("the digest weekday is ISO, 1=Mon..7=Sun: Sunday loads and 8 refuses to start", () => {
+    setEnv({ TEAMMATE_DIGEST_WEEKDAY: "7" });
+    expect(loadConfig().teammate.digestWeekday).toBe(7);
+    setEnv({ TEAMMATE_DIGEST_WEEKDAY: "8" });
+    expect(() => loadConfig()).toThrow(/TEAMMATE_DIGEST_WEEKDAY/);
   });
 
   it("an empty Scribe space list is empty, not the Teammate's spaces", () => {

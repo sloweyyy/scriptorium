@@ -2908,6 +2908,20 @@ export const MUTANTS: Mutant[] = [
     replace: '      jira_create_issue: "allow",',
     evals: ["evals/agent-policy.test.ts"],
   },
+  {
+    control: "an unreadable end-of-tick ticket leaves the agent's own latest move as the board baseline",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "const refreshed = await ctx.client.getIssue(key).catch(() => undefined);",
+    replace: "const refreshed = await ctx.client.getIssue(key).catch(() => issue);",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a drag to Approved is not refused after an approver's comment published the draft that tick",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "if (publishedThisTick && currentDraftPublished()) {",
+    replace: "if (false) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
 ];
 
 function run(evals: string[]): boolean {

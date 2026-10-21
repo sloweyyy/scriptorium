@@ -64,6 +64,8 @@ let afterPost: { text: string; run: () => void } | undefined;
 let failNextIssueRead = false;
 /** The next transition fails the same way. */
 let failNextTransition = false;
+/** Run once, right after a transition is made: something happening mid-tick, after a move. */
+let afterTransition: (() => void) | undefined;
 /** Fail the next comment post containing this text, once. */
 let failNextPostContaining: string | undefined;
 /** A search that returns an older view of the ticket than a fetch does: a second caller's snapshot. */
@@ -201,6 +203,9 @@ function stubJira(): void {
         const updated = new Date(Math.max(Date.parse((issue.fields as { updated: string }).updated) + 1000, Date.now())).toISOString();
         issue = { ...issue, fields: { ...(issue.fields as object), status: { name: target }, updated } };
         changelog.push({ author: { displayName: "Scribe", accountId: "bot-1" }, items: [{ field: "status", toString: target }] });
+        const hook = afterTransition;
+        afterTransition = undefined;
+        hook?.();
       }
       return new Response(null, { status: 204 });
     }
@@ -263,6 +268,7 @@ beforeEach(async () => {
   afterPost = undefined;
   failNextIssueRead = false;
   failNextTransition = false;
+  afterTransition = undefined;
   uploaded = new Map();
   moves = [];
   changelog = [];
@@ -1334,6 +1340,86 @@ describe("who may approve on Jira", () => {
     (await startScribeJira(settings, vault)).stop();
     (await startScribeJira(settings, vault)).stop();
     expect(status()).toBe("In Progress");
+  });
+});
+
+describe("the end of a tick acts on what the tick did", () => {
+  const PM = { displayName: "Priya PM", accountId: "pm-1" };
+  const SOMEONE = { displayName: "Sam Else", accountId: "human-1" };
+
+  async function seedInReview(settings: AppConfig): Promise<void> {
+    const stateDir = settings.jira.stateDir;
+    await fs.mkdir(path.join(stateDir, "drafts"), { recursive: true });
+    await fs.writeFile(path.join(stateDir, "drafts", "DOC-1.md"), CLEAN_DRAFT);
+    await fs.writeFile(
+      path.join(stateDir, "jira-state.json"),
+      JSON.stringify({
+        version: 1,
+        issues: {
+          "DOC-1": { hasDraft: true, engaged: true, docSlug: "incident-timeline-embed", sourceFingerprint: "seeded", processedComments: [], lastStatus: "In Review", lastUpdated: "2026-08-20T10:00:00.000+0000", postedDraftHash: createHash("sha256").update(CLEAN_DRAFT.trim()).digest("hex") },
+        },
+      }),
+    );
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Done" }, updated: "2026-08-20T15:00:00.000+0000" } };
+  }
+
+  async function ledger(settings: AppConfig): Promise<{ lastStatus?: string; lastUpdated?: string }> {
+    const saved = JSON.parse(await fs.readFile(path.join(settings.jira.stateDir, "jira-state.json"), "utf8")) as { issues: Record<string, { lastStatus?: string; lastUpdated?: string }> };
+    return saved.issues["DOC-1"] ?? {};
+  }
+
+  const published = () => comments.filter((comment) => comment.body.includes("*Published* —"));
+
+  it("a refused drag put back, whose last read failed, records the move back, so an approver's drag is then published", async () => {
+    const settings = config();
+    settings.jira.approvers = ["pm-1"];
+    await seedInReview(settings);
+    changelog = [{ author: SOMEONE, items: [{ field: "status", toString: "Done" }] }];
+    // The refusal's move back lands; the tick's own last look at the ticket then fails.
+    afterTransition = () => {
+      failNextIssueRead = true;
+    };
+    (await startScribeJira(settings, vault)).stop();
+    expect(moves).toEqual(["In Review"]);
+    expect(comments.filter((comment) => comment.body.includes("Only the configured approvers"))).toHaveLength(1);
+    const after = await ledger(settings);
+    expect(after.lastStatus).toBe("In Review");
+    expect(after.lastUpdated).toBe("2026-08-20T10:00:00.000+0000");
+
+    // The approver drags it to Approved before the next tick: that is the approval.
+    changelog.push({ author: PM, items: [{ field: "status", toString: "Done" }] });
+    issue = { ...issue, fields: { ...(issue.fields as object), status: { name: "Done" }, updated: "2026-08-20T17:00:00.000+0000" } };
+    (await startScribeJira(settings, vault)).stop();
+    expect(published()).toHaveLength(1);
+    expect(published()[0]?.body).toContain("approved by Priya PM");
+  });
+
+  for (const mover of ["a non-approver", "nobody the changelog names"] as const) {
+    it(`a doc an approver's comment published this tick is not refused over a drag by ${mover}`, async () => {
+      const settings = config();
+      settings.jira.approvers = ["pm-1"];
+      await seedInReview(settings);
+      comments.push({ id: "h1", body: "approve", created: new Date().toISOString(), author: PM });
+      changelog = mover === "a non-approver" ? [{ author: SOMEONE, items: [{ field: "status", toString: "Done" }] }] : [];
+      (await startScribeJira(settings, vault)).stop();
+      expect(published()).toHaveLength(1);
+      expect(published()[0]?.body).toContain("approved by Priya PM");
+      expect(comments.filter((comment) => /haven't published|couldn't tell who approved/.test(comment.body))).toHaveLength(0);
+      expect(moves).not.toContain("In Review");
+      expect(status()).toBe("Done");
+    });
+  }
+
+  it("a non-approver's drag with no approval in the tick is still refused and put back", async () => {
+    const settings = config();
+    settings.jira.approvers = ["pm-1"];
+    await seedInReview(settings);
+    changelog = [{ author: SOMEONE, items: [{ field: "status", toString: "Done" }] }];
+    (await startScribeJira(settings, vault)).stop();
+    expect(published()).toHaveLength(0);
+    expect(comments.filter((comment) => comment.body.includes("Only the configured approvers"))).toHaveLength(1);
+    expect(moves).toEqual(["In Review"]);
+    expect(status()).toBe("In Review");
   });
 });
 

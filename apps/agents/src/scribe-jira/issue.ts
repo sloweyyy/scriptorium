@@ -269,6 +269,15 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
   // Set once this tick rewrites the draft. An approval that arrives in the same poll was
   // given to the PREVIOUS version — the reviewer has not seen the one it would publish.
   let revisedThisTick = false;
+  // Set once an approver's comment published the current draft in this tick. A drag to
+  // Approved in the same snapshot is then the column catching up with that publish, not an
+  // approval to judge: refusing it told the ticket "I haven't published" right under the
+  // "Published" comment, and dragged a published doc back into review.
+  let publishedThisTick = false;
+  const currentDraftPublished = (): boolean => {
+    const now = ctx.state.get(key);
+    return Boolean(now?.publishedPath) && now?.draftPublished !== false;
+  };
 
   const flushFeedback = async (): Promise<void> => {
     if (!pendingFeedback.length) return;
@@ -423,7 +432,10 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
           // Older than the draft on the ticket = given to an earlier draft. Holds across
           // crashes and retries, where "revised in this tick" alone would not.
           else if (revisedThisTick || !approvesCurrentDraft(comment.created, ctx.state.get(key)?.draftPostedAt)) await holdUnseenRevision();
-          else await runPublish(ctx, issue, authorName(comment));
+          else {
+            await runPublish(ctx, issue, authorName(comment));
+            publishedThisTick = currentDraftPublished();
+          }
           break;
         }
         case "approve-lesson":
@@ -473,10 +485,15 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
     if (mover?.accountId && mover.accountId === ctx.botAccountId) {
       console.warn(`[scribe] ${key}: ignoring my own transition to "${ctx.config.jira.approvedStatus}" — not a human approval`);
     } else if (!allowed.ok) {
-      // A mover the changelog can't name, or one who isn't an approver: fail closed, say why,
-      // and put the column back so the board doesn't claim an approval that didn't count.
-      await say(ctx, key, allowed.reason);
-      await moveTo(ctx, key, ctx.config.jira.inReviewStatus, ctx.config.jira.approvedStatus);
+      if (publishedThisTick && currentDraftPublished()) {
+        // Published this tick on an approver's comment: the column already tells the truth.
+        console.log(`[scribe] ${key}: "${ctx.config.jira.approvedStatus}" matches the publish an approver's comment made this tick`);
+      } else {
+        // A mover the changelog can't name, or one who isn't an approver: fail closed, say why,
+        // and put the column back so the board doesn't claim an approval that didn't count.
+        await say(ctx, key, allowed.reason);
+        await moveTo(ctx, key, ctx.config.jira.inReviewStatus, ctx.config.jira.approvedStatus);
+      }
     } else if (revisedThisTick || !approvesCurrentDraft(mover?.created, ctx.state.get(key)?.draftPostedAt)) {
       // Dragged to Approved while feedback was still being applied, or before the draft now
       // on the ticket was posted: the column was set for an older draft. Put it back in
@@ -490,7 +507,15 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
     }
   }
 
-  const refreshed = await ctx.client.getIssue(key).catch(() => issue);
+  // Unreadable now: the baseline is the agent's own latest move (or where the tick started),
+  // never the tick-start snapshot, which still showed a drag the tick may have put back. Kept
+  // as it was, that drag became the baseline, and an approver's real drag next was invisible.
+  // `lastUpdated` stays as it was, so the next tick reads the ticket again.
+  const refreshed = await ctx.client.getIssue(key).catch(() => undefined);
+  if (!refreshed) {
+    await ctx.state.patch(key, { lastStatus: ctx.state.get(key)?.lastStatus ?? status, lastError: undefined });
+    return;
+  }
   // The baseline is what this tick saw or did: the status it started from, or its own
   // latest move (moveTo records those). A change neither explains was made by someone
   // while the tick ran, and is left for the next tick to see AS a change. Recording it

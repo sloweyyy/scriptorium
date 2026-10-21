@@ -45,6 +45,7 @@ export class FileAnchors implements Anchors {
   anchorFor(alias: string): string | undefined {
     if (!isAlias(alias)) return undefined;
     const ledger = this.read();
+    if (!ledger) return undefined;
     const bound = ledger.aliases[alias];
     if (bound) return bound;
     const anchor = `anc_${randomUUID().replace(/-/g, "")}`;
@@ -53,12 +54,13 @@ export class FileAnchors implements Anchors {
   }
 
   resolve(alias: string): string | undefined {
-    return this.read().aliases[alias];
+    return this.read()?.aliases[alias];
   }
 
   bind(anchor: string, alias: string): boolean {
     if (!isAlias(alias) || !anchor) return false;
     const ledger = this.read();
+    if (!ledger) return false;
     const bound = ledger.aliases[alias];
     if (bound) return bound === anchor;
     ledger.aliases[alias] = anchor;
@@ -66,23 +68,37 @@ export class FileAnchors implements Anchors {
   }
 
   aliasesOf(anchor: string): string[] {
-    return Object.entries(this.read().aliases)
+    return Object.entries(this.read()?.aliases ?? {})
       .filter(([, bound]) => bound === anchor)
       .map(([alias]) => alias);
   }
 
-  private read(): Ledger {
+  /**
+   * The ledger on disk. A missing file is an empty ledger; anything else that can't be read or
+   * parsed (EACCES, EIO, a truncated or half-replaced file) is undefined, and callers then
+   * write nothing: writing over it would erase every binding it holds, and a bound alias
+   * would be free to move. The event still runs, on its own key's lane.
+   */
+  private read(): Ledger | undefined {
+    let raw: string;
     try {
-      const parsed = JSON.parse(fs.readFileSync(this.file, "utf8")) as { aliases?: unknown };
+      raw = fs.readFileSync(this.file, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { aliases: {} };
+      console.warn(`[anchors] could not read the ledger: ${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(raw) as { aliases?: unknown };
+      if (!parsed || typeof parsed !== "object" || !parsed.aliases || typeof parsed.aliases !== "object") throw new Error("no aliases map");
       const aliases: Record<string, string> = {};
-      if (parsed.aliases && typeof parsed.aliases === "object") {
-        for (const [alias, anchor] of Object.entries(parsed.aliases as Record<string, unknown>)) {
-          if (typeof anchor === "string" && isAlias(alias)) aliases[alias] = anchor;
-        }
+      for (const [alias, anchor] of Object.entries(parsed.aliases as Record<string, unknown>)) {
+        if (typeof anchor === "string" && isAlias(alias)) aliases[alias] = anchor;
       }
       return { aliases };
-    } catch {
-      return { aliases: {} };
+    } catch (error) {
+      console.warn(`[anchors] the ledger does not parse, leaving it as it is: ${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
     }
   }
 

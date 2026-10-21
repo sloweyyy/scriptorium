@@ -107,6 +107,61 @@ describe("the anchor store", () => {
     expect(anchors.aliasesOf(thread)).toEqual(["slack:thread:C1/1.0"]);
     expect(Object.keys(JSON.parse(await fs.readFile(file, "utf8")).aliases)).toEqual(["slack:thread:C1/1.0"]);
   });
+
+  it("leaves a ledger it cannot parse as it is, and binds nothing over it", async () => {
+    const file = path.join(tmpRoot, "anchors.json");
+    const anchors = new FileAnchors(file);
+    const thread = anchors.anchorFor("slack:thread:C1/1.0")!;
+    expect(anchors.bind(thread, "jira:issue:DOC-12")).toBe(true);
+    const good = await fs.readFile(file, "utf8");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      // Truncated mid-write, an empty file, and JSON with no aliases map: none is an empty ledger.
+      for (const bad of [good.slice(0, good.length - 7), "", "null", "{}"]) {
+        await fs.writeFile(file, bad);
+        expect(anchors.anchorFor("slack:thread:C9/9.0")).toBeUndefined();
+        expect(anchors.bind("anc_other", "jira:issue:DOC-12")).toBe(false);
+        expect(anchors.bind(thread, "jira:issue:DOC-13")).toBe(false);
+        expect(await fs.readFile(file, "utf8")).toBe(bad);
+      }
+    } finally {
+      warn.mockRestore();
+    }
+    await fs.writeFile(file, good);
+    expect(anchors.resolve("jira:issue:DOC-12")).toBe(thread);
+    expect(anchors.resolve("slack:thread:C9/9.0")).toBeUndefined();
+    expect(anchors.aliasesOf(thread).sort()).toEqual(["jira:issue:DOC-12", "slack:thread:C1/1.0"]);
+  });
+
+  it("leaves a ledger it cannot read as it is, and binds nothing over it", async () => {
+    // Root reads anything: the permission bit can't make the file unreadable there.
+    if (process.getuid?.() === 0) return;
+    const file = path.join(tmpRoot, "anchors.json");
+    const anchors = new FileAnchors(file);
+    const thread = anchors.anchorFor("slack:thread:C1/1.0")!;
+    expect(anchors.bind(thread, "jira:issue:DOC-12")).toBe(true);
+    const good = await fs.readFile(file, "utf8");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await fs.chmod(file, 0o000);
+    try {
+      expect(anchors.anchorFor("slack:thread:C9/9.0")).toBeUndefined();
+      expect(anchors.bind("anc_other", "jira:issue:DOC-12")).toBe(false);
+      expect(anchors.resolve("jira:issue:DOC-12")).toBeUndefined();
+      expect(anchors.aliasesOf(thread)).toEqual([]);
+    } finally {
+      await fs.chmod(file, 0o600);
+      warn.mockRestore();
+    }
+    expect(await fs.readFile(file, "utf8")).toBe(good);
+    expect(new FileAnchors(file).resolve("jira:issue:DOC-12")).toBe(thread);
+    expect(anchors.resolve("slack:thread:C9/9.0")).toBeUndefined();
+  });
+
+  it("reads a missing ledger as empty, so the first alias mints", () => {
+    const anchors = new FileAnchors(path.join(tmpRoot, "nested", "anchors.json"));
+    expect(anchors.resolve("slack:thread:C1/1.0")).toBeUndefined();
+    expect(anchors.anchorFor("slack:thread:C1/1.0")).toMatch(/^anc_[0-9a-f]{32}$/);
+  });
 });
 
 describe("a tool's side effects are reported only once it ran", () => {

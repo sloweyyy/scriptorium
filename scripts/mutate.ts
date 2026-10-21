@@ -2964,6 +2964,48 @@ export const MUTANTS: Mutant[] = [
     replace: "      await ran(deps, tool.name, input, \"\");\n      result = await tool.run(input, { approval:",
     evals: ["evals/anchors.test.ts"],
   },
+  {
+    control: "an unreadable anchor ledger is not read as empty (so no write erases its bindings)",
+    file: "packages/runtime/src/anchor.ts",
+    find: "      if ((error as NodeJS.ErrnoException).code === \"ENOENT\") return { aliases: {} };",
+    replace: "      return { aliases: {} };",
+    evals: ["evals/anchors.test.ts"],
+  },
+  {
+    control: "an anchor ledger that does not parse is not read as empty (so no write erases its bindings)",
+    file: "packages/runtime/src/anchor.ts",
+    find: "      console.warn(`[anchors] the ledger does not parse, leaving it as it is: ${error instanceof Error ? error.message : String(error)}`);\n      return undefined;",
+    replace: "      return { aliases: {} };",
+    evals: ["evals/anchors.test.ts"],
+  },
+  {
+    control: "only a well-formed alias is ever bound",
+    file: "packages/runtime/src/anchor.ts",
+    find: "    if (!isAlias(alias) || !anchor) return false;",
+    replace: "    if (!anchor) return false;",
+    evals: ["evals/anchors.test.ts"],
+  },
+  {
+    control: "an alias is bound only from the create tool's own whole first line, not from text inside it",
+    file: "packages/connectors/src/aliases.ts",
+    find: "/^(?:Created|Already created) jira:([A-Z][A-Z0-9_]*-\\d+) \\S+$/",
+    replace: "/(?:Created|Already created) jira:([A-Z][A-Z0-9_]*-\\d+) \\S+/",
+    evals: ["evals/anchors.test.ts"],
+  },
+  {
+    control: "an alias is bound only from the create tool's first line, not from anywhere in its output",
+    file: "packages/connectors/src/aliases.ts",
+    find: ".exec(output.split(\"\\n\", 1)[0] ?? \"\")",
+    replace: ".exec(output.split(\"\\n\").find((line) => line.startsWith(\"Created \")) ?? \"\")",
+    evals: ["evals/anchors.test.ts"],
+  },
+  {
+    control: "the model's tool input never binds an alias (only the tool's own output does)",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "onRan: (tool, _input, result) => bindCreated(key, tool, result) });",
+    replace: "onRan: (tool, _input, result) => bindCreated(key, tool, `Created ${JSON.stringify(_input).match(/jira:(?:issue:)?([A-Z]+-\\d+)/)?.[0]?.replace(\"issue:\", \"\")} https://x\\n${result}`) });",
+    evals: ["evals/anchors.test.ts"],
+  },
 ];
 
 function run(evals: string[]): boolean {

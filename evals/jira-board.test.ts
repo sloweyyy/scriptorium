@@ -62,6 +62,8 @@ let failRevisionPosts = false;
 let afterPost: { text: string; run: () => void } | undefined;
 /** The next read of the issue itself fails, as a 503 would. */
 let failNextIssueRead = false;
+/** The next N reads of the issue itself fail: one outage spanning several reads in a tick. */
+let failIssueReads = 0;
 /** The next transition fails the same way. */
 let failNextTransition = false;
 /** Run once, right after a transition is made: something happening mid-tick, after a move. */
@@ -86,7 +88,7 @@ let assignments: Array<string | null>;
 /** Changelog served under expand=changelog — who moved the ticket where. */
 /** Attachments the agent uploaded, by download id: the fake keeps what Jira would. */
 let uploaded: Map<string, Buffer>;
-let changelog: Array<{ author: { displayName: string; accountId: string }; items: Array<{ field: string; toString: string }> }>;
+let changelog: Array<{ author: { displayName: string; accountId: string }; created?: string; items: Array<{ field: string; toString: string }> }>;
 
 const COMPLETE_PRD = [
   "----",
@@ -241,8 +243,9 @@ function stubJira(): void {
     }
     if (url.includes("/attachments") || url.includes("/attachment")) return json([]);
     if (url.includes("expand=changelog")) return json({ ...issue, changelog: { histories: changelog } });
-    if (failNextIssueRead && url.includes("/rest/api/2/issue/") && method === "GET") {
-      failNextIssueRead = false;
+    if ((failNextIssueRead || failIssueReads > 0) && url.includes("/rest/api/2/issue/") && method === "GET") {
+      if (failIssueReads > 0) failIssueReads -= 1;
+      else failNextIssueRead = false;
       throw new TypeError("fetch failed: connect ECONNRESET");
     }
     if (url.includes("/rest/api/2/issue/")) return json(issue);
@@ -267,6 +270,7 @@ beforeEach(async () => {
   staleSearch = undefined;
   afterPost = undefined;
   failNextIssueRead = false;
+  failIssueReads = 0;
   failNextTransition = false;
   afterTransition = undefined;
   uploaded = new Map();
@@ -1407,6 +1411,36 @@ describe("the end of a tick acts on what the tick did", () => {
       expect(comments.filter((comment) => /haven't published|couldn't tell who approved/.test(comment.body))).toHaveLength(0);
       expect(moves).not.toContain("In Review");
       expect(status()).toBe("Done");
+    });
+  }
+
+  // The refusal (or hold) is said, then the ticket can't be read: not to put it back, and not
+  // at the tick's end. The move back is owed, made next tick; the drag itself was answered.
+  for (const answer of ["refused", "held"] as const) {
+    it(`a drag ${answer} while the ticket can't be read is answered once, and put back the tick after`, async () => {
+      const settings = config();
+      settings.jira.approvers = ["pm-1"];
+      await seedInReview(settings);
+      const text = answer === "refused" ? "Only the configured approvers" : "you haven't seen yet";
+      if (answer === "refused") changelog = [{ author: SOMEONE, items: [{ field: "status", toString: "Done" }] }];
+      else {
+        // An approver's drag older than the draft on the ticket: set for an earlier draft.
+        const file = path.join(settings.jira.stateDir, "jira-state.json");
+        const saved = JSON.parse(await fs.readFile(file, "utf8")) as { issues: Record<string, Record<string, unknown>> };
+        saved.issues["DOC-1"] = { ...saved.issues["DOC-1"], draftPostedAt: "2026-08-20T10:00:00.000+0000" };
+        await fs.writeFile(file, JSON.stringify(saved));
+        changelog = [{ author: PM, created: "2026-08-20T09:00:00.000+0000", items: [{ field: "status", toString: "Done" }] }];
+      }
+      afterPost = { text, run: () => { failIssueReads = 2; } };
+      (await startScribeJira(settings, vault)).stop();
+      expect(comments.filter((comment) => comment.body.includes(text))).toHaveLength(1);
+      expect(moves).toEqual([]);
+
+      (await startScribeJira(settings, vault)).stop();
+      expect(comments.filter((comment) => comment.body.includes(text))).toHaveLength(1);
+      expect(moves).toEqual(["In Review"]);
+      expect(status()).toBe("In Review");
+      expect(published()).toHaveLength(0);
     });
   }
 

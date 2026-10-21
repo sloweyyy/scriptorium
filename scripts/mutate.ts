@@ -2922,6 +2922,13 @@ export const MUTANTS: Mutant[] = [
     replace: "if (false) {",
     evals: ["evals/jira-board.test.ts"],
   },
+  {
+    control: "a drag answered while the ticket can't be read is not answered again the next tick",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "const answered = owed !== undefined && owed.from.toLowerCase() === status.toLowerCase();",
+    replace: "const answered = false;",
+    evals: ["evals/jira-board.test.ts"],
+  },
 ];
 
 function run(evals: string[]): boolean {

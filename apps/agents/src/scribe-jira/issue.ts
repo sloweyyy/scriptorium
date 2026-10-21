@@ -510,10 +510,16 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
   // Unreadable now: the baseline is the agent's own latest move (or where the tick started),
   // never the tick-start snapshot, which still showed a drag the tick may have put back. Kept
   // as it was, that drag became the baseline, and an approver's real drag next was invisible.
-  // `lastUpdated` stays as it was, so the next tick reads the ticket again.
+  // `lastUpdated` stays as it was, so the next tick reads the ticket again. One exception: a
+  // move off the snapshot's status that this tick owes but couldn't make (a refused or held
+  // drag to Approved, put back only on the next tick). That drag was answered, so the
+  // snapshot's status is the baseline: kept as the old one, the next tick read the same drag
+  // as new and said its refusal again.
   const refreshed = await ctx.client.getIssue(key).catch(() => undefined);
   if (!refreshed) {
-    await ctx.state.patch(key, { lastStatus: ctx.state.get(key)?.lastStatus ?? status, lastError: undefined });
+    const owed = ctx.state.get(key)?.pendingMove;
+    const answered = owed !== undefined && owed.from.toLowerCase() === status.toLowerCase();
+    await ctx.state.patch(key, { lastStatus: answered ? status : (ctx.state.get(key)?.lastStatus ?? status), lastError: undefined });
     return;
   }
   // The baseline is what this tick saw or did: the status it started from, or its own

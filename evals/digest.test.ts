@@ -17,6 +17,16 @@ describe("weekly digest", () => {
     expect(digestDue(new Date("2026-10-02T15:00:00Z"), monday9)).toBe(true);
   });
 
+  it("a Sunday digest waits for Sunday's hour, whether Sunday is written 7 or 0", () => {
+    for (const weekday of [7, 0]) {
+      const sunday9 = { weekday, hour: 9 };
+      expect(digestDue(new Date("2026-09-28T00:30:00Z"), sunday9)).toBe(false);
+      expect(digestDue(new Date("2026-10-03T23:00:00Z"), sunday9)).toBe(false);
+      expect(digestDue(new Date("2026-10-04T08:59:00Z"), sunday9)).toBe(false);
+      expect(digestDue(new Date("2026-10-04T09:00:00Z"), sunday9)).toBe(true);
+    }
+  });
+
   it("posts once per week across repeated checks and restarts, and again next week", async () => {
     const ledger = new MemoryEffectLedger();
     const posts: string[] = [];

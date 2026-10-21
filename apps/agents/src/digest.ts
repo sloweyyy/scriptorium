@@ -18,7 +18,7 @@ export function isoWeek(date: Date): string {
 }
 
 export interface DigestSchedule {
-  /** 1 = Monday … 7 = Sunday, in UTC. */
+  /** 1 = Monday … 7 = Sunday, in UTC. 0 is also Sunday. */
   weekday: number;
   /** Hour of day, UTC. The digest goes out at the first check at or after it. */
   hour: number;
@@ -27,7 +27,8 @@ export interface DigestSchedule {
 /** Due once the scheduled weekday+hour has passed this week. `once` makes the rest idempotent. */
 export function digestDue(now: Date, schedule: DigestSchedule): boolean {
   const weekday = now.getUTCDay() || 7;
-  return weekday > schedule.weekday || (weekday === schedule.weekday && now.getUTCHours() >= schedule.hour);
+  const scheduled = schedule.weekday || 7;
+  return weekday > scheduled || (weekday === scheduled && now.getUTCHours() >= schedule.hour);
 }
 
 export async function postDigestOnce(

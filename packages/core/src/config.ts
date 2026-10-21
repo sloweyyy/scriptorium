@@ -184,7 +184,7 @@ export interface TeammateSettings extends SlackAppTokens {
   dailyTokensTotal?: number;
   /** Channel for the weekly digest. Unset: no digest. */
   digestChannel?: string;
-  /** When it goes out, UTC: weekday 1–7 (Mon–Sun) and hour. Default Monday 09:00. */
+  /** When it goes out, UTC: weekday 1–7 (Mon–Sun; 0 loads as Sunday) and hour. Default Monday 09:00. */
   digestWeekday: number;
   digestHour: number;
 }
@@ -369,7 +369,8 @@ export function loadConfig(repoRoot = process.cwd()): AppConfig {
       dailyTokens: envOptionalNumber("TEAMMATE_DAILY_TOKENS"),
       dailyTokensTotal: envOptionalNumber("TEAMMATE_DAILY_TOKENS_TOTAL"),
       digestChannel: env("TEAMMATE_DIGEST_CHANNEL"),
-      digestWeekday: envNumber("TEAMMATE_DIGEST_WEEKDAY", 1, { min: 0, max: 6 }),
+      // ISO 1=Mon..7=Sun; 0 is accepted as Sunday, as cron writes it.
+      digestWeekday: envNumber("TEAMMATE_DIGEST_WEEKDAY", 1, { min: 0, max: 7 }) || 7,
       digestHour: envNumber("TEAMMATE_DIGEST_HOUR", 9, { min: 0, max: 23 }),
     },
     jira: {

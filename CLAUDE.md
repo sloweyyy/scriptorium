@@ -77,6 +77,16 @@ pnpm privacy:erase <person> --by <you> [--dry-run]   # erase one person (audit t
   `Co-Authored-By: Truong Le Vinh Phuc <truonglevinhphuc2006@gmail.com>`
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
 
+## Loop engineering
+
+Continuous improvement runs as one PR per iteration toward the north star: a policy-first
+teammate in any chat tool (Slack, Discord, Teams…) that works for the whole team. Playbook in
+`docs/loop/README.md`. Goal + milestones in `docs/loop/NORTH_STAR.md`, ranked work in
+`docs/loop/BACKLOG.md`, history in `docs/loop/LOG.md`. Run it with the saved workflow
+`.claude/workflows/loop.js` (`args: {date: "YYYY-MM-DD"}`). The loop never merges. Push and
+open PRs as `sloweyyy` (`GH_TOKEN=$(gh auth token --user sloweyyy)`): the default gh account
+is read-only on this repo.
+
 ## Engineering TODO (in order)
 
 > **Agent A (Scribe) runs through JIRA, not Slack.** Curator stays on Slack.

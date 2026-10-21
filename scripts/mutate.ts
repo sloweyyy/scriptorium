@@ -1383,9 +1383,23 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a channel whose privacy can't be read counts as private",
     file: "apps/agents/src/teammate-bot.ts",
-    find: "        channelPrivacy.delete(channel);\n        return true;",
-    replace: "        channelPrivacy.delete(channel);\n        return false;",
+    find: "        } else channelPrivacy.delete(channel);\n        return true;",
+    replace: "        } else channelPrivacy.delete(channel);\n        return false;",
     evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "an app missing the scope to read a channel's privacy keeps it private, without asking Slack on every mention",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "?.data?.error === \"missing_scope\") {",
+    replace: "?.data?.error === \"not_a_slack_error\") {",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "the Teammate's manifest grants the scopes its channel-privacy lookup needs",
+    file: "slack-manifests/teammate.yaml",
+    find: "      - groups:read\n",
+    replace: "",
+    evals: ["evals/manifests.test.ts", "evals/doctor.test.ts"],
   },
   {
     control: "a comment in a manifest is never read as a scope",

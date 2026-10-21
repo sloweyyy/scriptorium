@@ -54,7 +54,7 @@ let progressDelays: number[] = [];
 /** Lose the next reminder post's response after Slack stored it. */
 let loseNextReminderPost = false;
 /** What `conversations.info` says about a channel, by id; and every channel it was asked about. */
-let channelKinds: Record<string, Record<string, boolean> | "fail"> = {};
+let channelKinds: Record<string, Record<string, boolean> | "fail" | "missing_scope"> = {};
 let infoCalls: string[] = [];
 
 /** Posted messages, as they read NOW: an update replaces the text of the message it targets. */
@@ -89,6 +89,8 @@ const slack = {
       if (args.channel === "D1") return { ok: true, channel: { id: "D1", is_im: true, user: "U1" } };
       const kind = channelKinds[args.channel];
       if (kind === "fail") throw new Error("ratelimited");
+      // What Slack's WebClient throws for a token without channels:read/groups:read/mpim:read.
+      if (kind === "missing_scope") throw Object.assign(new Error("An API error occurred: missing_scope"), { code: "slack_webapi_platform_error", data: { ok: false, error: "missing_scope", needed: "channels:read" } });
       if (kind) return { ok: true, channel: { id: args.channel, ...kind } };
       if (args.channel.startsWith("C")) return { ok: true, channel: { id: args.channel, is_private: false, is_im: false, is_mpim: false } };
       throw new Error("channel_not_found");
@@ -1239,6 +1241,24 @@ describe("questions not everyone can read stay private when they become gaps", (
     expect(tickets).toBe(1);
     expect(trail).toContain(QUESTION);
     expect(trail).not.toContain("(Asked privately.)");
+  });
+
+  it("an app without the scope to read a channel's privacy keeps it private, and doesn't ask again on every mention", async () => {
+    channelKinds.C1 = "missing_scope";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const board = gapBoard();
+      const core = await createTeammate(config(), vault, slack as never, "UBOT", undefined, { gapTickets: board.client });
+      script = { calls: [], reply: "NOT_IN_KB: rollout calendar" };
+      await core.onMention({ channel: "C1", ts: "1.0", user: "U1", text: `<@UBOT> ${QUESTION}` });
+      await core.onMention({ channel: "C1", ts: "2.0", user: "U1", text: `<@UBOT> ${QUESTION}` });
+      await settle(core);
+      expect(infoCalls.filter((channel) => channel === "C1")).toHaveLength(1);
+      expect(await gapTrail(board.tickets)).not.toContain("zebra");
+      expect(warn.mock.calls.filter((call) => String(call[0]).includes("missing_scope") || String(call[0]).includes("groups:read"))).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("looks a channel's privacy up once, not on every mention", async () => {

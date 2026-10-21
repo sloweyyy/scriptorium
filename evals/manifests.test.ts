@@ -17,4 +17,14 @@ describe("Slack app manifests, least privilege", () => {
     expect((await manifestBotScopes("slack-manifests/curator.yaml")).sort()).toEqual(["app_mentions:read", "chat:write", "reactions:write"]);
     expect(await fs.readFile("slack-manifests/curator.yaml", "utf8")).toMatch(/interactivity:\s*\n\s*is_enabled: false/);
   });
+
+  it("Teammate: the channel-privacy lookup has the read scopes it needs, or every gap stops quoting its question", async () => {
+    // conversations.info needs channels:read (public), groups:read (private) and mpim:read
+    // (group DM). Without them every lookup fails, every channel reads as private, and the gap
+    // loop to the docs writer loses every question.
+    const source = await fs.readFile("apps/agents/src/teammate-bot.ts", "utf8");
+    expect(source).toMatch(/conversations\.info\(/);
+    const scopes = await manifestBotScopes("slack-manifests/teammate.yaml");
+    expect(scopes).toEqual(expect.arrayContaining(["channels:read", "groups:read", "mpim:read", "im:read"]));
+  });
 });

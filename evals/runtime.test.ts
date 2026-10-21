@@ -65,11 +65,18 @@ describe("gate", () => {
 
   it("hears a source only inside its configured scope", () => {
     const gate = new Gate({ selfIds: [], scopes: { slack: ["slack:thread:C1/"], jira: [] } });
-    expect(gate.check(event(keys.slackThread("C1", "1.0"))).accepted).toBe(true);
-    expect(gate.check(event(keys.slackThread("C2", "1.0")))).toMatchObject({ accepted: false, reason: expect.stringContaining("outside") });
+    expect(gate.check(event(keys.thread("slack", "C1", "1.0"))).accepted).toBe(true);
+    expect(gate.check(event(keys.thread("slack", "C2", "1.0")))).toMatchObject({ accepted: false, reason: expect.stringContaining("outside") });
     // An empty scope list means nowhere; an absent one means everywhere.
     expect(gate.check(event(A)).accepted).toBe(false);
     expect(gate.check(event(keys.confluencePage("42"))).accepted).toBe(true);
+  });
+
+  it("scopes any surface by name, not a closed list — a Discord thread exactly like a Slack one", () => {
+    const gate = new Gate({ selfIds: [], scopes: { discord: ["discord:thread:G1/"] } });
+    const discord = (key: string) => event(key, { source: "discord" });
+    expect(gate.check(discord("discord:thread:G2/1.0"))).toMatchObject({ accepted: false, reason: expect.stringContaining("outside") });
+    expect(gate.check(discord("discord:thread:G1/1.0"))).toEqual({ accepted: true });
   });
 
   it("does not remember a refused delivery as seen", () => {
@@ -84,6 +91,14 @@ describe("gate", () => {
     expect(keys.jiraIssue("doc-7")).toBe("jira:issue:DOC-7");
     expect(keys.githubPull("Org/Repo", 12)).toBe("github:pull:org/repo#12");
     expect(sourceOfKey(keys.confluencePage("9"))).toBe("confluence");
+  });
+
+  it("builds a thread key for any chat surface, and reads the surface back from any alias", () => {
+    expect(keys.thread("slack", "C1", "1.0")).toBe("slack:thread:C1/1.0");
+    expect(keys.thread("discord", "G1", "2.0")).toBe("discord:thread:G1/2.0");
+    expect(sourceOfKey("discord:thread:G1/2.0")).toBe("discord");
+    expect(sourceOfKey(keys.thread("slack", "C1", "1.0"))).toBe("slack");
+    expect(sourceOfKey("not a key")).toBeUndefined();
   });
 });
 
@@ -158,6 +173,31 @@ describe("keyed queue", () => {
     await second.drain(1_000);
     expect(errors).toEqual(["jira:issue:DOC-1: boom"]);
     expect(calls).toBe(2);
+  });
+
+  it("runs events of one anchor one at a time, in order, whatever their keys; other anchors in parallel", async () => {
+    const first = deferred();
+    const started: string[] = [];
+    const finished: string[] = [];
+    const queue = new KeyedQueue(async (_lane, events) => {
+      for (const e of events) {
+        started.push(e.key);
+        if (e.key === "slack:thread:C1/1.0") await first.promise;
+        finished.push(e.key);
+      }
+    }, { concurrency: 4 });
+    // A Slack thread and the ticket it filed: one conversation, two keys.
+    queue.push(event("slack:thread:C1/1.0", { anchor: "anc_one" }));
+    queue.push(event(keys.jiraIssue("DOC-12"), { anchor: "anc_one" }));
+    queue.push(event(keys.jiraIssue("DOC-99"), { anchor: "anc_two" }));
+    await tick();
+    await tick();
+    // The ticket's event waits behind the thread's; the other conversation already ran.
+    expect(started).toEqual(["slack:thread:C1/1.0", "jira:issue:DOC-99"]);
+    expect(finished).toEqual(["jira:issue:DOC-99"]);
+    first.resolve();
+    await queue.drain(1_000);
+    expect(finished).toEqual(["jira:issue:DOC-99", "slack:thread:C1/1.0", "jira:issue:DOC-12"]);
   });
 
   it("drain closes intake, finishes accepted work, and gives up at the deadline", async () => {

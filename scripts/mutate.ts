@@ -1222,7 +1222,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "an event arriving during shutdown isn't marked seen and then dropped",
     file: "apps/agents/src/teammate-bot.ts",
-    find: "(queue.open ? gate.check(event) : { accepted: false, reason: \"shutting down\" } as ReturnType<Gate[\"check\"]>)",
+    find: "queue.open ? gate.check(event) : ({ accepted: false, reason: \"shutting down\" } as ReturnType<Gate[\"check\"]>)",
     replace: "gate.check(event)",
     evals: ["evals/teammate-e2e.test.ts"],
   },
@@ -2935,6 +2935,34 @@ export const MUTANTS: Mutant[] = [
     find: "      jira_create_issue: write,",
     replace: '      jira_create_issue: "allow",',
     evals: ["evals/agent-policy.test.ts"],
+  },
+  {
+    control: "an alias bound to one conversation is never moved to another",
+    file: "packages/runtime/src/anchor.ts",
+    find: "    if (bound) return bound === anchor;",
+    replace: "",
+    evals: ["evals/anchors.test.ts"],
+  },
+  {
+    control: "events of one conversation share a lane across surfaces",
+    file: "packages/runtime/src/queue.ts",
+    find: "  return event.anchor ?? event.key;",
+    replace: "  return event.key;",
+    evals: ["evals/runtime.test.ts"],
+  },
+  {
+    control: "a side effect is reported only after the tool ran (not while pending)",
+    file: "packages/policy/src/guard.ts",
+    find: "  if (!created) return { kind: \"pending\", request };",
+    replace: "  await ran(deps, tool.name, input, \"\");\n  if (!created) return { kind: \"pending\", request };",
+    evals: ["evals/anchors.test.ts"],
+  },
+  {
+    control: "a side effect is reported only after the tool ran (not before it)",
+    file: "packages/policy/src/guard.ts",
+    find: "      result = await tool.run(input, { approval:",
+    replace: "      await ran(deps, tool.name, input, \"\");\n      result = await tool.run(input, { approval:",
+    evals: ["evals/anchors.test.ts"],
   },
 ];
 

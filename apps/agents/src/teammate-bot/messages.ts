@@ -38,7 +38,7 @@ export function mentionToEvent(mention: SlackMention): AgentEvent<{ channel: str
   return {
     id: mention.client_msg_id ?? `${mention.channel}:${mention.event_ts ?? mention.ts}`,
     source: "slack",
-    key: keys.slackThread(mention.channel, threadTs),
+    key: keys.thread("slack", mention.channel, threadTs),
     kind: "slack.mention",
     actor: { id: `slack:${mention.user ?? mention.bot_id ?? "unknown"}`, isBot: Boolean(mention.bot_id) },
     payload: { channel: mention.channel, threadTs, text: capQuestion(stripMentions(mention.text)), ts: mention.ts },

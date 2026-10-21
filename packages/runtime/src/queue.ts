@@ -3,7 +3,8 @@ import type { AgentEvent } from "./event";
 /**
  * Work, one lane per conversation.
  *
- * Events for the same key run strictly one batch at a time and in arrival order, so a
+ * A lane is the event's anchor when it has one, else its key: a Slack thread and the ticket
+ * it filed share an anchor, so their events never run at once. Events for the same lane run strictly one batch at a time and in arrival order, so a
  * ticket's `feedback` and `approve` can never race each other. Different keys run in
  * parallel up to `concurrency`, so one slow draft never stalls every other conversation —
  * the failure mode of a single serial poll loop.
@@ -12,7 +13,13 @@ import type { AgentEvent } from "./event";
  * follow-up run. Five comments during a long draft cost one more run, not five.
  */
 
+/** `key` is the lane (anchor or key). Each event still carries its own `key` for replies. */
 export type Handler = (key: string, events: AgentEvent[]) => Promise<void>;
+
+/** The lane an event runs on. */
+export function laneOf(event: AgentEvent): string {
+  return event.anchor ?? event.key;
+}
 
 export interface QueueOptions {
   concurrency?: number;
@@ -37,11 +44,12 @@ export class KeyedQueue {
   /** Returns false once the queue is stopped: intake is closed, the event was not taken. */
   push(event: AgentEvent): boolean {
     if (this.stopped) return false;
-    const batch = this.pending.get(event.key);
+    const lane = laneOf(event);
+    const batch = this.pending.get(lane);
     if (batch) batch.push(event);
     else {
-      this.pending.set(event.key, [event]);
-      if (!this.running.has(event.key)) this.ready.push(event.key);
+      this.pending.set(lane, [event]);
+      if (!this.running.has(lane)) this.ready.push(lane);
     }
     this.pump();
     return true;

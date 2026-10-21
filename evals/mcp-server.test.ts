@@ -103,6 +103,16 @@ describe("knowledge MCP server", () => {
     expect(essay.isError).toBe(true);
   });
 
+  // The megabyte case above errors with or without the limit, because the search itself
+  // breaks on it. This one is cheap enough to search, so only the limit refuses it.
+  it("refuses a search query one character over its limit, and searches one at the limit", async () => {
+    const over = await client.callTool({ name: "search_vault", arguments: { query: "x".repeat(501) } });
+    expect(over.isError).toBe(true);
+    expect(text(over)).toMatch(/500/);
+    const at = await client.callTool({ name: "search_vault", arguments: { query: "x".repeat(500) } });
+    expect(at.isError).toBeFalsy();
+  });
+
   it("ask answers cited, refuses uncited, and files nothing for a gap", async () => {
     const before = await tree(tmpRoot);
     reply = "One email a day [[docs/digest-emails]].";

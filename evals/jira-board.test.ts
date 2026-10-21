@@ -1408,7 +1408,7 @@ describe("the end of a tick acts on what the tick did", () => {
       (await startScribeJira(settings, vault)).stop();
       expect(published()).toHaveLength(1);
       expect(published()[0]?.body).toContain("approved by Priya PM");
-      expect(comments.filter((comment) => /haven't published|couldn't tell who approved/.test(comment.body))).toHaveLength(0);
+      expect(comments.filter((comment) => /so I haven't|couldn't tell who approved|Only the configured approvers/.test(comment.body))).toHaveLength(0);
       expect(moves).not.toContain("In Review");
       expect(status()).toBe("Done");
     });

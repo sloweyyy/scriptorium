@@ -213,14 +213,14 @@ async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{
 export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> {
   // Each caller (the poller, a webhook) takes its view of the ticket before the lock. A view
   // older than what the ledger has already handled is read again: acted on as it was, a
-  // drag to Approved the first caller answered was answered a second time. So is a view no newer
-  // than one a tick finished with but couldn't read back at its end: `lastUpdated` stayed old
-  // there, and the same drag, seen again, was refused (or held) again.
+  // drag to Approved the first caller answered was answered a second time. So is every view
+  // after a tick that couldn't read the ticket back at its end (`rereadNext`): `lastUpdated`
+  // stayed old there, and a view taken mid-tick, even after the agent's own comment, still
+  // showed the drag it answered, which was refused (or held) again.
   const ledger = ctx.state.get(snapshot.key);
   const viewed = Date.parse(snapshot.fields.updated ?? "");
   const recorded = Date.parse(ledger?.lastUpdated ?? "");
-  const handled = Date.parse(ledger?.handledThrough ?? "");
-  const stale = viewed < recorded || (handled > (Number.isNaN(recorded) ? -Infinity : recorded) && viewed <= handled);
+  const stale = viewed < recorded || ledger?.rereadNext === true;
   const issue = stale ? await ctx.client.getIssue(snapshot.key) : snapshot;
   const key = issue.key;
   const status = issueStatus(issue);
@@ -534,7 +534,7 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
   const refreshed = await ctx.client.getIssue(key).catch(() => undefined);
   if (!refreshed) {
     const dragStillThere = answeredDrag && !putBack;
-    await ctx.state.patch(key, { lastStatus: dragStillThere ? status : (ctx.state.get(key)?.lastStatus ?? status), handledThrough: issue.fields.updated, lastError: undefined });
+    await ctx.state.patch(key, { lastStatus: dragStillThere ? status : (ctx.state.get(key)?.lastStatus ?? status), rereadNext: true, lastError: undefined });
     return;
   }
   // The baseline is what this tick saw or did: the status it started from, or its own
@@ -548,7 +548,7 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
   await ctx.state.patch(key, {
     lastStatus: unseen ? agentsOwn : now,
     lastUpdated: refreshed.fields.updated,
-    handledThrough: issue.fields.updated,
+    rereadNext: undefined,
     lastError: undefined,
   });
 }

@@ -69,11 +69,12 @@ export interface IssueState {
   /** `updated` from the last poll — lets an untouched issue skip its comment fetch. */
   lastUpdated?: string;
   /**
-   * `updated` of the view the last finished tick worked from. Ahead of `lastUpdated` when that
-   * tick's final read failed: a second view of the same moment (a webhook nudge, a lagging
-   * search) is then read again rather than acted on, or a drag it answered was answered twice.
+   * Set when a tick couldn't read the ticket back at its end, cleared by the next tick that
+   * can. While set, every caller's view is read again rather than acted on: `lastUpdated` is
+   * old then, and any view taken before the lock (a webhook nudge fired by the agent's own
+   * refusal comment, a lagging search) could still show a drag the tick answered and put back.
    */
-  handledThrough?: string;
+  rereadNext?: boolean;
   /** Last failure reported on the ticket, so a repeating error is not commented every poll. */
   lastError?: string;
   /**

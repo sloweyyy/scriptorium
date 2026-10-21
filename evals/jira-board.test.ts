@@ -1518,8 +1518,10 @@ describe("the end of a tick acts on what the tick did", () => {
 
   // The drag is answered and put back, then the tick's last read of the ticket fails. A second
   // caller holding the view of the drag (a webhook nudge, a lagging search) must not answer it again.
-  for (const answer of ["refused", "held"] as const) {
-    it(`a drag ${answer} and put back, whose last read failed, is not answered again from a view of the drag`, async () => {
+  // The second view may be the drag itself, or one taken mid-tick after the agent's own comment
+  // (its webhook nudges a read before the lock): newer than the tick's start, still dragged.
+  for (const answer of ["refused", "held"] as const) for (const seen of ["the drag", "a later view after its own comment"] as const) {
+    it(`a drag ${answer} and put back, whose last read failed, is not answered again from ${seen}`, async () => {
       const settings = config();
       settings.jira.approvers = ["pm-1"];
       await seedInReview(settings);
@@ -1542,7 +1544,8 @@ describe("the end of a tick acts on what the tick did", () => {
       expect((await ledger(settings)).lastUpdated).toBe("2026-08-20T10:00:00.000+0000");
 
       // Later than the ledger's last read, and still showing the drag.
-      staleSearch = view;
+      const at = (view.fields as { updated: string }).updated;
+      staleSearch = seen === "the drag" ? view : { ...view, fields: { ...(view.fields as object), updated: new Date(Date.parse(at) + 60_000).toISOString().replace("Z", "+0000") } };
       const reads = fetched.filter((url) => url.includes("/rest/api/2/issue/DOC-1")).length;
       (await startScribeJira(settings, vault)).stop();
       expect(fetched.filter((url) => url.includes("/rest/api/2/issue/DOC-1")).length).toBeGreaterThan(reads);

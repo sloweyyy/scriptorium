@@ -9,10 +9,11 @@ across Slack, Jira and Confluence) all run on the same pieces.
  Slack · Jira · Confluence · GitHub · cron
         │ ingress: verify signature, drop redeliveries
         ▼
- AgentEvent {id, source, key, kind, actor, payload}          packages/runtime/src/event.ts
+ AgentEvent {id, source, key, anchor?, kind, actor, payload}  packages/runtime/src/event.ts
         │ Gate: own events, other bots, out-of-scope → refused with a reason
+        │ anchor: the conversation's opaque id; the key is one alias   runtime/src/anchor.ts
         ▼
- KeyedQueue: one lane per conversation (thread · ticket · page · PR)   runtime/src/queue.ts
+ KeyedQueue: one lane per conversation (anchor, else key)             runtime/src/queue.ts
         ▼
  assembleAgent(config, connector tools, skills)                        runtime/src/agent.ts
         │ only allowed tools are offered, each wrapped in `guard`
@@ -80,6 +81,14 @@ Each invariant is enforced in one place, and an eval fails if it is broken.
     to the web unlinked, Quartz's own HTML-making syntax broken. `evals/inert.test.ts`,
     `evals/publish.test.ts`, and `evals/site-render.test.ts`, which renders inert pages with
     the public site's own parser
+14. **A conversation is one anchor, whatever surface it is on.** Each external key
+    (`slack:thread:C/T`, `jira:issue:DOC-7`, `discord:thread:G/T`) is an alias of an
+    opaque anchor id, kept in `.scriptorium-state/anchors.json`. An alias is bound only as
+    the side effect of a tool call that ran, from the tool's own output (`GuardDeps.onRan`,
+    `aliasesFromResult`), never from what the model or a message says, and once bound it
+    never moves. Intake only looks an anchor up; one is minted when a call joins a second
+    alias, so the ledger holds only conversations that span surfaces. Events sharing an anchor
+    share one queue lane; each still replies on its own key. `evals/anchors.test.ts`, `evals/runtime.test.ts`
 
 The threat model behind these invariants is in [`security-model.md`](security-model.md).
 To add to the system, see [`extending.md`](extending.md).

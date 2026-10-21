@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { AgentEvent, EventSource } from "./event";
+import type { AgentEvent } from "./event";
 
 /**
  * The intake gate: which events an agent even looks at.
@@ -17,9 +17,10 @@ export interface GateRules {
   allowBots?: boolean;
   /**
    * Where each source may be heard, as key prefixes (e.g. `slack:thread:C123/`,
-   * `jira:issue:DOC-`). A source with no entry is heard everywhere; an empty list, nowhere.
+   * `jira:issue:DOC-`, `discord:thread:G1/`), keyed by surface name. A source with no entry
+   * is heard everywhere; an empty list, nowhere.
    */
-  scopes?: Partial<Record<EventSource, readonly string[]>>;
+  scopes?: Readonly<Record<string, readonly string[] | undefined>>;
 }
 
 export type GateResult = { accepted: true } | { accepted: false; reason: string };

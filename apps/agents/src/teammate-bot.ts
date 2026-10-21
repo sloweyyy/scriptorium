@@ -6,6 +6,7 @@ import {
   REJECT_ACTION,
   RETRY_ACTION,
   SlackApprovalChannel,
+  aliasesFromResult,
   describeRequest,
   escapeMrkdwn,
   type SlackClient,
@@ -13,7 +14,7 @@ import {
 } from "@scriptorium/connectors";
 import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type CommentRestriction, type JiraClient } from "@scriptorium/jira";
 import { FileApprovalStore, PLAN_TOOL, effectiveStatus, executeApproved, mayApprove, planTool, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
-import { DailyBudget, FileEffectLedger, FileSeenIds, Gate, Lease, KeyedQueue, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, scopesFor, type AgentEvent } from "@scriptorium/runtime";
+import { DailyBudget, FileAnchors, FileEffectLedger, FileSeenIds, Gate, Lease, KeyedQueue, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, scopesFor, type AgentEvent } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
 import { gapTicketOpener } from "./gap-ticket";
@@ -170,7 +171,24 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     // Where each card is, for the approvals inbox. The ledger is the Teammate's durable state.
     onPosted: (request, where) => ledger.put({ op: cardOp(request.id), status: "done", startedAt: new Date().toISOString(), result: where, meta: { kind: "teammate.card" } }),
   });
-  const guardDepsFor = (key: string): GuardDeps => ({ store, channel: approvalChannel, auditFile: config.auditFile, key });
+  // One anchor per conversation, across surfaces: a ticket filed from a thread joins its anchor.
+  const anchors = new FileAnchors(path.join(stateDir, "anchors.json"));
+  /**
+   * Binds what a call created to the conversation it ran in — only from `onRan`, so only after
+   * the tool really ran, and only from the tool's own output. The model's input binds nothing.
+   */
+  const bindCreated = async (key: string, tool: string, result: string): Promise<void> => {
+    const created = aliasesFromResult(tool, result);
+    if (!created.length) return;
+    // The source conversation's anchor is minted here, together with the alias it joins.
+    const anchor = anchors.anchorFor(key);
+    if (!anchor) return;
+    for (const alias of created) {
+      const bound = anchors.bind(anchor, alias);
+      await audit(config.auditFile, { type: bound ? "anchor.bound" : "anchor.bind_refused", actor: "teammate", key, anchor, alias, tool }).catch(() => undefined);
+    }
+  };
+  const guardDepsFor = (key: string): GuardDeps => ({ store, channel: approvalChannel, auditFile: config.auditFile, key, onRan: (tool, _input, result) => bindCreated(key, tool, result) });
   // Spend caps per channel per day, seeded from today's audit so a restart is not a reset.
   const budget = new DailyBudget(settings.dailyTokens);
   // Per scope, each DM is its own channel: N people each get the full cap. The total caps them all.
@@ -213,11 +231,21 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
    * arriving during shutdown was marked seen and then dropped, and its redelivery to the
    * next revision was refused as a duplicate. Closed intake is checked first.
    */
-  const admit = (event: AgentEvent): ReturnType<Gate["check"]> => (queue.open ? gate.check(event) : { accepted: false, reason: "shutting down" } as ReturnType<Gate["check"]>);
+  const admit = (event: AgentEvent): ReturnType<Gate["check"]> => {
+    const verdict = queue.open ? gate.check(event) : ({ accepted: false, reason: "shutting down" } as ReturnType<Gate["check"]>);
+    // Looked up at intake, once accepted: events of one conversation share a lane, whichever
+    // surface they arrive on. Never minted here — only `bindCreated` mints, when a conversation
+    // really spans surfaces — so the ledger holds only those, and an event on a ticket that
+    // arrives before its create is bound can't claim the alias first. Unbound runs on its key.
+    if (verdict.accepted) event.anchor = anchors.resolve(event.key);
+    return verdict;
+  };
 
   const queue = new KeyedQueue(
-    async (key, events) => {
+    async (_lane, events) => {
+      // The lane may be an anchor several surfaces share: each event answers on its own key.
       for (const event of events) await withRun(async () => {
+        const key = event.key;
         if ((await refreshControl()).paused) {
           await audit(config.auditFile, { type: "teammate.paused", actor: "teammate", key, event: event.id, reason: current.reason }).catch(() => undefined);
           if (event.source === "slack") {
@@ -310,7 +338,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
                 ]
               : undefined;
           const message = await deliver(textOut, blocks);
-          await audit(config.auditFile, { type: `teammate.${reply.kind}`, actor: "teammate", key, askedBy: event.actor.id, event: event.id, channel, ...(message ? { message } : {}) });
+          await audit(config.auditFile, { type: `teammate.${reply.kind}`, actor: "teammate", key, anchor: event.anchor, askedBy: event.actor.id, event: event.id, channel, ...(message ? { message } : {}) });
         } catch (error) {
           await audit(config.auditFile, { type: "teammate.error", actor: "teammate", key, event: event.id, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
           await deliver(`⚠️ I couldn't finish that, so I haven't answered or changed anything. _run \`${(currentRunId() ?? "").slice(0, 8)}\`_`).catch(() => undefined);
@@ -364,7 +392,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     await once(ledger, op, async () => (await jira.client.addComment(issueKey, body, { op, restriction })).id, {
       probe: async () => (await jira.client.findCommentByOp(issueKey, op))?.id,
     });
-    await audit(config.auditFile, { type: `teammate.jira.${reply.kind}`, actor: "teammate", key, issue: issueKey }).catch(() => undefined);
+    await audit(config.auditFile, { type: `teammate.jira.${reply.kind}`, actor: "teammate", key, anchor: event.anchor, issue: issueKey }).catch(() => undefined);
   }
 
   /** The pr-check skill, run for a PR the webhook handed over; the card goes to the PR channel. */
@@ -582,7 +610,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
       const question = text.trim();
       if (isHelpRequest(question)) return helpText(settings);
       // Over today's cap: say so privately, before posting a question nobody will answer.
-      if (await overBudget(keys.slackThread(channel, "command"), channel)) return LIMIT_NOTICE;
+      if (await overBudget(keys.thread("slack", channel, "command"), channel)) return LIMIT_NOTICE;
       // The command itself is invisible to the channel, so the question is posted first and
       // becomes the thread — the answer and any approval card land under it, where people see them.
       const root = await slack.chat.postMessage({ channel, text: `<@${user}> asked: ${escapeMrkdwn(question)}` }).catch(() => undefined);

@@ -25,6 +25,22 @@ export interface GuardDeps {
   summarize?: (tool: string, input: unknown) => string;
   /** When carrying out a specific approval: spend that request, not any with equal args. */
   approvalId?: string;
+  /**
+   * Told after a tool actually ran, with its own output — on the allow path and the approve
+   * path, never for a denied call, a pending approval or a run that threw. The one place a
+   * surface may learn a side effect happened (e.g. bind a created ticket to the thread).
+   * Best-effort: what it throws is logged, never turned into a failure of a done write.
+   */
+  onRan?: (tool: string, input: unknown, result: string) => void | Promise<void>;
+}
+
+async function ran(deps: GuardDeps, tool: string, input: unknown, result: string): Promise<void> {
+  if (!deps.onRan) return;
+  try {
+    await deps.onRan(tool, input, result);
+  } catch (error) {
+    console.warn(`[guard] onRan for ${tool} failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export { CARD_TEXT_CHARS, escapedLength, summarizeArgs } from "./card";
@@ -55,6 +71,7 @@ export async function runUnderPolicy(envelope: Envelope, tool: ToolSpec, input: 
   if (verdict.tier === "allow") {
     const result = await tool.run(input);
     await audit(deps.auditFile, { type: "policy.ran", ...base, tier: "allow" });
+    await ran(deps, tool.name, input, result);
     return { kind: "ran", result };
   }
 
@@ -69,6 +86,7 @@ export async function runUnderPolicy(envelope: Envelope, tool: ToolSpec, input: 
       throw error;
     }
     await audit(deps.auditFile, { type: "policy.ran", ...base, tier: "approve", approval: approval.id, approvedBy: approval.decidedBy?.accountId });
+    await ran(deps, tool.name, input, result);
     return { kind: "ran", result, approval };
   }
 

@@ -46,6 +46,11 @@ Rules for connectors, each already followed by the existing ones:
   landed.
 - **Return refusals as text** (`NOT_ALLOWED: …`), not exceptions, so the model can explain
   them. Grounding never counts a refusal as evidence.
+- **Name what a write created,** if later events can arrive on it (a ticket, a page, a PR).
+  Teach `aliasesFromResult` (`packages/connectors/src/aliases.ts`) to read the alias from
+  the line your tool builds after the write landed. The surface binds it to the
+  conversation's anchor through `GuardDeps.onRan`, so replies on the new thing share the
+  conversation's lane. Never read it from the model's input or from fetched content.
 
 Then give the tool a tier in the agent's envelope. A write should be `approve` with an
 approver list. `deny`, or leaving the tool out, means the model never sees it.

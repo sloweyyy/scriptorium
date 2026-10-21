@@ -1,4 +1,5 @@
 export * from "./event";
+export * from "./anchor";
 export * from "./gate";
 export * from "./queue";
 export * from "./effects";

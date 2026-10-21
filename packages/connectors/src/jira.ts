@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ToolSpec } from "@scriptorium/core";
-import { commentRestriction, jiraToMarkdown, markdownToJira, type JiraClient } from "@scriptorium/jira";
+import { commentRestriction, jiraToMarkdown, markdownToJira, type JiraClient, type JiraIssue } from "@scriptorium/jira";
 import { once, opKey, type EffectLedger } from "@scriptorium/runtime";
 import { z } from "zod";
 
@@ -43,6 +43,25 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
     return key;
   };
 
+  /**
+   * The key Jira answered with must be allowed too. Jira follows a moved key, so DOC-7 asked
+   * for may come back as HR-3: checking only what the model typed would read and write an
+   * issue in a project this agent may not use. Returns the issue's real key.
+   */
+  const stayInside = (asked: string, returned: string): string => {
+    const actual = returned.trim().toUpperCase();
+    if (!ISSUE_KEY.test(actual) || !projects.includes(actual.split("-")[0] as string)) {
+      throw new JiraAccessError(`${asked} has moved to ${actual}, outside the Jira projects this agent may use.`);
+    }
+    return actual;
+  };
+
+  /** The key a write goes to: resolved through Jira first, so a moved issue is written where it now is, or not at all. */
+  const writeKey = async (raw: string): Promise<string> => {
+    const asked = checkKey(raw);
+    return stayInside(asked, (await settings.client.getIssue(asked)).key);
+  };
+
   const tools: ToolSpec[] = [
     {
       name: "jira_search",
@@ -53,10 +72,8 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
           const { query } = z.object({ query: z.string().min(1) }).parse(input);
           if (!projects.length) throw new JiraAccessError("No Jira projects are allowed for this agent.");
           const jql = `project in (${projects.map(jqlString).join(",")}) AND text ~ ${jqlString(query)} ORDER BY updated DESC`;
-          const issues = await settings.client.searchIssues(jql, 10);
-          return JSON.stringify(
-            issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name })),
-          );
+          const { shown, note } = withoutRestricted(await settings.client.searchIssues(jql, 10));
+          return JSON.stringify([...shown.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name })), ...note]);
         }),
       records: citeRecords,
     },
@@ -71,8 +88,10 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
           // `days` is validated as an integer, so it is safe to place in JQL; nothing else is.
           const jql = `project in (${projects.map(jqlString).join(",")}) AND updated >= -${days}d ORDER BY updated DESC`;
           const issues = await settings.client.searchIssues(jql, RECENT_LIMIT);
+          const { shown, note } = withoutRestricted(issues);
           return JSON.stringify([
-            ...issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
+            ...shown.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
+            ...note,
             ...cutNote(issues.length, RECENT_LIMIT, "issues updated in that window"),
           ]);
         }),
@@ -88,8 +107,10 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
           // Only a validated, project-checked key reaches the JQL — nothing the model wrote.
           const jql = `project in (${projects.map(jqlString).join(",")}) AND parent = ${jqlString(key)} ORDER BY status ASC, updated DESC`;
           const issues = await settings.client.searchIssues(jql, CHILDREN_LIMIT);
+          const { shown, note } = withoutRestricted(issues);
           return JSON.stringify([
-            ...issues.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
+            ...shown.map((issue) => ({ cite: `jira:${issue.key}`, key: issue.key, summary: issue.fields.summary, status: issue.fields.status?.name, updated: issue.fields.updated })),
+            ...note,
             ...cutNote(issues.length, CHILDREN_LIMIT, "child issues"),
           ]);
         }),
@@ -106,8 +127,9 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
           // Jira Software's openSprints(): no board id to guess, and nothing the model wrote in the JQL.
           const issues = await settings.client.searchIssues(`project = ${jqlString(project)} AND sprint in openSprints() ORDER BY status ASC, updated DESC`, 100);
           if (!issues.length) return `No issues in an open sprint in ${project} (no active sprint, or the project isn't on a Scrum board).`;
+          const { shown, note } = withoutRestricted(issues);
           return JSON.stringify([
-            ...issues.map((issue) => ({
+            ...shown.map((issue) => ({
               cite: `jira:${issue.key}`,
               key: issue.key,
               summary: issue.fields.summary,
@@ -115,6 +137,7 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
               assignee: issue.fields.assignee?.displayName ?? "unassigned",
               updated: issue.fields.updated,
             })),
+            ...note,
             // A report on the first 100 that says nothing of the rest would read as the whole sprint.
             ...(issues.length >= 100 ? [{ note: "Showing the first 100 issues in the sprint; there may be more. Say so in the report." }] : []),
           ]);
@@ -127,8 +150,12 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
       inputSchema: z.object({ key: z.string().describe("Issue key, e.g. DOC-7.") }),
       run: (input) =>
         refusalOr(async () => {
-          const key = checkKey(z.object({ key: z.string() }).parse(input).key);
-          const issue = await settings.client.getIssue(key);
+          const asked = checkKey(z.object({ key: z.string() }).parse(input).key);
+          const issue = await settings.client.getIssue(asked);
+          const key = stayInside(asked, issue.key);
+          // An issue security level means only the people it names may see the ticket, and this
+          // answer may be read by anyone in the channel: nothing of it, not even its comments.
+          if (issue.fields.security) throw new JiraAccessError(`jira:${key} is restricted by an issue security level; its content can't be shown here.`);
           // What this returns can be repeated in a public channel or an unrestricted reply, so
           // only comments everyone on the ticket can see. Properties are expanded: a JSM
           // internal note may be marked only by `sd.public.comment`. Filter before the cut, so
@@ -145,9 +172,11 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
             ...(withheld ? ["", `(${withheld} restricted comment${withheld === 1 ? "" : "s"} not shown)`] : []),
           ].join("\n");
         }),
-      records: (input, output) => {
-        const key = typeof (input as { key?: unknown })?.key === "string" ? String((input as { key: string }).key).trim().toUpperCase() : "";
-        return key && output.startsWith(`jira:${key} — `) ? [`jira:${key}`] : [];
+      // Cited under the key the issue really has (a moved DOC-7 answers as DOC-12), and only
+      // when that is an allowed project and the answer is the issue, not a refusal.
+      records: (_input, output) => {
+        const key = /^jira:([A-Z][A-Z0-9_]*-\d+) — /.exec(output)?.[1];
+        return key && projects.includes(key.split("-")[0] as string) ? [`jira:${key}`] : [];
       },
     },
     {
@@ -157,7 +186,7 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
       run: (input, context) =>
         refusalOr(async () => {
           const parsed = z.object({ key: z.string(), body: z.string().min(1) }).parse(input);
-          const key = checkKey(parsed.key);
+          const key = await writeKey(parsed.key);
           // The approval is part of the cause: two separately approved identical comments are
           // two comments. A retry of ONE approval keeps the same op, and stays a replay.
           const op = opKey("jira.comment", key, digest(parsed.body), context?.approval?.id);
@@ -177,7 +206,7 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
       run: (input, context) =>
         refusalOr(async () => {
           const parsed = z.object({ key: z.string(), status: z.string().min(1).max(60) }).parse(input);
-          const key = checkKey(parsed.key);
+          const key = await writeKey(parsed.key);
           // Idempotent: moving to the status it is already in is not a second move. No probe needed.
           const { result } = await once(settings.ledger, opKey("jira.transition", key, parsed.status.toLowerCase(), context?.approval?.id), () => settings.client.transitionTo(key, parsed.status), {
             meta: { tool: "jira_transition", key },
@@ -193,7 +222,7 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
       run: (input, context) =>
         refusalOr(async () => {
           const parsed = z.object({ key: z.string(), assignee: z.string().min(1).max(120) }).parse(input);
-          const key = checkKey(parsed.key);
+          const key = await writeKey(parsed.key);
           const wanted = parsed.assignee.trim();
           let person: { accountId: string | null; name: string };
           if (/^unassign(ed)?$/i.test(wanted)) person = { accountId: null, name: "nobody" };
@@ -224,8 +253,8 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
       run: (input, context) =>
         refusalOr(async () => {
           const parsed = z.object({ key: z.string(), add: z.array(LABEL).max(10).default([]), remove: z.array(LABEL).max(10).default([]) }).parse(input);
-          const key = checkKey(parsed.key);
           if (!parsed.add.length && !parsed.remove.length) throw new JiraAccessError("No labels to add or remove.");
+          const key = await writeKey(parsed.key);
           await once(settings.ledger, opKey("jira.labels", key, parsed.add.join(","), parsed.remove.join(","), context?.approval?.id), () => settings.client.editLabels(key, parsed.add, parsed.remove), {
             meta: { tool: "jira_labels", key },
           });
@@ -240,8 +269,11 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
         refusalOr(async () => {
           const parsed = z.object({ from: z.string(), to: z.string(), type: z.enum(["Relates", "Blocks", "Duplicate", "Cloners"]).default("Relates") }).parse(input);
           // Both ends inside the allow-list: a link is a write on each issue.
-          const from = checkKey(parsed.from);
-          const to = checkKey(parsed.to);
+          // Both keys are checked before either is looked up, so neither request goes out for a key outside the list.
+          checkKey(parsed.from);
+          checkKey(parsed.to);
+          const from = await writeKey(parsed.from);
+          const to = await writeKey(parsed.to);
           if (from === to) throw new JiraAccessError("An issue can't be linked to itself.");
           await once(settings.ledger, opKey("jira.link", from, to, parsed.type, context?.approval?.id), () => settings.client.linkIssues(from, to, parsed.type), { meta: { tool: "jira_link", from, to } });
           return `Linked jira:${from} → jira:${to} (${parsed.type}).`;
@@ -299,6 +331,17 @@ const CHILDREN_LIMIT = 50;
  */
 function cutNote(count: number, limit: number, what: string): Array<{ note: string }> {
   return count >= limit ? [{ note: `Only the first ${limit} ${what} are listed; there may be more. Say the list is partial.` }] : [];
+}
+
+/**
+ * Issues with an issue security level are not for everyone who can see the project, and a
+ * list may be repeated in a public channel: they are left out, and a note says how many, so
+ * the list doesn't read as the whole picture. The note carries no `cite`.
+ */
+function withoutRestricted(issues: JiraIssue[]): { shown: JiraIssue[]; note: Array<{ note: string }> } {
+  const shown = issues.filter((issue) => !issue.fields.security);
+  const withheld = issues.length - shown.length;
+  return { shown, note: withheld ? [{ note: `${withheld} issue${withheld === 1 ? " with a security level is" : "s with a security level are"} not shown. Don't guess at them.` }] : [] };
 }
 
 /** No role/group visibility, not internal, and a restriction it could read: fail-closed. */

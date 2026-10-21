@@ -158,7 +158,8 @@ async function recoverState(ctx: Ctx, issue: JiraIssue, settled: JiraComment[], 
  */
 async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{ known: IssueState; handled: boolean }> {
   const key = issue.key;
-  const history = await ctx.client.listComments(key);
+  // With properties: a JSM internal note marked only by `sd.public.comment` reads as public without them.
+  const history = await ctx.client.listComments(key, undefined, { expandProperties: true });
   const otherAgents = await ctx.otherAgentIds();
   // A first sight that began and failed, rather than a ledger that was lost: begun (the
   // entry says so) on a ticket where the agent had said nothing yet. The count is kept from
@@ -212,9 +213,15 @@ async function firstSight(ctx: Ctx, issue: JiraIssue, status: string): Promise<{
 export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> {
   // Each caller (the poller, a webhook) takes its view of the ticket before the lock. A view
   // older than what the ledger has already handled is read again: acted on as it was, a
-  // drag to Approved the first caller answered was answered a second time.
-  const recorded = ctx.state.get(snapshot.key)?.lastUpdated;
-  const issue = recorded && Date.parse(snapshot.fields.updated ?? "") < Date.parse(recorded) ? await ctx.client.getIssue(snapshot.key) : snapshot;
+  // drag to Approved the first caller answered was answered a second time. So is every view
+  // after a tick that couldn't read the ticket back at its end (`rereadNext`): `lastUpdated`
+  // stayed old there, and a view taken mid-tick, even after the agent's own comment, still
+  // showed the drag it answered, which was refused (or held) again.
+  const ledger = ctx.state.get(snapshot.key);
+  const viewed = Date.parse(snapshot.fields.updated ?? "");
+  const recorded = Date.parse(ledger?.lastUpdated ?? "");
+  const stale = viewed < recorded || ledger?.rereadNext === true;
+  const issue = stale ? await ctx.client.getIssue(snapshot.key) : snapshot;
   const key = issue.key;
   const status = issueStatus(issue);
   const seen = ctx.state.get(key);
@@ -263,7 +270,8 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
   }
 
   if (untouched) return;
-  const comments = await ctx.client.listComments(key);
+  // With properties, or an internal note marked only by its property is worked from as public feedback.
+  const comments = await ctx.client.listComments(key, undefined, { expandProperties: true });
   const pendingFeedback: string[] = [];
   const pendingAuthors: Array<string | undefined> = [];
   // Set once this tick rewrites the draft. An approval that arrives in the same poll was
@@ -506,12 +514,11 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
       // review with the new one. The same rule as a comment approval, by the move's time.
       await holdUnseenRevision();
       answeredDrag = true;
-      // Where the ticket is now: the agent's own move if it revised this tick and that move
-      // was made, else where it was dragged (the ledger's baseline deliberately doesn't hold
-      // a drag it didn't see). A revise whose moves couldn't be made left one owed: then the
-      // drag is still there, and taken as already put back, it was never put back at all.
-      const revisedMoveMade = revisedThisTick && !ctx.state.get(key)?.pendingMove;
-      putBack = await moveTo(ctx, key, ctx.config.jira.inReviewStatus, revisedMoveMade ? ctx.state.get(key)?.lastStatus : status);
+      // From where it was dragged; moveTo's own read of the ticket says where it is now. Told
+      // the revise's own move had put it back whenever none was owed, a revise whose move to
+      // In Progress failed and whose move to In Review found the drag (and so owed nothing)
+      // left the ticket in Approved, taken as already in review.
+      putBack = await moveTo(ctx, key, ctx.config.jira.inReviewStatus, status);
     } else {
       await runPublish(ctx, issue, mover?.name ?? mover?.accountId ?? "a Jira approver", { quietWhenPublished: true });
     }
@@ -527,7 +534,7 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
   const refreshed = await ctx.client.getIssue(key).catch(() => undefined);
   if (!refreshed) {
     const dragStillThere = answeredDrag && !putBack;
-    await ctx.state.patch(key, { lastStatus: dragStillThere ? status : (ctx.state.get(key)?.lastStatus ?? status), lastError: undefined });
+    await ctx.state.patch(key, { lastStatus: dragStillThere ? status : (ctx.state.get(key)?.lastStatus ?? status), rereadNext: true, lastError: undefined });
     return;
   }
   // The baseline is what this tick saw or did: the status it started from, or its own
@@ -541,6 +548,7 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
   await ctx.state.patch(key, {
     lastStatus: unseen ? agentsOwn : now,
     lastUpdated: refreshed.fields.updated,
+    rereadNext: undefined,
     lastError: undefined,
   });
 }

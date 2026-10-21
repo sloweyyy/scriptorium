@@ -93,6 +93,16 @@ describe("pnpm doctor", () => {
     expect(levels(checks, "github")).toEqual(["fail"]);
   });
 
+  it("an app installed before channel privacy was read is told to reinstall", async () => {
+    const manifest = path.resolve("slack-manifests/teammate.yaml");
+    const wanted = await manifestBotScopes(manifest);
+    const old = wanted.filter((scope) => !["channels:read", "groups:read", "mpim:read"].includes(scope));
+    const checks = await runDoctor(config(), { ...slack(old), manifestScopes: () => manifestBotScopes(manifest) });
+    const text = formatChecks(checks);
+    expect(text).toMatch(/✗ slack\s+the app is missing scope\(s\) channels:read, groups:read, mpim:read/);
+    expect(text).toContain("reinstall the app from slack-manifests/teammate.yaml");
+  });
+
   it("reads the manifest's bot scopes", async () => {
     const scopes = await manifestBotScopes(path.resolve("slack-manifests/teammate.yaml"));
     expect(scopes).toEqual(expect.arrayContaining(["app_mentions:read", "chat:write", "commands", "channels:history", "im:read"]));

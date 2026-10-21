@@ -105,7 +105,14 @@ const SHORTCUT_TRIGGER = "shortcut";
  * to a reply, and from a click to a carried-out action, driven by any Slack client. Bolt
  * only binds events to it — which is what lets the wiring itself be tested end to end.
  */
-export async function createTeammate(config: AppConfig, vault: Vault, slack: SlackClient, selfUserId: string, jira?: TeammateJira, options: { lease?: Lease } = {}): Promise<TeammateCore> {
+export async function createTeammate(
+  config: AppConfig,
+  vault: Vault,
+  slack: SlackClient,
+  selfUserId: string,
+  jira?: TeammateJira,
+  options: { lease?: Lease; gapTickets?: Parameters<typeof gapTicketOpener>[1] } = {},
+): Promise<TeammateCore> {
   const settings = config.teammate;
   const self = `slack:${selfUserId}`;
 
@@ -216,7 +223,47 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   let current: Control = OPEN;
   const refreshControl = async (): Promise<Control> => (current = await readControl(controlFile, config.signingKey));
   const PAUSED_NOTICE = "⏸️ I've been paused by an admin, so I'm not answering or changing anything right now.";
-  const turnDeps = (key: string) => ({ vault, config: { ...hostConfig, tools: narrowTools(hostConfig.tools, current) }, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config), signingKey: config.signingKey });
+  /**
+   * Whether not everyone in the workspace can read this conversation: a DM, a group DM or a
+   * private channel (private channels have C ids too). A question asked there is a private
+   * turn — its gap names what is missing, never the question. Unreadable counts as private.
+   * Cached per channel for a while (a channel can be made private later); a failed lookup
+   * isn't cached, so the next turn asks again — except a missing scope, which no retry fixes:
+   * that is cached like an answer and warned about once (the app needs reinstalling).
+   */
+  const channelPrivacy = new Map<string, { at: number; private: Promise<boolean> }>();
+  const PRIVACY_TTL_MS = 10 * 60_000;
+  let warnedMissingScope = false;
+  const privateChannel = (channel: string): Promise<boolean> => {
+    if (channel.startsWith("D")) return Promise.resolve(true);
+    const cached = channelPrivacy.get(channel);
+    if (cached && Date.now() - cached.at < PRIVACY_TTL_MS) return cached.private;
+    const looked = slack.conversations.info({ channel }).then(
+      (info) => {
+        const kind = info.channel as { is_private?: boolean; is_im?: boolean; is_mpim?: boolean } | undefined;
+        return !kind || kind.is_private !== false || Boolean(kind.is_im || kind.is_mpim);
+      },
+      (error: unknown) => {
+        if ((error as { data?: { error?: string } } | undefined)?.data?.error === "missing_scope") {
+          if (!warnedMissingScope) console.warn("[teammate] can't tell private channels from public ones — the Slack app lacks channels:read/groups:read/mpim:read (reinstall it from slack-manifests/teammate.yaml); every channel's gap is kept private until then");
+          warnedMissingScope = true;
+        } else channelPrivacy.delete(channel);
+        return true;
+      },
+    );
+    channelPrivacy.set(channel, { at: Date.now(), private: looked });
+    return looked;
+  };
+  /** An issue with a security level isn't readable by everyone; one that can't be read counts as secured. */
+  const securedIssue = async (issueKey: string): Promise<boolean> => {
+    if (!jira) return true;
+    try {
+      return Boolean((await jira.client.getIssue(issueKey)).fields.security);
+    } catch {
+      return true;
+    }
+  };
+  const turnDeps = (key: string) => ({ vault, config: { ...hostConfig, tools: narrowTools(hostConfig.tools, current) }, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config, options.gapTickets), signingKey: config.signingKey });
 
   const gate = new Gate({
     selfIds: [self],
@@ -324,7 +371,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
             void update.finally(() => inFlight.delete(update));
           };
           const reply = await runTeammateTurn(
-            { question: text, askedBy: event.actor.id, channel, threadTs, context, private: channel.startsWith("D") },
+            { question: text, askedBy: event.actor.id, channel, threadTs, context, private: await privateChannel(channel) },
             { ...turnDeps(key), ...spendAgainst(channel), onTool },
           );
           const textOut = formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken });
@@ -364,10 +411,12 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
     // Whatever the Teammate says next on this ticket's thread is said at this visibility.
     jiraRestrictions.set(keys.jiraIssue(issueKey), restriction);
     const scope = `jira:${issueKey.split("-")[0]}`;
+    // A restricted comment, or any comment on an issue with a security level, is a private turn.
+    const restricted = Boolean(restriction.visibility || restriction.internal) || (await securedIssue(issueKey));
     const reply = await (await overBudget(key, scope)
       ? Promise.resolve({ kind: "refused" as const, text: LIMIT_NOTICE })
       : runTeammateTurn(
-          { question: `${question}\n\n(Asked on jira:${issueKey}.)`, askedBy: event.actor.id, budgetScope: scope, private: Boolean(restriction.visibility || restriction.internal) },
+          { question: `${question}\n\n(Asked on jira:${issueKey}.)`, askedBy: event.actor.id, budgetScope: scope, private: restricted },
           { ...turnDeps(key), ...spendAgainst(scope) },
         )
     ).catch(

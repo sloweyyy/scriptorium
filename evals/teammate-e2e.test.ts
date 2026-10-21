@@ -53,6 +53,9 @@ let progressDelayMs = 0;
 let progressDelays: number[] = [];
 /** Lose the next reminder post's response after Slack stored it. */
 let loseNextReminderPost = false;
+/** What `conversations.info` says about a channel, by id; and every channel it was asked about. */
+let channelKinds: Record<string, Record<string, boolean> | "fail" | "missing_scope"> = {};
+let infoCalls: string[] = [];
 
 /** Posted messages, as they read NOW: an update replaces the text of the message it targets. */
 const slack = {
@@ -80,8 +83,16 @@ const slack = {
   conversations: {
     replies: async () => ({ messages: threadReplies }),
     // D1 is U1's DM with the bot; D_PEOPLE is a DM between two people the bot isn't in.
+    // A C channel is public unless `channelKinds` says otherwise ("fail": the lookup errors).
     info: async (args: { channel: string }) => {
+      infoCalls.push(args.channel);
       if (args.channel === "D1") return { ok: true, channel: { id: "D1", is_im: true, user: "U1" } };
+      const kind = channelKinds[args.channel];
+      if (kind === "fail") throw new Error("ratelimited");
+      // What Slack's WebClient throws for a token without channels:read/groups:read/mpim:read.
+      if (kind === "missing_scope") throw Object.assign(new Error("An API error occurred: missing_scope"), { code: "slack_webapi_platform_error", data: { ok: false, error: "missing_scope", needed: "channels:read" } });
+      if (kind) return { ok: true, channel: { id: args.channel, ...kind } };
+      if (args.channel.startsWith("C")) return { ok: true, channel: { id: args.channel, is_private: false, is_im: false, is_mpim: false } };
       throw new Error("channel_not_found");
     },
     history: async (args: { channel: string }) => ({ messages: posted.filter((message) => message.channel === args.channel).map((message, index) => ({ ...message, ts: `9.${index + 1}` })) }),
@@ -115,6 +126,8 @@ beforeEach(async () => {
   threadReplies = [];
   lastPrompt = "";
   loseNextReminderPost = false;
+  channelKinds = {};
+  infoCalls = [];
 });
 
 afterEach(async () => {
@@ -1119,5 +1132,142 @@ describe("assigned on Jira", () => {
     await core.onJiraAssigned({ issueKey: "DOC-9", assigneeId: "someone-else", changeId: "ch-2" });
     await settle(core);
     expect(comments).toHaveLength(1);
+  });
+});
+
+describe("questions not everyone can read stay private when they become gaps", () => {
+  const QUESTION = "is the zebra rollout on Tuesday?";
+  /** A Jira board for gap tickets: records what each ticket would say. */
+  function gapBoard() {
+    const tickets: Array<{ summary: string; description: string }> = [];
+    const client = {
+      searchIssues: async () => [],
+      issueUrl: (key: string) => `https://jira.example/browse/${key}`,
+      createIssue: async (input: { summary: string; description: string }) => (tickets.push(input), { key: `DOC-${100 + tickets.length}`, url: "https://jira.example/browse/DOC-100" }),
+    };
+    return { tickets, client: client as never };
+  }
+  /** Everything a gap left behind: the tickets' text and the vault's gap notes. */
+  async function gapTrail(tickets: Array<{ summary: string; description: string }>): Promise<string> {
+    const notes = await Promise.all((await vault.listNotes("_gaps")).map((note) => fs.readFile(vault.abs(note), "utf8")));
+    return [...tickets.map((ticket) => `${ticket.summary}\n${ticket.description}`), ...notes].join("\n---\n");
+  }
+  function jiraWith(getIssue: (key: string) => Promise<unknown>) {
+    const comments: string[] = [];
+    const client = {
+      getIssue,
+      addComment: async (_key: string, body: string) => (comments.push(body), { id: String(comments.length), body, created: "now" }),
+      findCommentByOp: async () => undefined,
+    };
+    return { comments, jira: { client: client as never, accountId: "tm-1" } };
+  }
+  const mention = { issueKey: "DOC-7", commentId: "c1", body: `[~accountid:tm-1] ${QUESTION}`, authorId: "human-1" };
+
+  it("a gap from a Jira issue with a security level records what's missing, not the question", async () => {
+    const board = gapBoard();
+    const { comments, jira } = jiraWith(async (key) => ({ id: "1", key, fields: { summary: "Legal review", security: { name: "Legal" } } }));
+    const core = await createTeammate(config(), vault, slack as never, "UBOT", jira, { gapTickets: board.client });
+    script = { calls: [], reply: "NOT_IN_KB: rollout calendar" };
+    await core.onJiraComment(mention);
+    await settle(core);
+    expect(comments).toHaveLength(1);
+    expect(board.tickets).toHaveLength(1);
+    const trail = await gapTrail(board.tickets);
+    expect(board.tickets[0]?.summary).toContain("(Asked privately.)");
+    expect(board.tickets[0]?.description).toContain("(Asked privately.)");
+    expect(trail).toContain("rollout calendar");
+    expect(trail).not.toContain("zebra");
+  });
+
+  it("an issue whose security level can't be read is treated as secured — and the mention is still answered", async () => {
+    const board = gapBoard();
+    const { comments, jira } = jiraWith(async () => {
+      throw new Error("Jira 503");
+    });
+    const core = await createTeammate(config(), vault, slack as never, "UBOT", jira, { gapTickets: board.client });
+    script = { calls: [], reply: "NOT_IN_KB: rollout calendar" };
+    await core.onJiraComment(mention);
+    await settle(core);
+    expect(comments).toHaveLength(1);
+    expect(board.tickets).toHaveLength(1);
+    const trail = await gapTrail(board.tickets);
+    expect(trail).toContain("(Asked privately.)");
+    expect(trail).not.toContain("zebra");
+  });
+
+  it("an unrestricted issue's gap still quotes the question, for whoever writes the doc", async () => {
+    const board = gapBoard();
+    const { jira } = jiraWith(async (key) => ({ id: "1", key, fields: { summary: "Rollout", security: null } }));
+    const core = await createTeammate(config(), vault, slack as never, "UBOT", jira, { gapTickets: board.client });
+    script = { calls: [], reply: "NOT_IN_KB: rollout calendar" };
+    await core.onJiraComment(mention);
+    await settle(core);
+    expect(board.tickets).toHaveLength(1);
+    expect(board.tickets[0]?.summary).toContain(QUESTION);
+    expect(board.tickets[0]?.description).toContain(QUESTION);
+    expect(await gapTrail(board.tickets)).not.toContain("(Asked privately.)");
+  });
+
+  async function slackGap(channel: string, kind?: Record<string, boolean> | "fail"): Promise<{ trail: string; tickets: number }> {
+    if (kind) channelKinds[channel] = kind;
+    const board = gapBoard();
+    const core = await createTeammate({ ...config(), teammate: { ...config().teammate, channels: [channel] } } as AppConfig, vault, slack as never, "UBOT", undefined, { gapTickets: board.client });
+    script = { calls: [], reply: "NOT_IN_KB: rollout calendar" };
+    await core.onMention({ channel, ts: "1.0", user: "U1", text: `<@UBOT> ${QUESTION}` });
+    await settle(core);
+    return { trail: await gapTrail(board.tickets), tickets: board.tickets.length };
+  }
+
+  it("a private channel (a C id too) is a private turn: its gap doesn't quote the question", async () => {
+    const { trail, tickets } = await slackGap("C_LEGAL", { is_private: true, is_im: false, is_mpim: false });
+    expect(tickets).toBe(1);
+    expect(trail).toContain("(Asked privately.)");
+    expect(trail).not.toContain("zebra");
+  });
+
+  it("a group DM, or a channel whose privacy can't be read, is private too", async () => {
+    const mpim = await slackGap("C_GROUP", { is_private: false, is_im: false, is_mpim: true });
+    expect(mpim.tickets).toBe(1);
+    expect(mpim.trail).not.toContain("zebra");
+    await fs.rm(vault.abs("_gaps"), { recursive: true, force: true });
+    const unreadable = await slackGap("C_DARK", "fail");
+    expect(unreadable.tickets).toBe(1);
+    expect(unreadable.trail).toContain("(Asked privately.)");
+    expect(unreadable.trail).not.toContain("zebra");
+  });
+
+  it("a public channel's gap still quotes the question", async () => {
+    const { trail, tickets } = await slackGap("C_OPEN", { is_private: false, is_im: false, is_mpim: false });
+    expect(tickets).toBe(1);
+    expect(trail).toContain(QUESTION);
+    expect(trail).not.toContain("(Asked privately.)");
+  });
+
+  it("an app without the scope to read a channel's privacy keeps it private, and doesn't ask again on every mention", async () => {
+    channelKinds.C1 = "missing_scope";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const board = gapBoard();
+      const core = await createTeammate(config(), vault, slack as never, "UBOT", undefined, { gapTickets: board.client });
+      script = { calls: [], reply: "NOT_IN_KB: rollout calendar" };
+      await core.onMention({ channel: "C1", ts: "1.0", user: "U1", text: `<@UBOT> ${QUESTION}` });
+      await core.onMention({ channel: "C1", ts: "2.0", user: "U1", text: `<@UBOT> ${QUESTION}` });
+      await settle(core);
+      expect(infoCalls.filter((channel) => channel === "C1")).toHaveLength(1);
+      expect(await gapTrail(board.tickets)).not.toContain("zebra");
+      expect(warn.mock.calls.filter((call) => String(call[0]).includes("missing_scope") || String(call[0]).includes("groups:read"))).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("looks a channel's privacy up once, not on every mention", async () => {
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]." };
+    await core.onMention({ channel: "C1", ts: "1.0", user: "U1", text: "<@UBOT> when are digests sent?" });
+    await core.onMention({ channel: "C1", ts: "2.0", user: "U1", text: "<@UBOT> and on weekends?" });
+    await settle(core);
+    expect(posted.filter((message) => message.channel === "C1")).toHaveLength(2);
+    expect(infoCalls.filter((channel) => channel === "C1")).toHaveLength(1);
   });
 });

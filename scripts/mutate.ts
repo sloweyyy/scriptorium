@@ -2925,8 +2925,22 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a drag answered while the ticket can't be read is not answered again the next tick",
     file: "apps/agents/src/scribe-jira/issue.ts",
-    find: "const answered = owed !== undefined && owed.from.toLowerCase() === status.toLowerCase();",
-    replace: "const answered = false;",
+    find: "const dragStillThere = answeredDrag && !putBack;",
+    replace: "const dragStillThere = false;",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a drag held after a revise whose moves weren't made is put back from where it was dragged",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "const revisedMoveMade = revisedThisTick && !ctx.state.get(key)?.pendingMove;",
+    replace: "const revisedMoveMade = revisedThisTick;",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a held drag counts as answered when the ticket can't be read at the tick's end",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "      await holdUnseenRevision();\n      answeredDrag = true;",
+    replace: "      await holdUnseenRevision();",
     evals: ["evals/jira-board.test.ts"],
   },
 ];

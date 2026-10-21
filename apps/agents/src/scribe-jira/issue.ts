@@ -476,6 +476,11 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
   const movedToApproved = status.toLowerCase() === approvedStatus && (lastStatusAtTickStart ?? "").toLowerCase() !== approvedStatus;
   // A transition is only an approval of work the agent is part of; on a ticket it was
   // never asked to touch, someone else's workflow move is not a publish instruction.
+  // Set when this tick answered a drag to Approved (refused it, or held it), and whether the
+  // move back was made. Answered but not put back, the drag is still on the ticket, owed a
+  // move back next tick, and must not be read as new then.
+  let answeredDrag = false;
+  let putBack = false;
   if (movedToApproved && wanted) {
     const mover = await ctx.client.lastStatusChangeAuthor(key, ctx.config.jira.approvedStatus);
     // Belt to the snapshot's braces: whoever moved it must be a HUMAN. The agent drives
@@ -492,16 +497,21 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
         // A mover the changelog can't name, or one who isn't an approver: fail closed, say why,
         // and put the column back so the board doesn't claim an approval that didn't count.
         await say(ctx, key, allowed.reason);
-        await moveTo(ctx, key, ctx.config.jira.inReviewStatus, ctx.config.jira.approvedStatus);
+        answeredDrag = true;
+        putBack = await moveTo(ctx, key, ctx.config.jira.inReviewStatus, ctx.config.jira.approvedStatus);
       }
     } else if (revisedThisTick || !approvesCurrentDraft(mover?.created, ctx.state.get(key)?.draftPostedAt)) {
       // Dragged to Approved while feedback was still being applied, or before the draft now
       // on the ticket was posted: the column was set for an older draft. Put it back in
       // review with the new one. The same rule as a comment approval, by the move's time.
       await holdUnseenRevision();
-      // Where the ticket is now: the agent's own move if it revised this tick, else where it
-      // was dragged (the ledger's baseline deliberately doesn't hold a drag it didn't see).
-      await moveTo(ctx, key, ctx.config.jira.inReviewStatus, revisedThisTick ? ctx.state.get(key)?.lastStatus : status);
+      answeredDrag = true;
+      // Where the ticket is now: the agent's own move if it revised this tick and that move
+      // was made, else where it was dragged (the ledger's baseline deliberately doesn't hold
+      // a drag it didn't see). A revise whose moves couldn't be made left one owed: then the
+      // drag is still there, and taken as already put back, it was never put back at all.
+      const revisedMoveMade = revisedThisTick && !ctx.state.get(key)?.pendingMove;
+      putBack = await moveTo(ctx, key, ctx.config.jira.inReviewStatus, revisedMoveMade ? ctx.state.get(key)?.lastStatus : status);
     } else {
       await runPublish(ctx, issue, mover?.name ?? mover?.accountId ?? "a Jira approver", { quietWhenPublished: true });
     }
@@ -511,15 +521,13 @@ export async function handleIssue(ctx: Ctx, snapshot: JiraIssue): Promise<void> 
   // never the tick-start snapshot, which still showed a drag the tick may have put back. Kept
   // as it was, that drag became the baseline, and an approver's real drag next was invisible.
   // `lastUpdated` stays as it was, so the next tick reads the ticket again. One exception: a
-  // move off the snapshot's status that this tick owes but couldn't make (a refused or held
-  // drag to Approved, put back only on the next tick). That drag was answered, so the
-  // snapshot's status is the baseline: kept as the old one, the next tick read the same drag
-  // as new and said its refusal again.
+  // drag to Approved this tick answered (refused or held) but couldn't put back. The drag is
+  // still there, so the snapshot's status is the baseline: kept as the old one, the next
+  // tick read the same drag as new and said its refusal (or hold) again.
   const refreshed = await ctx.client.getIssue(key).catch(() => undefined);
   if (!refreshed) {
-    const owed = ctx.state.get(key)?.pendingMove;
-    const answered = owed !== undefined && owed.from.toLowerCase() === status.toLowerCase();
-    await ctx.state.patch(key, { lastStatus: answered ? status : (ctx.state.get(key)?.lastStatus ?? status), lastError: undefined });
+    const dragStillThere = answeredDrag && !putBack;
+    await ctx.state.patch(key, { lastStatus: dragStillThere ? status : (ctx.state.get(key)?.lastStatus ?? status), lastError: undefined });
     return;
   }
   // The baseline is what this tick saw or did: the status it started from, or its own

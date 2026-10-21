@@ -1444,6 +1444,28 @@ describe("the end of a tick acts on what the tick did", () => {
     });
   }
 
+  it("a drag held after a revise in the same tick, while the ticket can't be read, is held once and put back the tick after", async () => {
+    const settings = config();
+    settings.jira.approvers = ["pm-1"];
+    await seedInReview(settings);
+    // Feedback and an approver's drag in one snapshot: the drag was set for the draft before
+    // the revision. The ticket itself can't be read all tick, so no move the tick owes is made.
+    comments.push({ id: "h1", body: "the intro should name the audience", created: new Date().toISOString(), author: PM });
+    changelog = [{ author: PM, created: "2026-08-20T09:00:00.000+0000", items: [{ field: "status", toString: "Done" }] }];
+    failIssueReads = 1_000;
+    (await startScribeJira(settings, vault)).stop();
+    const held = () => comments.filter((comment) => comment.body.includes("you haven't seen yet"));
+    expect(held()).toHaveLength(1);
+    expect(moves).toEqual([]);
+
+    failIssueReads = 0;
+    (await startScribeJira(settings, vault)).stop();
+    expect(held()).toHaveLength(1);
+    expect(moves).toEqual(["In Review"]);
+    expect(status()).toBe("In Review");
+    expect(published()).toHaveLength(0);
+  });
+
   it("a non-approver's drag with no approval in the tick is still refused and put back", async () => {
     const settings = config();
     settings.jira.approvers = ["pm-1"];

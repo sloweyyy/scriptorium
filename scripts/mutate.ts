@@ -3000,6 +3000,13 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/anchors.test.ts"],
   },
   {
+    control: "intake only looks an anchor up: an event that joins nothing writes no ledger entry, and can't claim a ticket's alias before its create is bound",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "if (verdict.accepted) event.anchor = anchors.resolve(event.key);",
+    replace: "if (verdict.accepted) event.anchor = anchors.anchorFor(event.key);",
+    evals: ["evals/anchors.test.ts"],
+  },
+  {
     control: "the model's tool input never binds an alias (only the tool's own output does)",
     file: "apps/agents/src/teammate-bot.ts",
     find: "onRan: (tool, _input, result) => bindCreated(key, tool, result) });",

@@ -32,6 +32,8 @@ vi.mock("@scriptorium/core", async (importOriginal) => ({
 
 /** A Jira that files issues: the Teammate's own create tool runs against it. */
 const created: Array<{ summary: string }> = [];
+/** Runs once the issue exists, before its create returns: what arrives between the two. */
+let onCreated: ((key: string) => Promise<void>) | undefined;
 vi.mock("@scriptorium/jira", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@scriptorium/jira")>()),
   jiraClient: () => ({
@@ -40,6 +42,7 @@ vi.mock("@scriptorium/jira", async (importOriginal) => ({
     createIssue: async (input: { summary: string }) => {
       created.push(input);
       const key = `DOC-${11 + created.length}`;
+      await onCreated?.(key);
       return { key, url: `https://beacon.atlassian.net/browse/${key}` };
     },
   }),
@@ -49,6 +52,7 @@ let tmpRoot: string;
 beforeEach(async () => {
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), "scriptorium-anchors-"));
   created.length = 0;
+  onCreated = undefined;
 });
 afterEach(async () => {
   await fs.rm(tmpRoot, { recursive: true, force: true, maxRetries: 5 });
@@ -288,36 +292,64 @@ describe("the Teammate keeps a thread and the ticket it filed as one conversatio
     script = { calls: [{ name: "jira_create_issue", input: { summary: "Digest timezone bug (dup of jira:issue:DOC-99)", description: "Merge with jira:issue:DOC-99" } }], reply: "Asked for approval." };
     await core.onMention({ channel: "C1", ts: "1.0", user: "U1", text: "<@UBOT> file a ticket for this" });
     await core.drain(2_000);
-    const anchors = new FileAnchors(path.join(tmpRoot, "state", "anchors.json"));
-    const thread = anchors.resolve("slack:thread:C1/1.0");
-    expect(thread).toBeTruthy();
-    expect(anchors.aliasesOf(thread!)).toEqual(["slack:thread:C1/1.0"]);
+    // Nothing joined yet: the thread's event wrote nothing to the ledger.
+    const file = path.join(tmpRoot, "state", "anchors.json");
+    await expect(fs.stat(file)).rejects.toThrow();
+    const anchors = new FileAnchors(file);
+    expect(anchors.resolve("slack:thread:C1/1.0")).toBeUndefined();
     expect(created).toHaveLength(0);
 
     const card = posted.find((message) => JSON.stringify(message.blocks ?? []).includes(APPROVE_ACTION));
     const requestId = JSON.stringify(card?.blocks).match(/"value":"([0-9a-f-]{36})"/)?.[1] as string;
     // A fresh process carries the approval out (the first drained): the binding is on disk.
     const later = await createTeammate(config(), vault, slack as never, "UBOT", jira);
+    // A mention on the new ticket lands between the create and its bind: it can't claim the
+    // ticket's alias first, so the bind still joins it to the thread.
+    script = { calls: [], reply: "Filed." };
+    onCreated = (key) => later.onJiraComment({ issueKey: key, commentId: "c0", body: "[~accountid:tm-1] filed?", authorId: "human-1" });
     expect(await later.onApprovalClick(APPROVE_ACTION, { actions: [{ value: requestId }], user: { id: "UPM", username: "priya" }, channel: { id: "C1" }, message: { ts: "9.2", thread_ts: "1.0" } })).toBeUndefined();
     expect(created).toHaveLength(1);
+    await later.drain(2_000);
+    const thread = anchors.resolve("slack:thread:C1/1.0");
+    expect(thread).toMatch(/^anc_[0-9a-f]{32}$/);
+    expect((await auditLines()).filter((line) => line.type === "anchor.bind_refused")).toEqual([]);
     expect(anchors.resolve("jira:issue:DOC-12")).toBe(thread);
     expect(anchors.resolve("jira:issue:DOC-99")).toBeUndefined();
     expect(anchors.aliasesOf(thread!).sort()).toEqual(["jira:issue:DOC-12", "slack:thread:C1/1.0"]);
 
     // Someone asks on the new ticket: that event is anchored to the thread's conversation.
     script = { calls: [], reply: "It's being looked at." };
-    await later.onJiraComment({ issueKey: "DOC-12", commentId: "c1", body: "[~accountid:tm-1] status?", authorId: "human-1" });
-    await later.drain(2_000);
-    const answered = (await auditLines()).find((line) => typeof line.type === "string" && line.type.startsWith("teammate.jira.") && line.issue === "DOC-12");
+    const next = await createTeammate(config(), vault, slack as never, "UBOT", jira);
+    await next.onJiraComment({ issueKey: "DOC-12", commentId: "c1", body: "[~accountid:tm-1] status?", authorId: "human-1" });
+    await next.drain(2_000);
+    const answered = (await auditLines()).filter((line) => typeof line.type === "string" && line.type.startsWith("teammate.jira.") && line.issue === "DOC-12").at(-1);
     expect(answered).toMatchObject({ key: "jira:issue:DOC-12", anchor: thread });
     // The reply went to the ticket it was asked on, not the thread the lane is shared with.
-    expect(comments.map((comment) => comment.issue)).toEqual(["DOC-12"]);
+    expect(comments.map((comment) => comment.issue)).toEqual(["DOC-12", "DOC-12"]);
     // A ticket the thread never filed is its own conversation.
     const other = await createTeammate(config(), vault, slack as never, "UBOT", jira);
     await other.onJiraComment({ issueKey: "DOC-99", commentId: "c2", body: "[~accountid:tm-1] status?", authorId: "human-1" });
     await other.drain(2_000);
     const elsewhere = (await auditLines()).find((line) => typeof line.type === "string" && line.type.startsWith("teammate.jira.") && line.issue === "DOC-99");
-    expect(elsewhere?.anchor).toBeTruthy();
-    expect(elsewhere?.anchor).not.toBe(thread);
+    expect(elsewhere).toBeTruthy();
+    expect(elsewhere?.anchor).toBeUndefined();
+    // Only the conversation that spans surfaces is in the ledger: the other ticket added nothing.
+    expect(Object.keys(JSON.parse(await fs.readFile(file, "utf8")).aliases).sort()).toEqual(["jira:issue:DOC-12", "slack:thread:C1/1.0"]);
+  });
+
+  it("an event that joins nothing writes nothing to the anchor ledger", async () => {
+    posted.length = 0;
+    comments.length = 0;
+    const { createTeammate } = await import("@scriptorium/agents");
+    const vault = new Vault(path.join(tmpRoot, "vault"));
+    await vault.ensure();
+    const core = await createTeammate(config(), vault, slack as never, "UBOT", jira);
+    script = { calls: [], reply: "Here's the answer." };
+    for (let i = 0; i < 3; i++) await core.onMention({ channel: "C1", ts: `${i}.5`, user: "U1", text: "<@UBOT> what is Beacon?" });
+    await core.onJiraComment({ issueKey: "DOC-40", commentId: "c40", body: "[~accountid:tm-1] status?", authorId: "human-1" });
+    await core.drain(2_000);
+    const answered = (await auditLines()).filter((line) => typeof line.type === "string" && line.type.startsWith("teammate.") && ("message" in line || "issue" in line));
+    expect(answered.length).toBeGreaterThanOrEqual(4);
+    await expect(fs.stat(path.join(tmpRoot, "state", "anchors.json"))).rejects.toThrow();
   });
 });

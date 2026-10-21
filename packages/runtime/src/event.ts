@@ -32,7 +32,8 @@ export interface AgentEvent<Payload = unknown> {
    */
   key: string;
   /**
-   * The conversation's opaque anchor (see anchor.ts), set at intake. Events with the same
+   * The conversation's opaque anchor (see anchor.ts), looked up at intake; only a conversation
+   * that has joined another surface has one. Events with the same
    * anchor — or, without one, the same key — are handled one at a time, in order; others
    * run in parallel. A Slack thread and the ticket it filed share one anchor.
    */

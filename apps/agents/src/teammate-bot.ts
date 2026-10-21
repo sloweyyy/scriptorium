@@ -180,6 +180,7 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
   const bindCreated = async (key: string, tool: string, result: string): Promise<void> => {
     const created = aliasesFromResult(tool, result);
     if (!created.length) return;
+    // The source conversation's anchor is minted here, together with the alias it joins.
     const anchor = anchors.anchorFor(key);
     if (!anchor) return;
     for (const alias of created) {
@@ -232,9 +233,11 @@ export async function createTeammate(config: AppConfig, vault: Vault, slack: Sla
    */
   const admit = (event: AgentEvent): ReturnType<Gate["check"]> => {
     const verdict = queue.open ? gate.check(event) : ({ accepted: false, reason: "shutting down" } as ReturnType<Gate["check"]>);
-    // Anchored at intake, once accepted: events of one conversation share a lane, whichever
-    // surface they arrive on. A refused event mints nothing.
-    if (verdict.accepted) event.anchor = anchors.anchorFor(event.key);
+    // Looked up at intake, once accepted: events of one conversation share a lane, whichever
+    // surface they arrive on. Never minted here — only `bindCreated` mints, when a conversation
+    // really spans surfaces — so the ledger holds only those, and an event on a ticket that
+    // arrives before its create is bound can't claim the alias first. Unbound runs on its key.
+    if (verdict.accepted) event.anchor = anchors.resolve(event.key);
     return verdict;
   };
 

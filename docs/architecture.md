@@ -86,8 +86,9 @@ Each invariant is enforced in one place, and an eval fails if it is broken.
     opaque anchor id, kept in `.scriptorium-state/anchors.json`. An alias is bound only as
     the side effect of a tool call that ran, from the tool's own output (`GuardDeps.onRan`,
     `aliasesFromResult`), never from what the model or a message says, and once bound it
-    never moves. Events sharing an anchor share one queue lane; each still replies on its own
-    key. `evals/anchors.test.ts`, `evals/runtime.test.ts`
+    never moves. Intake only looks an anchor up; one is minted when a call joins a second
+    alias, so the ledger holds only conversations that span surfaces. Events sharing an anchor
+    share one queue lane; each still replies on its own key. `evals/anchors.test.ts`, `evals/runtime.test.ts`
 
 The threat model behind these invariants is in [`security-model.md`](security-model.md).
 To add to the system, see [`extending.md`](extending.md).

@@ -10,7 +10,15 @@ import { MemoryApprovalStore, decideApproval, guard, type Envelope } from "@scri
  */
 
 let requests: Array<{ url: string; method: string; body?: unknown }>;
-let comments: Array<{ id: string; body: string; properties?: Array<{ key: string; value: unknown }> }>;
+let comments: Array<{
+  id: string;
+  body: string;
+  created?: string;
+  author?: { displayName: string };
+  visibility?: unknown;
+  jsdPublic?: boolean;
+  properties?: Array<{ key: string; value: unknown }>;
+}>;
 /** Fail the next comment POST AFTER Jira stored it: the crash-after case. */
 let dropNextCommentResponse: boolean;
 
@@ -34,7 +42,8 @@ beforeEach(() => {
       }
       return json(stored, 201);
     }
-    if (url.includes("/comment")) return json({ comments });
+    // Like Jira: a comment's entity properties come back only when asked for.
+    if (url.includes("/comment")) return json({ comments: url.includes("expand=properties") ? comments : comments.map(({ properties: _, ...comment }) => comment) });
     if (url.match(/\/issue\/DOC-7$/) || url.includes("/issue/DOC-7?")) {
       return json({ id: "1", key: "DOC-7", fields: { summary: "Digest emails", status: { name: "In Review" }, description: "h1. Goal\nOne email a day." } });
     }
@@ -66,6 +75,55 @@ describe("jira connector", () => {
     expect(await tools().jira_get_issue!.run({ key: "HR-1" })).toMatch(/^NOT_ALLOWED:/);
     expect(await tools().jira_get_issue!.run({ key: "../../myself" })).toMatch(/^NOT_ALLOWED:/);
     expect(requests.length).toBe(before);
+  });
+
+  describe("jira_get_issue shows only comments everyone on the ticket can see", () => {
+    const comment = (id: number, body: string, extra: Record<string, unknown> = {}) => ({ id: String(id), body, created: `2026-10-0${id}`, author: { displayName: "Mai Tran" }, ...extra });
+
+    it("leaves out a role-restricted comment and keeps a public one", async () => {
+      comments = [comment(1, "Digest goes out at 9am."), comment(2, "Customer pricing exception: 40% off", { visibility: { type: "role", value: "Administrators" } })];
+      const out = await tools().jira_get_issue!.run({ key: "DOC-7" });
+      expect(out).not.toContain("pricing exception");
+      expect(out).toContain("Digest goes out at 9am.");
+      expect(out).toContain("(1 restricted comment not shown)");
+    });
+
+    it("leaves out JSM internal notes, by jsdPublic or by the sd.public.comment property", async () => {
+      comments = [
+        comment(1, "Public reply."),
+        comment(2, "Internal: refund approved", { jsdPublic: false }),
+        comment(3, "Internal via property: escalate", { properties: [{ key: "sd.public.comment", value: { internal: true } }] }),
+      ];
+      const out = await tools().jira_get_issue!.run({ key: "DOC-7" });
+      expect(out).toContain("Public reply.");
+      expect(out).not.toContain("refund approved");
+      expect(out).not.toContain("escalate");
+      expect(out).toContain("(2 restricted comments not shown)");
+    });
+
+    it("leaves out a comment whose visibility it can't read (fail-closed)", async () => {
+      comments = [
+        comment(1, "Public reply."),
+        comment(2, "Weird visibility secret", { visibility: { type: "project-role-weird", value: "x" } }),
+        comment(3, "Non-string value secret", { visibility: { type: "group", value: 42 } }),
+      ];
+      const out = await tools().jira_get_issue!.run({ key: "DOC-7" });
+      expect(out).toContain("Public reply.");
+      expect(out).not.toContain("secret");
+      expect(out).toContain("(2 restricted comments not shown)");
+    });
+
+    it("filters before taking the latest five, so restricted comments don't push public ones out", async () => {
+      comments = [
+        ...[1, 2, 3, 4, 5, 6].map((n) => comment(n, `public note ${n}`)),
+        ...[7, 8, 9].map((n) => comment(n, `restricted note ${n}`, { visibility: { type: "group", value: "jira-admins" } })),
+      ];
+      const out = await tools().jira_get_issue!.run({ key: "DOC-7" });
+      expect(out).not.toContain("public note 1");
+      for (const n of [2, 3, 4, 5, 6]) expect(out).toContain(`public note ${n}`);
+      expect(out).not.toContain("restricted note");
+      expect(out).toContain("(3 restricted comments not shown)");
+    });
   });
 
   it("comments exactly once, even when the response is lost after Jira stored it", async () => {

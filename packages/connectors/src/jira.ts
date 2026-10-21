@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ToolSpec } from "@scriptorium/core";
-import { jiraToMarkdown, markdownToJira, type JiraClient } from "@scriptorium/jira";
+import { commentRestriction, jiraToMarkdown, markdownToJira, type JiraClient } from "@scriptorium/jira";
 import { once, opKey, type EffectLedger } from "@scriptorium/runtime";
 import { z } from "zod";
 
@@ -129,12 +129,20 @@ export function jiraTools(settings: JiraToolSettings): ToolSpec[] {
         refusalOr(async () => {
           const key = checkKey(z.object({ key: z.string() }).parse(input).key);
           const issue = await settings.client.getIssue(key);
-          const comments = (await settings.client.listComments(key)).slice(-5);
+          // What this returns can be repeated in a public channel or an unrestricted reply, so
+          // only comments everyone on the ticket can see. Properties are expanded: a JSM
+          // internal note may be marked only by `sd.public.comment`. Filter before the cut, so
+          // restricted comments never push public ones out of the latest five.
+          const all = await settings.client.listComments(key, 2_000, { expandProperties: true });
+          const visible = all.filter((comment) => everyoneCanSee(commentRestriction(comment)));
+          const withheld = all.length - visible.length;
+          const comments = visible.slice(-5);
           return [
             `jira:${key} — ${issue.fields.summary} [${issue.fields.status?.name ?? "unknown status"}]`,
             "",
             jiraToMarkdown(issue.fields.description ?? "") || "_(no description)_",
             ...(comments.length ? ["", "Latest comments:", ...comments.map((comment) => `- ${comment.author?.displayName ?? "someone"}: ${jiraToMarkdown(comment.body).slice(0, 500)}`)] : []),
+            ...(withheld ? ["", `(${withheld} restricted comment${withheld === 1 ? "" : "s"} not shown)`] : []),
           ].join("\n");
         }),
       records: (input, output) => {
@@ -291,6 +299,11 @@ const CHILDREN_LIMIT = 50;
  */
 function cutNote(count: number, limit: number, what: string): Array<{ note: string }> {
   return count >= limit ? [{ note: `Only the first ${limit} ${what} are listed; there may be more. Say the list is partial.` }] : [];
+}
+
+/** No role/group visibility, not internal, and a restriction it could read: fail-closed. */
+function everyoneCanSee(restriction: ReturnType<typeof commentRestriction>): boolean {
+  return restriction !== "unreadable" && !restriction.visibility && !restriction.internal;
 }
 
 function citeRecords(_input: unknown, output: string): string[] {

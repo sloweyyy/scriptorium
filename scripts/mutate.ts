@@ -352,6 +352,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/jira-connector.test.ts"],
   },
   {
+    control: "jira_get_issue never shows a restricted comment",
+    file: "packages/connectors/src/jira.ts",
+    find: "          const visible = all.filter((comment) => everyoneCanSee(commentRestriction(comment)));",
+    replace: "          const visible = all;",
+    evals: ["evals/jira-connector.test.ts"],
+  },
+  {
+    control: "jira_get_issue sees a JSM internal note marked only by its property",
+    file: "packages/connectors/src/jira.ts",
+    find: "settings.client.listComments(key, 2_000, { expandProperties: true })",
+    replace: "settings.client.listComments(key, 2_000)",
+    evals: ["evals/jira-connector.test.ts"],
+  },
+  {
     control: "a citation that failed the check no longer reads as a source",
     file: "packages/curator/src/qa-contract.ts",
     find: "  const text = dropped.length ? withoutLinks(withoutUnsupported(answer.text, dropped, citations), dropped) : answer.text;",

@@ -2946,8 +2946,15 @@ export const MUTANTS: Mutant[] = [
   {
     control: "events of one conversation share a lane across surfaces",
     file: "packages/runtime/src/queue.ts",
-    find: "  return event.anchor ?? event.key;",
-    replace: "  return event.key;",
+    find: "    return [key, ...new Set(events.flatMap((event) => (event.anchor ? [`anchor:${event.anchor}`] : [])))];",
+    replace: "    return [key];",
+    evals: ["evals/runtime.test.ts"],
+  },
+  {
+    control: "a key's events never overlap, even when an anchor appears mid-flight",
+    file: "packages/runtime/src/queue.ts",
+    find: "    return [key, ...new Set(events.flatMap((event) => (event.anchor ? [`anchor:${event.anchor}`] : [])))];",
+    replace: "    const anchored = [...new Set(events.flatMap((event) => (event.anchor ? [`anchor:${event.anchor}`] : [])))];\n    return anchored.length ? anchored : [key];",
     evals: ["evals/runtime.test.ts"],
   },
   {

@@ -200,6 +200,29 @@ describe("keyed queue", () => {
     expect(finished).toEqual(["jira:issue:DOC-99", "slack:thread:C1/1.0", "jira:issue:DOC-12"]);
   });
 
+  it("a thread that gains an anchor mid-turn still runs one event at a time", async () => {
+    const turn = deferred();
+    const running: string[] = [];
+    let overlap = false;
+    const queue = new KeyedQueue(async (_key, events) => {
+      for (const e of events) {
+        if (running.length) overlap = true;
+        running.push(e.id);
+        if (e.id === "first") await turn.promise;
+        running.splice(running.indexOf(e.id), 1);
+      }
+    }, { concurrency: 4 });
+    // The first turn ran before any anchor existed; the next event arrives already anchored.
+    queue.push(event("slack:thread:C1/1.0", { id: "first" }));
+    await tick();
+    queue.push(event("slack:thread:C1/1.0", { id: "second", anchor: "anc_one" }));
+    await tick();
+    expect(running).toEqual(["first"]);
+    turn.resolve();
+    await queue.drain(1_000);
+    expect(overlap).toBe(false);
+  });
+
   it("drain closes intake, finishes accepted work, and gives up at the deadline", async () => {
     const hang = deferred();
     const queue = new KeyedQueue(async () => {

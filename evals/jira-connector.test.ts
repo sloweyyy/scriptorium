@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JiraClient } from "@scriptorium/jira";
 import { jiraTools, jqlString } from "@scriptorium/connectors";
-import { MemoryEffectLedger } from "@scriptorium/runtime";
+import { createHash } from "node:crypto";
+import { MemoryEffectLedger, opKey } from "@scriptorium/runtime";
 import { MemoryApprovalStore, decideApproval, guard, type Envelope } from "@scriptorium/policy";
 
 /**
@@ -174,6 +175,9 @@ describe("small Jira edits: move, assign, label, link", () => {
       const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
       if (url.endsWith("/transitions") && method === "GET") return json({ transitions: [{ id: "31", name: "Start review", to: { name: "In Review" } }] });
       if (url.includes("/user/search")) return json(users.map((user) => ({ ...user, active: true, accountType: "atlassian" })));
+      // A write looks the issue up first; here every key is where it was.
+      const asked = url.match(/\/rest\/api\/2\/issue\/([A-Z][A-Z0-9_]*-\d+)\?fields=/)?.[1];
+      if (asked && method === "GET") return json({ id: "1", key: asked, fields: { summary: "s" } });
       return method === "GET" ? json({}) : method === "POST" ? new Response("", { status: 201 }) : new Response(null, { status: 204 });
     });
   }
@@ -265,5 +269,130 @@ describe("creating an issue, exactly once", () => {
     expect(await create.run(args, { approval: { id: "a1" } })).toMatch(/^Already created jira:DOC-100/);
     expect(created).toHaveLength(1);
     expect(created[0]?.labels[0]).toMatch(/^scriptorium-op-[0-9a-f]{12}$/);
+  });
+});
+
+describe("the allow-list holds for the issue Jira returns, and a security level keeps a ticket out", () => {
+  /** What GET /issue/{asked} answers with: a moved key comes back as the issue it is now. */
+  let issues: Record<string, { key: string; summary: string; description?: string; security?: { name: string } }>;
+  let listed: Array<{ key: string; summary: string; security?: { name: string } }>;
+
+  beforeEach(() => {
+    issues = {};
+    listed = [];
+    vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+      const url = decodeURIComponent(String(input).replace(/\+/g, " "));
+      const method = init?.method ?? "GET";
+      requests.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+      if (url.includes("/search")) {
+        return json({ issues: listed.map((issue, i) => ({ id: String(i), key: issue.key, fields: { summary: issue.summary, status: { name: "To Do" }, ...(issue.security ? { security: issue.security } : {}) } })) });
+      }
+      if (url.endsWith("/transitions") && method === "GET") return json({ transitions: [{ id: "31", name: "Start review", to: { name: "In Review" } }] });
+      if (url.includes("/comment") && method === "POST") return json({ id: "c1", body: "x", created: "now" }, 201);
+      if (url.includes("/comment")) return json({ comments: [{ id: "c0", body: "HR comment: salary band 7", created: "now", author: { displayName: "HR" } }] });
+      const asked = url.match(/\/rest\/api\/2\/issue\/([A-Z][A-Z0-9_]*-\d+)\?fields=/)?.[1];
+      if (asked && method === "GET") {
+        const issue = issues[asked];
+        if (!issue) return json({ errorMessages: ["not found"] }, 404);
+        return json({ id: "9", key: issue.key, fields: { summary: issue.summary, status: { name: "Open" }, description: issue.description ?? "", ...(issue.security ? { security: issue.security } : {}) } });
+      }
+      return method === "GET" ? json({}) : method === "POST" ? new Response("", { status: 201 }) : new Response(null, { status: 204 });
+    });
+  });
+
+  const writes = (pattern: RegExp) => requests.filter((request) => request.method !== "GET" && pattern.test(request.url));
+
+  it("refuses an old key that now names an issue in another project, and cites nothing", async () => {
+    issues["DOC-7"] = { key: "HR-3", summary: "Termination: Sam Park", description: "Severance terms attached." };
+    const tool = tools().jira_get_issue!;
+    const out = await tool.run({ key: "DOC-7" });
+    expect(out).toMatch(/^NOT_ALLOWED: DOC-7 has moved to HR-3/);
+    expect(out).not.toContain("Termination");
+    expect(out).not.toContain("Severance");
+    expect(out).not.toContain("salary band");
+    expect(tool.records!({ key: "DOC-7" }, out)).toEqual([]);
+    expect(requests.some((request) => request.url.includes("/comment"))).toBe(false);
+  });
+
+  it("answers a key moved within the allowed projects under the issue's real key", async () => {
+    issues["DOC-7"] = { key: "DOC-12", summary: "Digest emails" };
+    const tool = tools().jira_get_issue!;
+    const out = await tool.run({ key: "DOC-7" });
+    expect(out).toMatch(/^jira:DOC-12 — Digest emails/);
+    expect(tool.records!({ key: "DOC-7" }, out)).toEqual(["jira:DOC-12"]);
+  });
+
+  it("writes nothing to an issue that has moved out of the allowed projects", async () => {
+    issues["DOC-7"] = { key: "HR-3", summary: "Termination: Sam Park" };
+    issues["DOC-9"] = { key: "DOC-9", summary: "Fine" };
+    const t = tools();
+    expect(await t.jira_comment!.run({ key: "DOC-7", body: "x" }, { approval: { id: "a1" } })).toMatch(/^NOT_ALLOWED: DOC-7 has moved to HR-3/);
+    expect(writes(/\/comment/)).toEqual([]);
+    expect(await t.jira_transition!.run({ key: "DOC-7", status: "In Review" }, { approval: { id: "a2" } })).toMatch(/^NOT_ALLOWED: DOC-7 has moved/);
+    expect(writes(/\/transitions/)).toEqual([]);
+    expect(await t.jira_labels!.run({ key: "DOC-7", add: ["x"] }, { approval: { id: "a3" } })).toMatch(/^NOT_ALLOWED: DOC-7 has moved/);
+    expect(await t.jira_assign!.run({ key: "DOC-7", assignee: "unassigned" }, { approval: { id: "a4" } })).toMatch(/^NOT_ALLOWED: DOC-7 has moved/);
+    expect(writes(/\/issue\//)).toEqual([]);
+    expect(await t.jira_link!.run({ from: "DOC-9", to: "DOC-7" }, { approval: { id: "a5" } })).toMatch(/^NOT_ALLOWED: DOC-7 has moved/);
+    expect(await t.jira_link!.run({ from: "DOC-7", to: "DOC-9" }, { approval: { id: "a6" } })).toMatch(/^NOT_ALLOWED: DOC-7 has moved/);
+    expect(writes(/\/issueLink/)).toEqual([]);
+    expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
+  });
+
+  it("writes to the issue's real key when it moved within the allowed projects", async () => {
+    issues["DOC-7"] = { key: "DOC-12", summary: "Digest emails" };
+    expect(await tools().jira_comment!.run({ key: "DOC-7", body: "x" }, { approval: { id: "a1" } })).toBe("Commented on jira:DOC-12 (comment c1).");
+    const posts = writes(/\/comment/);
+    expect(posts).toHaveLength(1);
+    expect(posts[0]?.url).toContain("/issue/DOC-12/comment");
+    // The op-key the comment carries is the one for DOC-12, so a retry probes the issue it was written to.
+    const bodyDigest = createHash("sha256").update("x").digest("hex").slice(0, 16);
+    const carried = (posts[0]?.body as { properties?: Array<{ value: { op?: string } }> }).properties?.[0]?.value.op;
+    expect(carried).toBe(opKey("jira.comment", "DOC-12", bodyDigest, "a1"));
+    expect(carried).not.toBe(opKey("jira.comment", "DOC-7", bodyDigest, "a1"));
+    expect(await tools().jira_transition!.run({ key: "DOC-7", status: "In Review" }, { approval: { id: "a2" } })).toBe("Moved jira:DOC-12 to In Review.");
+    expect(writes(/\/transitions/)[0]?.url).toContain("/issue/DOC-12/transitions");
+  });
+
+  it("asks Jira for the security level on reads and searches", async () => {
+    issues["DOC-9"] = { key: "DOC-9", summary: "Fine" };
+    await tools().jira_get_issue!.run({ key: "DOC-9" });
+    await tools().jira_search!.run({ query: "fine" });
+    const fieldsOf = (pattern: RegExp) => new URL(requests.find((request) => pattern.test(request.url))!.url).searchParams.get("fields")?.split(",") ?? [];
+    expect(fieldsOf(/\/rest\/api\/2\/issue\/DOC-9\?/)).toContain("security");
+    expect(fieldsOf(/\/rest\/api\/2\/search\/jql\?/)).toContain("security");
+  });
+
+  it("refuses an issue with a security level before reading its comments", async () => {
+    issues["DOC-8"] = { key: "DOC-8", summary: "Settlement with Acme", description: "Pay 2M by Friday.", security: { name: "Legal only" } };
+    const tool = tools().jira_get_issue!;
+    const out = await tool.run({ key: "DOC-8" });
+    expect(out).toMatch(/^NOT_ALLOWED: .*restricted/);
+    expect(out).not.toContain("Settlement");
+    expect(out).not.toContain("Pay 2M");
+    expect(out).not.toContain("salary band");
+    expect(tool.records!({ key: "DOC-8" }, out)).toEqual([]);
+    expect(requests.some((request) => request.url.includes("/comment"))).toBe(false);
+  });
+
+  it("leaves security-level issues out of every list, says how many, and keeps the rest", async () => {
+    listed = [
+      { key: "DOC-8", summary: "Settlement with Acme", security: { name: "Legal only" } },
+      { key: "DOC-9", summary: "Digest timezone bug" },
+      { key: "DOC-10", summary: "Layoff plan", security: { name: "Exec" } },
+    ];
+    const t = tools();
+    const cases: Array<[string, Record<string, unknown>]> = [["jira_search", { query: "x" }], ["jira_recent", { days: 3 }], ["jira_children", { key: "DOC-40" }], ["jira_sprint", { project: "DOC" }]];
+    for (const [name, args] of cases) {
+      const out = await t[name]!.run(args);
+      expect(out, name).not.toContain("Settlement");
+      expect(out, name).not.toContain("Layoff");
+      expect(out, name).not.toContain("DOC-8");
+      expect(out, name).not.toContain("DOC-10");
+      expect(out, name).toContain("Digest timezone bug");
+      expect(out, name).toMatch(/2 issues with a security level are not shown/);
+      expect(t[name]!.records!(args, out), name).toEqual(["jira:DOC-9"]);
+    }
   });
 });

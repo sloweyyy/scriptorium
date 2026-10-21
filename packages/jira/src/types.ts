@@ -49,6 +49,8 @@ export interface JiraIssueFields {
   updated?: string;
   reporter?: JiraUser | null;
   assignee?: JiraUser | null;
+  /** The issue security level, when one is set: only the people it names may see the issue. */
+  security?: { id?: string; name?: string } | null;
 }
 
 export interface JiraIssue {

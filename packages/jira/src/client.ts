@@ -37,8 +37,12 @@ export class AttachmentTooLargeError extends JiraError {
   }
 }
 
-/** Fields the poller needs; asking for them explicitly keeps enhanced search (`/search/jql`) happy. */
-const ISSUE_FIELDS = ["summary", "description", "status", "issuetype", "labels", "attachment", "updated", "reporter", "assignee"];
+/**
+ * Fields the poller and the tools need; asking for them explicitly keeps enhanced search
+ * (`/search/jql`) happy. `security` is the issue security level: a ticket that has one is
+ * not for everyone who can see the project, and the tools keep it out of their answers.
+ */
+const ISSUE_FIELDS = ["summary", "description", "status", "issuetype", "labels", "attachment", "updated", "reporter", "assignee", "security"];
 
 /**
  * Jira Cloud REST v2 client.

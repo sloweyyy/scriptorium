@@ -123,8 +123,9 @@ export function errorMessage(error: unknown): string {
  * failure than a publish that refuses because a column is missing. `lastStatus` is patched
  * so the poller does not read the agent's own move as a human decision.
  */
-export async function moveTo(ctx: Ctx, key: string, statusName: string, currentStatus?: string): Promise<void> {
-  if (!statusName) return;
+/** True when the ticket is where it was sent: moved there now, or found already there. */
+export async function moveTo(ctx: Ctx, key: string, statusName: string, currentStatus?: string): Promise<boolean> {
+  if (!statusName) return false;
   const target = statusName.toLowerCase();
   // Where it was when this move was meant: a move that couldn't be made is made later only from there.
   const from = currentStatus ?? ctx.state.get(key)?.lastStatus;
@@ -140,7 +141,7 @@ export async function moveTo(ctx: Ctx, key: string, statusName: string, currentS
     // because the move to In Review didn't know the column it was leaving.
     if (currentStatus?.toLowerCase() === target) {
       await ctx.state.patch(key, { lastStatus: statusName, pendingMove: undefined });
-      return;
+      return true;
     }
     // `currentStatus` is what the caller last saw, which may be a model call ago.
     const live = await ctx.client
@@ -149,7 +150,7 @@ export async function moveTo(ctx: Ctx, key: string, statusName: string, currentS
       .catch(() => undefined);
     if (live?.toLowerCase() === target) {
       await ctx.state.patch(key, { lastStatus: statusName, pendingMove: undefined });
-      return;
+      return true;
     }
     // Where it is couldn't be read: not moved now, since moved blind, a column a person had
     // just chosen was overridden. Made on a later tick if it is still where it was: a refused
@@ -157,7 +158,7 @@ export async function moveTo(ctx: Ctx, key: string, statusName: string, currentS
     if (live === undefined) {
       console.warn(`[scribe] ${key}: couldn't read its status, so I'm not moving it to "${statusName}" yet`);
       await later();
-      return;
+      return false;
     }
     // Any column a person chose while the agent worked stays theirs: Approved above all (the
     // tick's end leaves that change for the next tick to judge as an approval), but also a
@@ -168,21 +169,23 @@ export async function moveTo(ctx: Ctx, key: string, statusName: string, currentS
     if (live && !known.includes(live.toLowerCase())) {
       console.warn(`[scribe] ${key}: someone moved it to "${live}" while I worked, so I'm not moving it to "${statusName}"`);
       await settled();
-      return;
+      return false;
     }
     const moved = await ctx.client.transitionTo(key, statusName);
     if (moved) {
       await ctx.state.patch(key, { lastStatus: statusName, pendingMove: undefined });
-      return;
+      return true;
     }
     await settled();
     // A workflow that does not offer the column is a legitimate configuration, but silence
     // here is indistinguishable from success — and a board that never moves looks like the
     // agent is inert rather than like the project is missing a status.
     console.warn(`[scribe] ${key}: workflow offers no transition to "${statusName}" from "${currentStatus ?? "its current status"}"`);
+    return false;
   } catch (error) {
     console.warn(`[scribe] ${key}: could not move to "${statusName}": ${errorMessage(error)}`);
     await later().catch(() => undefined);
+    return false;
   }
 }
 

@@ -2971,6 +2971,41 @@ export const MUTANTS: Mutant[] = [
     replace: '      jira_create_issue: "allow",',
     evals: ["evals/agent-policy.test.ts"],
   },
+  {
+    control: "an unreadable end-of-tick ticket leaves the agent's own latest move as the board baseline",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "const refreshed = await ctx.client.getIssue(key).catch(() => undefined);",
+    replace: "const refreshed = await ctx.client.getIssue(key).catch(() => issue);",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a drag to Approved is not refused after an approver's comment published the draft that tick",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "if (publishedThisTick && currentDraftPublished()) {",
+    replace: "if (false) {",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a drag answered while the ticket can't be read is not answered again the next tick",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "const dragStillThere = answeredDrag && !putBack;",
+    replace: "const dragStillThere = false;",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a drag held after a revise whose moves weren't made is put back from where it was dragged",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "const revisedMoveMade = revisedThisTick && !ctx.state.get(key)?.pendingMove;",
+    replace: "const revisedMoveMade = revisedThisTick;",
+    evals: ["evals/jira-board.test.ts"],
+  },
+  {
+    control: "a held drag counts as answered when the ticket can't be read at the tick's end",
+    file: "apps/agents/src/scribe-jira/issue.ts",
+    find: "      await holdUnseenRevision();\n      answeredDrag = true;",
+    replace: "      await holdUnseenRevision();",
+    evals: ["evals/jira-board.test.ts"],
+  },
 ];
 
 function run(evals: string[]): boolean {

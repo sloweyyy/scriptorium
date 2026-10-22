@@ -14,7 +14,7 @@ import {
 } from "@scriptorium/connectors";
 import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type CommentRestriction, type JiraClient } from "@scriptorium/jira";
 import { FileApprovalStore, PLAN_TOOL, effectiveStatus, executeApproved, mayApprove, planTool, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
-import { DailyBudget, FileAnchors, FileEffectLedger, FileSeenIds, Gate, Lease, KeyedQueue, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, scopesFor, type AgentEvent } from "@scriptorium/runtime";
+import { DailyBudget, FileAnchors, FileEffectLedger, FileSeenIds, Gate, Lease, KeyedQueue, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, scopesFor, type AgentEvent, type ChatTurn } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
 import { gapTicketOpener } from "./gap-ticket";
@@ -288,7 +288,7 @@ export async function createTeammate(
             return;
           }
         }
-        const { channel, threadTs, text, ts } = event.payload as { channel: string; threadTs: string; text: string; ts: string };
+        const { channel, threadTs, text, ts } = event.payload as ChatTurn;
         // One failing turn is answered and logged; it never drops the rest of the batch —
         // those deliveries are already marked seen, so Slack's redelivery would not bring them back.
         // Acknowledge at once, then turn that same message into the answer: the asker sees the
@@ -333,7 +333,7 @@ export async function createTeammate(
             await deliver(LIMIT_NOTICE);
             return;
           }
-          const context = text ? await chat.threadContext({ channel, threadTs, text, ts }).catch(() => undefined) : undefined;
+          const context = text ? await chat.threadContext(event.payload as ChatTurn).catch(() => undefined) : undefined;
           // Show what it is doing, at most every 2s (chat.update is rate-limited).
           let lastProgress = 0;
           const onTool = (tool: string): void => {

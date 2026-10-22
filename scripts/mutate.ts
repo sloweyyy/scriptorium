@@ -1381,6 +1381,20 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/chat-surface.test.ts"],
   },
   {
+    control: "a top-level chat message is its own thread",
+    file: "packages/runtime/src/surface.ts",
+    find: "  const threadTs = message.threadTs ?? message.ts;",
+    replace: "  const threadTs = message.threadTs ?? \"\";",
+    evals: ["evals/chat-surface.test.ts"],
+  },
+  {
+    control: "a redelivered chat message keeps its id, so the Gate answers it once",
+    file: "packages/runtime/src/surface.ts",
+    find: "    id: message.deliveryId,",
+    replace: "    id: crypto.randomUUID(),",
+    evals: ["evals/chat-surface.test.ts"],
+  },
+  {
     control: "a chat event's author is named by surface, so an approval or memory can't cross surfaces",
     file: "packages/runtime/src/surface.ts",
     find: "    actor: { id: `${surface}:${message.authorId}`, isBot: message.isBot },",

@@ -1369,7 +1369,7 @@ export const MUTANTS: Mutant[] = [
   {
     control: "a Slack private channel (a C id too) is a private turn",
     file: "apps/agents/src/teammate-bot.ts",
-    find: "context, private: await chat.isPrivate(channel) },",
+    find: "context, private: await chat.isPrivate(event.payload as ChatTurn) },",
     replace: 'context, private: channel.startsWith("D") },',
     evals: ["evals/teammate-e2e.test.ts"],
   },
@@ -1378,6 +1378,13 @@ export const MUTANTS: Mutant[] = [
     file: "packages/runtime/src/surface.ts",
     find: "    key: keys.thread(surface, message.channel, threadTs),",
     replace: "    key: keys.thread(\"slack\", message.channel, threadTs),",
+    evals: ["evals/chat-surface.test.ts"],
+  },
+  {
+    control: "deliveries are deduped per surface, so one surface's id never drops another surface's question",
+    file: "packages/runtime/src/gate.ts",
+    find: "    const deliveryId = `${event.source}:${event.id}`;",
+    replace: "    const deliveryId = event.id;",
     evals: ["evals/chat-surface.test.ts"],
   },
   {

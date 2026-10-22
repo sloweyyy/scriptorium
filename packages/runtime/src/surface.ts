@@ -28,10 +28,12 @@ export interface ChatInbound<Raw = unknown> {
    */
   threadContext(turn: ChatTurn): Promise<string | undefined>;
   /**
-   * Whether not everyone in the workspace can read the conversation. A question asked there
-   * is a private turn. A conversation whose privacy can't be read counts as private.
+   * Whether not everyone in the workspace can read the conversation the turn is in. A
+   * question asked there is a private turn. Given the whole turn, not only its channel: on
+   * some surfaces a thread can be private inside a public channel. A conversation whose
+   * privacy can't be read counts as private.
    */
-  isPrivate(channel: string): Promise<boolean>;
+  isPrivate(turn: ChatTurn): Promise<boolean>;
 }
 
 /**

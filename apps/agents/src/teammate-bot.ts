@@ -345,7 +345,7 @@ export async function createTeammate(
             void update.finally(() => inFlight.delete(update));
           };
           const reply = await runTeammateTurn(
-            { question: text, askedBy: event.actor.id, channel, threadTs, context, private: await chat.isPrivate(channel) },
+            { question: text, askedBy: event.actor.id, channel, threadTs, context, private: await chat.isPrivate(event.payload as ChatTurn) },
             { ...turnDeps(key), ...spendAgainst(channel), onTool },
           );
           const textOut = formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken });

@@ -39,6 +39,7 @@ export function slackInbound(slack: SlackClient): ChatInbound<SlackMention> {
     surface: "slack",
     toEvent: mentionToEvent,
     threadContext: (turn) => threadContext(slack, turn.channel, turn.threadTs, turn.ts),
-    isPrivate,
+    // A Slack thread is exactly as readable as its channel.
+    isPrivate: (turn) => isPrivate(turn.channel),
   };
 }

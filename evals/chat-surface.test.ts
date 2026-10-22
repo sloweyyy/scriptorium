@@ -18,6 +18,8 @@ interface Said {
 interface World {
   threads: Record<string, Said[]>;
   privacy: Record<string, "public" | "private" | "unreadable">;
+  /** "channel/thread" of threads private inside their channel, on a surface that has them. */
+  privateThreads?: string[];
 }
 
 interface Asked {
@@ -88,7 +90,7 @@ function roomSurface(world: World): Surface {
       const lines = (world.threads[`${turn.channel}/${turn.threadTs}`] ?? []).filter((said) => said.ts !== turn.ts).map((said) => `${said.author}: ${said.text}`);
       return lines.length ? lines.join("\n") : undefined;
     },
-    isPrivate: async (room) => world.privacy[room] !== "public",
+    isPrivate: async (turn) => world.privacy[turn.channel] !== "public" || Boolean(world.privateThreads?.includes(`${turn.channel}/${turn.threadTs}`)),
   };
   return {
     inbound: inbound as ChatInbound,
@@ -151,9 +153,28 @@ for (const [name, make] of [["Slack", slackSurface], ["a surface that is not Sla
     });
 
     it("says a public channel is public, and a private one or one it can't read is private", async () => {
-      expect(await inbound.isPrivate("C1")).toBe(false);
-      expect(await inbound.isPrivate("C2")).toBe(true);
-      expect(await inbound.isPrivate("C3")).toBe(true);
+      const turnIn = (channel: string) => event({ channel, ts: "8.0", author: "U1", question: "q" }).payload;
+      expect(await inbound.isPrivate(turnIn("C1"))).toBe(false);
+      expect(await inbound.isPrivate(turnIn("C2"))).toBe(true);
+      expect(await inbound.isPrivate(turnIn("C3"))).toBe(true);
     });
   });
 }
+
+describe("chat surfaces side by side", () => {
+  it("a thread that is private inside a public channel is private: privacy is asked of the turn, not only its channel", async () => {
+    const rooms = roomSurface({ ...world, privateThreads: ["C1/7.0"] });
+    const inThread = rooms.inbound.toEvent(rooms.raw({ channel: "C1", ts: "7.1", threadTs: "7.0", author: "U1", question: "q" }));
+    expect(await rooms.inbound.isPrivate(inThread.payload)).toBe(true);
+    const elsewhere = rooms.inbound.toEvent(rooms.raw({ channel: "C1", ts: "8.1", threadTs: "8.0", author: "U1", question: "q" }));
+    expect(await rooms.inbound.isPrivate(elsewhere.payload)).toBe(false);
+  });
+
+  it("the same delivery id from two surfaces is two questions, and both are answered", () => {
+    const gate = new Gate({ selfIds: [] });
+    const message = { deliveryId: "C1:1.0", channel: "C1", ts: "1.0", text: "q", authorId: "U1", isBot: false };
+    expect(gate.check(chatTurnEvent("slack", message)).accepted).toBe(true);
+    expect(gate.check(chatTurnEvent("rooms", message)).accepted).toBe(true);
+    expect(gate.check(chatTurnEvent("rooms", message)).accepted).toBe(false);
+  });
+});

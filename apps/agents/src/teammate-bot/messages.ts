@@ -1,6 +1,6 @@
 import type { SlackClient } from "@scriptorium/connectors";
 import { runLinkSignature } from "@scriptorium/core";
-import { keys, type AgentEvent } from "@scriptorium/runtime";
+import { chatTurnEvent, type AgentEvent, type ChatTurn } from "@scriptorium/runtime";
 import { toSlackMrkdwn } from "../slack-format";
 import type { TeammateReply } from "../teammate";
 import { stripMentions } from "../util";
@@ -33,17 +33,16 @@ export function capQuestion(text: string): string {
 }
 
 /** A Slack `app_mention` as the platform's event. Pure, so the mapping is pinned by evals. */
-export function mentionToEvent(mention: SlackMention): AgentEvent<{ channel: string; threadTs: string; text: string; ts: string }> {
-  const threadTs = mention.thread_ts ?? mention.ts;
-  return {
-    id: mention.client_msg_id ?? `${mention.channel}:${mention.event_ts ?? mention.ts}`,
-    source: "slack",
-    key: keys.thread("slack", mention.channel, threadTs),
-    kind: "slack.mention",
-    actor: { id: `slack:${mention.user ?? mention.bot_id ?? "unknown"}`, isBot: Boolean(mention.bot_id) },
-    payload: { channel: mention.channel, threadTs, text: capQuestion(stripMentions(mention.text)), ts: mention.ts },
-    receivedAt: new Date().toISOString(),
-  };
+export function mentionToEvent(mention: SlackMention): AgentEvent<ChatTurn> {
+  return chatTurnEvent("slack", {
+    deliveryId: mention.client_msg_id ?? `${mention.channel}:${mention.event_ts ?? mention.ts}`,
+    channel: mention.channel,
+    threadTs: mention.thread_ts,
+    ts: mention.ts,
+    text: capQuestion(stripMentions(mention.text)),
+    authorId: mention.user ?? mention.bot_id ?? "unknown",
+    isBot: Boolean(mention.bot_id),
+  });
 }
 
 /**

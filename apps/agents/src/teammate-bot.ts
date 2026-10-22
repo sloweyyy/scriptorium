@@ -22,7 +22,8 @@ import { citationLinks, resolveCitations } from "./citations";
 import { answerBlocks, contextBlocks } from "./slack-format";
 import { digestDue, isoWeek, postDigestOnce } from "./digest";
 import { runTeammateTurn } from "./teammate";
-import { ASKING_SUBTYPES, capQuestion, formatReply, helpText, isHelpRequest, mentionToEvent, progressText, threadContext, type SlackMention } from "./teammate-bot/messages";
+import { ASKING_SUBTYPES, capQuestion, formatReply, helpText, isHelpRequest, progressText, type SlackMention } from "./teammate-bot/messages";
+import { slackInbound } from "./teammate-bot/slack-surface";
 import { sharesScribeAccount, teammateConnectorTools } from "./teammate-bot/tools";
 import { outcomeMessages } from "./teammate-bot/outcome";
 import { homeBlocks } from "./teammate-bot/home";
@@ -35,6 +36,7 @@ export * from "./teammate-bot/outcome";
 export * from "./teammate-bot/home";
 export * from "./teammate-bot/reminders";
 export * from "./teammate-bot/control";
+export * from "./teammate-bot/slack-surface";
 
 /**
  * The Teammate in Slack: the whole engine behind one surface.
@@ -223,37 +225,9 @@ export async function createTeammate(
   let current: Control = OPEN;
   const refreshControl = async (): Promise<Control> => (current = await readControl(controlFile, config.signingKey));
   const PAUSED_NOTICE = "⏸️ I've been paused by an admin, so I'm not answering or changing anything right now.";
-  /**
-   * Whether not everyone in the workspace can read this conversation: a DM, a group DM or a
-   * private channel (private channels have C ids too). A question asked there is a private
-   * turn — its gap names what is missing, never the question. Unreadable counts as private.
-   * Cached per channel for a while (a channel can be made private later); a failed lookup
-   * isn't cached, so the next turn asks again — except a missing scope, which no retry fixes:
-   * that is cached like an answer and warned about once (the app needs reinstalling).
-   */
-  const channelPrivacy = new Map<string, { at: number; private: Promise<boolean> }>();
-  const PRIVACY_TTL_MS = 10 * 60_000;
-  let warnedMissingScope = false;
-  const privateChannel = (channel: string): Promise<boolean> => {
-    if (channel.startsWith("D")) return Promise.resolve(true);
-    const cached = channelPrivacy.get(channel);
-    if (cached && Date.now() - cached.at < PRIVACY_TTL_MS) return cached.private;
-    const looked = slack.conversations.info({ channel }).then(
-      (info) => {
-        const kind = info.channel as { is_private?: boolean; is_im?: boolean; is_mpim?: boolean } | undefined;
-        return !kind || kind.is_private !== false || Boolean(kind.is_im || kind.is_mpim);
-      },
-      (error: unknown) => {
-        if ((error as { data?: { error?: string } } | undefined)?.data?.error === "missing_scope") {
-          if (!warnedMissingScope) console.warn("[teammate] can't tell private channels from public ones — the Slack app lacks channels:read/groups:read/mpim:read (reinstall it from slack-manifests/teammate.yaml); every channel's gap is kept private until then");
-          warnedMissingScope = true;
-        } else channelPrivacy.delete(channel);
-        return true;
-      },
-    );
-    channelPrivacy.set(channel, { at: Date.now(), private: looked });
-    return looked;
-  };
+  // The chat surface turns arrive on. A question asked where not everyone can read it is a
+  // private turn: its gap names what is missing, never the question.
+  const chat = slackInbound(slack);
   /** An issue with a security level isn't readable by everyone; one that can't be read counts as secured. */
   const securedIssue = async (issueKey: string): Promise<boolean> => {
     if (!jira) return true;
@@ -359,7 +333,7 @@ export async function createTeammate(
             await deliver(LIMIT_NOTICE);
             return;
           }
-          const context = text ? await threadContext(slack, channel, threadTs, ts).catch(() => undefined) : undefined;
+          const context = text ? await chat.threadContext({ channel, threadTs, text, ts }).catch(() => undefined) : undefined;
           // Show what it is doing, at most every 2s (chat.update is rate-limited).
           let lastProgress = 0;
           const onTool = (tool: string): void => {
@@ -371,7 +345,7 @@ export async function createTeammate(
             void update.finally(() => inFlight.delete(update));
           };
           const reply = await runTeammateTurn(
-            { question: text, askedBy: event.actor.id, channel, threadTs, context, private: await privateChannel(channel) },
+            { question: text, askedBy: event.actor.id, channel, threadTs, context, private: await chat.isPrivate(channel) },
             { ...turnDeps(key), ...spendAgainst(channel), onTool },
           );
           const textOut = formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken });
@@ -549,7 +523,7 @@ export async function createTeammate(
 
   const core: TeammateCore = {
     async onMention(mention) {
-      const agentEvent = mentionToEvent(mention);
+      const agentEvent = chat.toEvent(mention);
       const verdict = admit(agentEvent);
       if (!verdict.accepted) {
         await audit(config.auditFile, { type: "teammate.ignored", actor: "teammate", key: agentEvent.key, reason: verdict.reason });

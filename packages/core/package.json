@@ -8,10 +8,10 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.134.0",
-    "@anthropic-ai/vertex-sdk": "^0.21.0",
+    "@anthropic-ai/sdk": "^0.137.0",
+    "@anthropic-ai/vertex-sdk": "^0.22.0",
     "dotenv": "^17.4.2",
-    "google-auth-library": "^11.3.0",
+    "google-auth-library": "^11.3.2",
     "gray-matter": "^4.0.3",
     "micromark": "^4.0.3",
     "micromark-extension-directive": "^4.0.0",

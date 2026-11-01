@@ -23,7 +23,7 @@
     "auditlog": "tsx scripts/audit.ts"
   },
   "devDependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@scriptorium/agents": "workspace:*",
     "@scriptorium/connectors": "workspace:*",
     "@scriptorium/core": "workspace:*",
@@ -34,8 +34,8 @@
     "@scriptorium/runtime": "workspace:*",
     "@scriptorium/scribe": "workspace:*",
     "@slack/web-api": "^8.2.0",
-    "@types/node": "^26.6.5",
-    "satteri": "0.10.5",
+    "@types/node": "^26.6.6",
+    "satteri": "0.11.6",
     "sharp": "^0.35.5",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",

@@ -1,7 +1,7 @@
 import type { SlackClient } from "@scriptorium/connectors";
 import { runLinkSignature } from "@scriptorium/core";
-import { chatTurnEvent, type AgentEvent, type ChatTurn } from "@scriptorium/runtime";
-import { toSlackMrkdwn } from "../slack-format";
+import { chatTurnEvent, type AgentEvent, type ChatMessage, type ChatTurn } from "@scriptorium/runtime";
+import { renderSlackMessage } from "./slack-message";
 import type { TeammateReply } from "../teammate";
 import { stripMentions } from "../util";
 
@@ -146,14 +146,20 @@ export function progressText(tool: string): string {
  * the thread a reader pulls to find the trigger, tool calls and approvals behind it.
  */
 export function formatReply(reply: TeammateReply, runId?: string, viewer?: { baseUrl?: string; token?: string }): string {
-  const body = toSlackMrkdwn(reply.text);
-  const ticket = reply.kind === "gap" && reply.ticket ? `\nRequest: <${reply.ticket.url}|${reply.ticket.key}>` : "";
+  return renderSlackMessage(replyMessage(reply, runId, viewer)).text;
+}
+
+/** Neutral reply content: only the adapter decides how a link or footer is displayed. */
+export function replyMessage(reply: TeammateReply, runId?: string, viewer?: { baseUrl?: string; token?: string }): ChatMessage {
   const run = runId?.slice(0, 8);
   // With a viewer configured, the run id is a link to everything the run did.
-  const runLabel = run
-    ? viewer?.baseUrl && viewer.token
-      ? ` · <${viewer.baseUrl.replace(/\/$/, "")}/runs/${runId}?sig=${runLinkSignature(viewer.token, runId as string)}|view run ${run}>`
-      : ` · run \`${run}\``
-    : "";
-  return `${body}${ticket}\n_AI-generated — verify before acting${runLabel}_`;
+  const link = run && viewer?.baseUrl && viewer.token
+    ? { url: `${viewer.baseUrl.replace(/\/$/, "")}/runs/${runId}?sig=${runLinkSignature(viewer.token, runId as string)}`, label: `view run ${run}` }
+    : undefined;
+  return {
+    text: reply.text,
+    ...(reply.kind === "answer" ? { sources: { citations: reply.citations } } : {}),
+    ...(reply.kind === "gap" && reply.ticket ? { request: reply.ticket } : {}),
+    footer: { text: `AI-generated — verify before acting${run && !link ? ` · run \`${run}\`` : ""}`, ...(link ? { link } : {}) },
+  };
 }

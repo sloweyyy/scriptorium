@@ -1,9 +1,8 @@
 import { keys, type AgentEvent } from "./event";
 
 /**
- * A chat surface, inbound: what an agent needs from Slack, Discord, Teams or any other chat
- * tool to take a question. Everything downstream of an adapter sees `ChatTurn` events and
- * these three calls, never the tool's own payloads, so a new chat tool is one adapter.
+ * Chat surfaces map incoming messages to turns and render outgoing Markdown/provenance.
+ * The runtime owns delivery ordering; adapters own platform payloads and opaque message ids.
  */
 
 /** One message that asks the agent something, on any chat surface. */
@@ -34,6 +33,27 @@ export interface ChatInbound<Raw = unknown> {
    * privacy can't be read counts as private.
    */
   isPrivate(turn: ChatTurn): Promise<boolean>;
+}
+
+/** Where a reply belongs. Message ids are opaque: only the adapter interprets them. */
+export interface ChatTarget {
+  channel: string;
+  threadId?: string;
+}
+
+/** Markdown and provenance, before a surface renders them into its own markup or cards. */
+export interface ChatMessage {
+  text: string;
+  sources?: { citations: string[]; links?: Map<string, string> };
+  request?: { key: string; url: string };
+  footer?: { text: string; link?: { label: string; url: string } };
+}
+
+/** Replies and edits. An adapter must throw on a failed post, and report a failed edit. */
+export interface ChatOutbound {
+  readonly surface: string;
+  post(target: ChatTarget, message: ChatMessage): Promise<string>;
+  update(target: ChatTarget, messageId: string, message: ChatMessage): Promise<boolean>;
 }
 
 /**

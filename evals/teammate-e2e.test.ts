@@ -53,6 +53,8 @@ let progressDelayMs = 0;
 let progressDelays: number[] = [];
 /** Lose the next reminder post's response after Slack stored it. */
 let loseNextReminderPost = false;
+/** The placeholder lands, but neither the final edit nor its fallback post can be delivered. */
+let rejectFinalDelivery = false;
 /** What `conversations.info` says about a channel, by id; and every channel it was asked about. */
 let channelKinds: Record<string, Record<string, boolean> | "fail" | "missing_scope"> = {};
 let infoCalls: string[] = [];
@@ -61,6 +63,7 @@ let infoCalls: string[] = [];
 const slack = {
   chat: {
     postMessage: async (args: Posted) => {
+      if (rejectFinalDelivery && !args.text.startsWith("🔎")) throw new Error("chat unavailable");
       posted.push({ ...args });
       if (loseNextReminderPost && args.text.includes("Reminder:")) {
         loseNextReminderPost = false;
@@ -70,6 +73,7 @@ const slack = {
     },
     getPermalink: async (args: { channel: string; message_ts: string }) => ({ ok: true, permalink: `https://team.slack.com/archives/${args.channel}/p${args.message_ts.replace(".", "")}` }),
     update: async (args: { ts: string; text: string; blocks?: unknown[] }) => {
+      if (rejectFinalDelivery && !args.text.startsWith("🔎")) throw new Error("chat unavailable");
       if (args.text.startsWith("🔎")) {
         progressUpdates.push(args.text);
         const delay = progressDelays.shift() ?? progressDelayMs;
@@ -126,6 +130,7 @@ beforeEach(async () => {
   threadReplies = [];
   lastPrompt = "";
   loseNextReminderPost = false;
+  rejectFinalDelivery = false;
   channelKinds = {};
   infoCalls = [];
 });
@@ -238,6 +243,23 @@ describe("teammate, end to end", () => {
     await settle(core);
     await createTeammate(config(), vault, slack as never, "UBOT");
     expect(posted[0]?.text).toContain("docs/digest-emails");
+  });
+
+  it("a failed answer delivery stays open until a later boot can close the placeholder honestly", async () => {
+    const { FileEffectLedger } = await import("@scriptorium/runtime");
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 local time [[docs/digest-emails]]." };
+    rejectFinalDelivery = true;
+    await core.onMention({ channel: "C1", ts: "1.0", user: "U1", text: "<@UBOT> when are digests sent?" });
+    await settle(core);
+    const ledger = new FileEffectLedger(path.join(tmpRoot, "state", "effects.json"));
+    expect(await ledger.inProgress()).toHaveLength(1);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]?.text).not.toContain("09:00");
+    rejectFinalDelivery = false;
+    await createTeammate(config(), vault, slack as never, "UBOT");
+    expect(posted[0]?.text).toContain("restarted before I finished");
+    expect(await ledger.inProgress()).toEqual([]);
   });
 
   it("a progress update that lands late never overwrites the answer", async () => {

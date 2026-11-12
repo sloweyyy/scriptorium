@@ -67,6 +67,29 @@ approver list. `deny`, or leaving the tool out, means the model never sees it.
    `handleApprovalClick` and `executeApproved`. Keep it Bolt-free, so an end-to-end test
    can drive it (`evals/teammate-e2e.test.ts`).
 
+## Add a chat surface
+
+`packages/runtime/src/surface.ts` defines the two adapter boundaries:
+
+- `ChatInbound` turns the platform payload into a `ChatTurn`, reads its thread, and reports
+  whether the conversation is private.
+- `ChatOutbound` posts and edits a `ChatMessage` at a `ChatTarget`. Messages carry Markdown,
+  source records and links, a gap ticket link, and run provenance. The adapter owns platform
+  markup and rich cards; message ids stay opaque to the runtime. A failed post must throw;
+  a failed edit returns `false` or throws.
+
+Use `chatDelivery` for the acknowledgement, progress edits and final answer. It throttles
+progress, waits for every edit still in flight before delivering the answer, and posts in
+the same thread if the acknowledgement cannot be edited. Keep the placeholder's durable
+record open until `finish` succeeds, so restart recovery can close an interrupted reply.
+
+Slack's implementations live in `apps/agents/src/teammate-bot/slack-surface.ts`, with
+formatting in `slack-message.ts`. The inbound contract (`evals/chat-surface.test.ts`) and
+outbound contract (`evals/chat-delivery.test.ts`) each run against Slack and a fake second
+surface. Give a new adapter the same contract checks. The Teammate host, approval cards,
+scheduled posts and account configuration still need platform-specific wiring; implementing
+these interfaces alone does not enable a new live chat platform.
+
 ## Checks every change needs
 
 - `pnpm typecheck && pnpm eval` must be green. CI runs both on Node 22 and 24.

@@ -14,16 +14,15 @@ import {
 } from "@scriptorium/connectors";
 import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type CommentRestriction, type JiraClient } from "@scriptorium/jira";
 import { FileApprovalStore, PLAN_TOOL, effectiveStatus, executeApproved, mayApprove, planTool, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
-import { DailyBudget, FileAnchors, FileEffectLedger, FileSeenIds, Gate, Lease, KeyedQueue, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, scopesFor, type AgentEvent, type ChatTurn } from "@scriptorium/runtime";
+import { DailyBudget, FileAnchors, FileEffectLedger, FileSeenIds, Gate, Lease, KeyedQueue, chatDelivery, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, scopesFor, type AgentEvent, type ChatMessage, type ChatTurn } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
 import { gapTicketOpener } from "./gap-ticket";
 import { citationLinks, resolveCitations } from "./citations";
-import { answerBlocks, contextBlocks } from "./slack-format";
 import { digestDue, isoWeek, postDigestOnce } from "./digest";
 import { runTeammateTurn } from "./teammate";
-import { ASKING_SUBTYPES, capQuestion, formatReply, helpText, isHelpRequest, progressText, type SlackMention } from "./teammate-bot/messages";
-import { slackInbound } from "./teammate-bot/slack-surface";
+import { ASKING_SUBTYPES, capQuestion, formatReply, helpText, isHelpRequest, progressText, replyMessage, type SlackMention } from "./teammate-bot/messages";
+import { slackInbound, slackOutbound } from "./teammate-bot/slack-surface";
 import { sharesScribeAccount, teammateConnectorTools } from "./teammate-bot/tools";
 import { outcomeMessages } from "./teammate-bot/outcome";
 import { homeBlocks } from "./teammate-bot/home";
@@ -117,6 +116,7 @@ export async function createTeammate(
 ): Promise<TeammateCore> {
   const settings = config.teammate;
   const self = `slack:${selfUserId}`;
+  const outbound = slackOutbound(slack);
 
   const stateDir = config.jira.stateDir;
   const store = new FileApprovalStore(path.join(stateDir, "approvals.json"));
@@ -134,10 +134,10 @@ export async function createTeammate(
     for (const record of await ledger.inProgress().catch(() => [])) {
       const meta = record.meta as { kind?: string; channel?: string; ts?: string } | undefined;
       if (meta?.kind !== "teammate.turn" || !meta.channel || !meta.ts) continue;
-      const closed = await slack.chat
-        .update({ channel: meta.channel, ts: meta.ts, text: "⚠️ I restarted before I finished this, so it wasn't answered and nothing was changed. Please ask again." })
+      const closed = await outbound
+        .update({ channel: meta.channel }, meta.ts, { text: "⚠️ I restarted before I finished this, so it wasn't answered and nothing was changed. Please ask again." })
         .catch(() => undefined);
-      if (closed?.ok) await ledger.put({ ...record, status: "done", completedAt: new Date().toISOString() });
+      if (closed) await ledger.put({ ...record, status: "done", completedAt: new Date().toISOString() });
     }
   };
   // One instance runs the scheduled work and the sweep (ADR-002). On a deploy the old and new
@@ -271,7 +271,7 @@ export async function createTeammate(
           await audit(config.auditFile, { type: "teammate.paused", actor: "teammate", key, event: event.id, reason: current.reason }).catch(() => undefined);
           if (event.source === "slack") {
             const { channel, threadTs } = event.payload as { channel: string; threadTs: string };
-            await slack.chat.postMessage({ channel, thread_ts: threadTs, text: PAUSED_NOTICE }).catch(() => undefined);
+            await outbound.post({ channel, threadId: threadTs }, { text: PAUSED_NOTICE }).catch(() => undefined);
           }
           return;
         }
@@ -289,80 +289,50 @@ export async function createTeammate(
           }
         }
         const { channel, threadTs, text, ts } = event.payload as ChatTurn;
+        const target = { channel, threadId: threadTs };
         // One failing turn is answered and logged; it never drops the rest of the batch —
         // those deliveries are already marked seen, so Slack's redelivery would not bring them back.
         // Acknowledge at once, then turn that same message into the answer: the asker sees the
         // agent is on it, and the thread gets one reply rather than a placeholder plus an answer.
         const placeholder = !isHelpRequest(text)
-          ? await slack.chat.postMessage({ channel, thread_ts: threadTs, text: "🔎 Looking into it…" }).catch(() => undefined)
+          ? await outbound.post(target, { text: "🔎 Looking into it…" }).catch(() => undefined)
           : undefined;
-        const open = placeholder?.ts
-          ? { op: turnOp(channel, placeholder.ts), status: "in-progress" as const, startedAt: new Date().toISOString(), meta: { kind: "teammate.turn", channel, ts: placeholder.ts } }
+        const open = placeholder
+          ? { op: turnOp(channel, placeholder), status: "in-progress" as const, startedAt: new Date().toISOString(), meta: { kind: "teammate.turn", channel, ts: placeholder } }
           : undefined;
         if (open) await ledger.put(open).catch(() => undefined);
-        // Progress updates are fire-and-forget, so one can land AFTER the answer (a slow call,
-        // or a 429 retried after its wait) and leave "Searching…" as the final word. Delivery
-        // closes the gate and waits for EVERY update still in flight: waiting only for the
-        // latest let an earlier one, held back by a rate-limit retry, land after the answer.
-        let finished = false;
-        const inFlight = new Set<Promise<unknown>>();
-        /** Returns the reply's own ts, so feedback on it can be traced back to this run. */
-        const deliver = async (message: string, blocks?: unknown[]): Promise<string | undefined> => {
-          finished = true;
-          await Promise.all(inFlight);
-          const close = async () => {
-            if (open) await ledger.put({ ...open, status: "done", completedAt: new Date().toISOString() }).catch(() => undefined);
-          };
-          if (placeholder?.ts) {
-            const updated = await slack.chat.update({ channel, ts: placeholder.ts, text: message, ...(blocks ? { blocks: blocks as never } : {}) }).catch(() => undefined);
-            if (updated?.ok) {
-              await close();
-              return placeholder.ts;
-            }
-          }
-          const posted = await slack.chat.postMessage({ channel, thread_ts: threadTs, text: message, ...(blocks ? { blocks: blocks as never } : {}) });
-          await close();
-          return posted?.ts;
+        const delivery = chatDelivery(outbound, target, placeholder);
+        /** The reply's own id, for feedback; failed delivery stays open for the boot sweep. */
+        const deliver = async (message: ChatMessage): Promise<string> => {
+          const id = await delivery.finish(message);
+          if (open) await ledger.put({ ...open, status: "done", completedAt: new Date().toISOString() }).catch(() => undefined);
+          return id;
         };
         try {
           if (isHelpRequest(text)) {
-            await deliver(helpText(settings));
+            // The fixed help card deliberately mentions approvers in Slack markup.
+            await slack.chat.postMessage({ channel, thread_ts: threadTs, text: helpText(settings) });
             return;
           }
           if (await overBudget(key, channel)) {
-            await deliver(LIMIT_NOTICE);
+            await deliver({ text: LIMIT_NOTICE });
             return;
           }
           const context = text ? await chat.threadContext(event.payload as ChatTurn).catch(() => undefined) : undefined;
-          // Show what it is doing, at most every 2s (chat.update is rate-limited).
-          let lastProgress = 0;
-          const onTool = (tool: string): void => {
-            const now = Date.now();
-            if (finished || !placeholder?.ts || now - lastProgress < 2_000) return;
-            lastProgress = now;
-            const update = slack.chat.update({ channel, ts: placeholder.ts, text: progressText(tool) }).catch(() => undefined);
-            inFlight.add(update);
-            void update.finally(() => inFlight.delete(update));
-          };
+          const onTool = (tool: string): void => delivery.progress({ text: progressText(tool) });
           const reply = await runTeammateTurn(
             { question: text, askedBy: event.actor.id, channel, threadTs, context, private: await chat.isPrivate(event.payload as ChatTurn) },
             { ...turnDeps(key), ...spendAgainst(channel), onTool },
           );
-          const textOut = formatReply(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken });
+          const messageOut = replyMessage(reply, currentRunId(), { baseUrl: config.webhook?.publicBaseUrl, token: config.webhook?.traceToken });
           // An answer's sources are the point of the product: render them as links, the way
           // Curator does — vault notes to their site, Jira/Confluence/GitHub to their pages.
-          const blocks =
-            reply.kind === "answer"
-              ? [
-                  ...answerBlocks({ markdown: reply.text, citations: reply.citations, links: citationLinks(await resolveCitations(vault, config, reply.citations)) }),
-                  ...contextBlocks(textOut.slice(textOut.lastIndexOf("\n_AI-generated") + 1)),
-                ]
-              : undefined;
-          const message = await deliver(textOut, blocks);
+          if (reply.kind === "answer") messageOut.sources = { citations: reply.citations, links: citationLinks(await resolveCitations(vault, config, reply.citations)) };
+          const message = await deliver(messageOut);
           await audit(config.auditFile, { type: `teammate.${reply.kind}`, actor: "teammate", key, anchor: event.anchor, askedBy: event.actor.id, event: event.id, channel, ...(message ? { message } : {}) });
         } catch (error) {
           await audit(config.auditFile, { type: "teammate.error", actor: "teammate", key, event: event.id, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
-          await deliver(`⚠️ I couldn't finish that, so I haven't answered or changed anything. _run \`${(currentRunId() ?? "").slice(0, 8)}\`_`).catch(() => undefined);
+          await deliver({ text: `⚠️ I couldn't finish that, so I haven't answered or changed anything. _run \`${(currentRunId() ?? "").slice(0, 8)}\`_` }).catch(() => undefined);
         }
       });
     },

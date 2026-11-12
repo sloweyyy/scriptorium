@@ -1,6 +1,7 @@
 export * from "./event";
 export * from "./anchor";
 export * from "./surface";
+export * from "./delivery";
 export * from "./gate";
 export * from "./queue";
 export * from "./effects";

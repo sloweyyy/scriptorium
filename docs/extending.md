@@ -83,11 +83,25 @@ progress, waits for every edit still in flight before delivering the answer, and
 the same thread if the acknowledgement cannot be edited. Keep the placeholder's durable
 record open until `finish` succeeds, so restart recovery can close an interrupted reply.
 
+For scheduled posts, implement `TaggedChatOutbound.postTagged` and `findTagged`. The tag is
+stable data independent of the message's text. `postChatOnce` searches for an interrupted
+send before generating or posting again; its op includes the surface, channel, thread and
+tag. `findTagged` must throw when it cannot finish the search. Undefined means a complete
+search found nothing. Slack follows up to ten pages of 200 messages, requesting metadata
+on each page; a failed response, broken cursor or page cap leaves the send pending.
+
+The Slack host passes `legacySlackOp` for existing digest, reminder and nudge records, and
+keeps their original metadata tags. Another surface ignores that migration key. This avoids
+duplicate posts during an upgrade without replaying a Slack result on another platform.
+Notifications are explicit surface-qualified accounts in `ChatMessage.notify`, supplied
+from trusted configuration; the adapter never interprets model-written mentions as them.
+
 Slack's implementations live in `apps/agents/src/teammate-bot/slack-surface.ts`, with
 formatting in `slack-message.ts`. The inbound contract (`evals/chat-surface.test.ts`) and
 outbound contract (`evals/chat-delivery.test.ts`) each run against Slack and a fake second
-surface. Give a new adapter the same contract checks. The Teammate host, approval cards,
-scheduled posts and account configuration still need platform-specific wiring; implementing
+surface. The scheduled-post contract (`evals/scheduled-chat.test.ts`) covers both as well.
+Give a new adapter the same contract checks. The Teammate host, approval cards and account
+configuration still need platform-specific wiring; implementing
 these interfaces alone does not enable a new live chat platform.
 
 ## Checks every change needs

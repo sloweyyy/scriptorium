@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ToolRunContext, ToolSpec } from "@scriptorium/core";
 import { escapeMrkdwn } from "@scriptorium/connectors";
-import type { EffectLedger } from "@scriptorium/runtime";
+import type { ChatMessage, EffectLedger } from "@scriptorium/runtime";
 import { z } from "zod";
 
 /**
@@ -103,6 +103,11 @@ export const REMINDER_EVENT_TYPE = "scriptorium_reminder";
 /** As posted: the approved text, escaped so it can't ping a channel or hide a link. */
 export function reminderText(reminder: Reminder): string {
   return `⏰ *Reminder:* ${escapeMrkdwn(reminder.text)}${reminder.approvedBy ? `\n_Set on request, approved by ${escapeMrkdwn(reminder.approvedBy)}_` : ""}`;
+}
+
+/** The approved reminder before a chat adapter renders it. */
+export function reminderMessage(reminder: Reminder): ChatMessage {
+  return { text: `⏰ **Reminder:** ${reminder.text}${reminder.approvedBy ? `\n_Set on request, approved by ${reminder.approvedBy}_` : ""}` };
 }
 
 export async function markReminder(store: EffectLedger, reminder: Reminder, result: "sent" | "stale", nowMs: number): Promise<void> {

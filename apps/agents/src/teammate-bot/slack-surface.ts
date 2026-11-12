@@ -1,22 +1,56 @@
 import type { SlackClient } from "@scriptorium/connectors";
-import type { ChatInbound, ChatOutbound } from "@scriptorium/runtime";
+import type { ChatInbound, ChatMessage, ChatPostTag, ChatTarget, TaggedChatOutbound } from "@scriptorium/runtime";
 import { mentionToEvent, threadContext, type SlackMention } from "./messages";
 import { renderSlackMessage } from "./slack-message";
 
 /** Replies and edits use Slack ids only inside this adapter. */
-export function slackOutbound(slack: SlackClient): ChatOutbound {
+export function slackOutbound(slack: SlackClient): TaggedChatOutbound {
+  const post = async (target: ChatTarget, message: ChatMessage, tag?: ChatPostTag): Promise<string> => {
+    const rendered = renderSlackMessage(message);
+    const posted = await slack.chat.postMessage({
+      channel: target.channel,
+      ...(target.threadId ? { thread_ts: target.threadId } : {}),
+      text: rendered.text,
+      ...(rendered.blocks ? { blocks: rendered.blocks as never } : {}),
+      ...(tag ? { metadata: { event_type: tag.type, event_payload: tag.data } } : {}),
+    });
+    if (!posted.ok || !posted.ts) throw new Error("Slack did not confirm the reply");
+    return posted.ts;
+  };
   return {
     surface: "slack",
-    async post(target, message) {
-      const rendered = renderSlackMessage(message);
-      const posted = await slack.chat.postMessage({ channel: target.channel, ...(target.threadId ? { thread_ts: target.threadId } : {}), text: rendered.text, ...(rendered.blocks ? { blocks: rendered.blocks as never } : {}) });
-      if (!posted.ok || !posted.ts) throw new Error("Slack did not confirm the reply");
-      return posted.ts;
-    },
+    post,
+    postTagged: (target, message, tag) => post(target, message, tag),
     async update(target, messageId, message) {
       const rendered = renderSlackMessage(message);
       const updated = await slack.chat.update({ channel: target.channel, ts: messageId, ...rendered, blocks: (rendered.blocks ?? []) as never });
       return updated.ok === true;
+    },
+    async findTagged(target, tag, since) {
+      if (!tag.type || !Object.keys(tag.data).length) throw new Error("A scheduled post needs a nonempty correlation tag");
+      const cursors = new Set<string>();
+      let cursor: string | undefined;
+      for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
+        const args = { channel: target.channel, include_all_metadata: true, limit: 200, ...(cursor ? { cursor } : {}), ...(since === undefined ? {} : { oldest: String(since / 1000) }) };
+        const page = target.threadId
+          ? await slack.conversations.replies({ ...args, ts: target.threadId })
+          : await slack.conversations.history(args);
+        if (page.ok === false || !Array.isArray(page.messages)) throw new Error("Slack did not confirm the post search");
+        const found = page.messages.find((message) => {
+          const payload = message.metadata?.event_payload as Record<string, unknown> | undefined;
+          return message.metadata?.event_type === tag.type && Object.entries(tag.data).every(([key, value]) => payload?.[key] === value);
+        });
+        if (found) {
+          if (!found.ts) throw new Error("Slack found a tagged post without a message id");
+          return found.ts;
+        }
+        const next = page.response_metadata?.next_cursor?.trim();
+        if (!page.has_more && !next) return undefined;
+        if (!next || cursors.has(next)) throw new Error("Slack post search pagination is incomplete");
+        cursors.add(next);
+        cursor = next;
+      }
+      throw new Error("Slack post search exceeded its page limit");
     },
   };
 }

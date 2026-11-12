@@ -1,6 +1,25 @@
 import type { SlackClient } from "@scriptorium/connectors";
-import type { ChatInbound } from "@scriptorium/runtime";
+import type { ChatInbound, ChatOutbound } from "@scriptorium/runtime";
 import { mentionToEvent, threadContext, type SlackMention } from "./messages";
+import { renderSlackMessage } from "./slack-message";
+
+/** Replies and edits use Slack ids only inside this adapter. */
+export function slackOutbound(slack: SlackClient): ChatOutbound {
+  return {
+    surface: "slack",
+    async post(target, message) {
+      const rendered = renderSlackMessage(message);
+      const posted = await slack.chat.postMessage({ channel: target.channel, ...(target.threadId ? { thread_ts: target.threadId } : {}), text: rendered.text, ...(rendered.blocks ? { blocks: rendered.blocks as never } : {}) });
+      if (!posted.ok || !posted.ts) throw new Error("Slack did not confirm the reply");
+      return posted.ts;
+    },
+    async update(target, messageId, message) {
+      const rendered = renderSlackMessage(message);
+      const updated = await slack.chat.update({ channel: target.channel, ts: messageId, ...rendered, blocks: (rendered.blocks ?? []) as never });
+      return updated.ok === true;
+    },
+  };
+}
 
 /** Slack as a chat surface, inbound: a mention or DM in, its thread, and who can read it. */
 export function slackInbound(slack: SlackClient): ChatInbound<SlackMention> {

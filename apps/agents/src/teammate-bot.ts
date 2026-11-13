@@ -14,12 +14,12 @@ import {
 } from "@scriptorium/connectors";
 import { jiraClient, jiraToMarkdown, markdownToJira, mentionsAccount, plainText, type CommentRestriction, type JiraClient } from "@scriptorium/jira";
 import { FileApprovalStore, PLAN_TOOL, effectiveStatus, executeApproved, mayApprove, planTool, type ApprovalRequest, type GuardDeps } from "@scriptorium/policy";
-import { DailyBudget, FileAnchors, FileEffectLedger, FileSeenIds, Gate, Lease, KeyedQueue, chatDelivery, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, scopesFor, type AgentEvent, type ChatMessage, type ChatTurn } from "@scriptorium/runtime";
+import { DailyBudget, FileAnchors, FileEffectLedger, FileSeenIds, Gate, Lease, KeyedQueue, chatDelivery, envelopeOf, forgetMemory, keys, listMemories, loadSkills, memoryTools, once, opKey, postChatOnce, scopesFor, type AgentEvent, type ChatMessage, type ChatTurn } from "@scriptorium/runtime";
 import { App } from "@slack/bolt";
 import { teammateConfig } from "./agents/teammate";
 import { gapTicketOpener } from "./gap-ticket";
 import { citationLinks, resolveCitations } from "./citations";
-import { digestDue, isoWeek, postDigestOnce } from "./digest";
+import { digestDue, isoWeek } from "./digest";
 import { runTeammateTurn } from "./teammate";
 import { ASKING_SUBTYPES, capQuestion, formatReply, helpText, isHelpRequest, progressText, replyMessage, type SlackMention } from "./teammate-bot/messages";
 import { slackInbound, slackOutbound } from "./teammate-bot/slack-surface";
@@ -27,7 +27,7 @@ import { sharesScribeAccount, teammateConnectorTools } from "./teammate-bot/tool
 import { outcomeMessages } from "./teammate-bot/outcome";
 import { homeBlocks } from "./teammate-bot/home";
 import { OPEN, applyAdminCommand, narrowTools, readControl, withDelegations, writeControl, type Control } from "./teammate-bot/control";
-import { REMINDER_EVENT_TYPE, dueReminders, markReminder, reminderText, reminderTools } from "./teammate-bot/reminders";
+import { REMINDER_EVENT_TYPE, dueReminders, markReminder, reminderMessage, reminderTools } from "./teammate-bot/reminders";
 
 export * from "./teammate-bot/messages";
 export * from "./teammate-bot/tools";
@@ -711,30 +711,15 @@ export async function createTeammate(
           continue;
         }
         if (!paused && nudgeMs > 0 && !switchedOff(request) && now.getTime() - Date.parse(request.requestedAt) >= nudgeMs) {
-          const approvers = (envelope.tools[request.tool]?.approvers ?? []).filter((id) => id.startsWith("slack:")).map((id) => `<@${id.slice("slack:".length)}>`);
+          const approvers = (envelope.tools[request.tool]?.approvers ?? []).filter((id) => id.startsWith("slack:"));
           if (!approvers.length) continue;
-          await once(
+          await postChatOnce(
             ledger,
-            opKey("teammate.card.nudged", request.id),
-            async () => {
-              await slack.chat.postMessage({
-                channel: card.channel,
-                thread_ts: card.ts,
-                text: `⏰ Still waiting for an approver: ${approvers.join(", ")}. It expires <!date^${Math.floor(Date.parse(request.expiresAt) / 1000)}^{date_short_pretty}|${request.expiresAt.slice(0, 10)}>.`,
-                metadata: { event_type: NUDGE_EVENT_TYPE, event_payload: { request: request.id } },
-              });
-              return true;
-            },
-            {
-              // A crash between the post and the ledger's "done" must not nudge twice.
-              probe: async () => {
-                const replies = await slack.conversations.replies({ channel: card.channel, ts: card.ts, include_all_metadata: true, limit: 200 });
-                const found = (replies.messages ?? []).some(
-                  (message) => message.metadata?.event_type === NUDGE_EVENT_TYPE && (message.metadata.event_payload as { request?: string } | undefined)?.request === request.id,
-                );
-                return found ? true : undefined;
-              },
-            },
+            outbound,
+            { channel: card.channel, threadId: card.ts },
+            { type: NUDGE_EVENT_TYPE, data: { request: request.id } },
+            async () => ({ text: "⏰ Still waiting for an approver:", notify: approvers, footer: { text: `It expires ${request.expiresAt}.` } }),
+            { legacySlackOp: opKey("teammate.card.nudged", request.id) },
           ).catch(() => undefined);
         }
       }
@@ -755,19 +740,13 @@ export async function createTeammate(
         if (!remindersOn || !mayPostIn(reminder.channel)) continue;
         // Probed, not just op-keyed: a post that landed before a crash or a timeout is found
         // by its metadata on the retry, instead of being posted again.
-        await once(
+        await postChatOnce(
           ledger,
-          opKey("teammate.reminder.post", reminder.id),
-          async () =>
-            (await slack.chat.postMessage({ channel: reminder.channel, text: reminderText(reminder), metadata: { event_type: REMINDER_EVENT_TYPE, event_payload: { reminder: reminder.id } } })).ts ?? "",
-          {
-            probe: async () => {
-              const history = await slack.conversations.history({ channel: reminder.channel, oldest: String(Date.parse(reminder.at) / 1000 - 60), include_all_metadata: true, limit: 200 });
-              return (history.messages ?? []).find(
-                (message) => message.metadata?.event_type === REMINDER_EVENT_TYPE && (message.metadata.event_payload as { reminder?: string } | undefined)?.reminder === reminder.id,
-              )?.ts;
-            },
-          },
+          outbound,
+          { channel: reminder.channel },
+          { type: REMINDER_EVENT_TYPE, data: { reminder: reminder.id } },
+          async () => reminderMessage(reminder),
+          { legacySlackOp: opKey("teammate.reminder.post", reminder.id), since: Date.parse(reminder.at) - 60_000 },
         )
           .then(() => markReminder(reminders, reminder, "sent", now.getTime()))
           .catch((error: unknown) => audit(config.auditFile, { type: "teammate.reminder.failed", actor: "teammate", reminder: reminder.id, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined));
@@ -784,10 +763,11 @@ export async function createTeammate(
       if (!digestChannel || !config.hasModelAccess) return;
       if (!digestDue(now, { weekday: settings.digestWeekday, hour: settings.digestHour })) return;
       await withRun(() =>
-        postDigestOnce(
+        postChatOnce(
           ledger,
-          digestChannel,
-          now,
+          outbound,
+          { channel: digestChannel },
+          { type: DIGEST_EVENT_TYPE, data: { week: isoWeek(now) } },
           async () => {
             // The digest spends its channel's budget; over it, the next hour retries.
             if (await overBudget(keys.cron("digest"), digestChannel)) throw new Error("digest not produced (daily token limit)");
@@ -795,18 +775,10 @@ export async function createTeammate(
             // A refusal is not a digest: throw, so the op stays open and the next hour retries.
             // Neither a refusal nor a gap note is a digest: throw, so the next hour retries.
             if (reply.kind === "refused" || reply.kind === "gap") throw new Error(`digest not produced (${reply.kind})`);
-            return formatReply(reply, currentRunId());
+            const message = replyMessage(reply, currentRunId());
+            return { ...message, text: `**Weekly digest**\n${message.text}` };
           },
-          async (text) => {
-            await slack.chat.postMessage({ channel: digestChannel, text: `*Weekly digest*\n${text}`, metadata: { event_type: DIGEST_EVENT_TYPE, event_payload: { week: isoWeek(now) } } });
-          },
-          // Asked after a crash mid-post: is this week's tagged digest already in the channel?
-          async () => {
-            const history = await slack.conversations.history({ channel: digestChannel, oldest: String(Math.floor(now.getTime() / 1000) - 8 * 86_400), include_all_metadata: true, limit: 200 });
-            return (history.messages ?? []).some(
-              (message) => message.metadata?.event_type === DIGEST_EVENT_TYPE && (message.metadata.event_payload as { week?: string } | undefined)?.week === isoWeek(now),
-            );
-          },
+          { legacySlackOp: opKey("digest", digestChannel, isoWeek(now)), since: now.getTime() - 8 * 86_400_000 },
         ),
       );
     },

@@ -53,6 +53,7 @@ let progressDelayMs = 0;
 let progressDelays: number[] = [];
 /** Lose the next reminder post's response after Slack stored it. */
 let loseNextReminderPost = false;
+let loseNextDigestPost = false;
 /** The placeholder lands, but neither the final edit nor its fallback post can be delivered. */
 let rejectFinalDelivery = false;
 /** What `conversations.info` says about a channel, by id; and every channel it was asked about. */
@@ -65,6 +66,10 @@ const slack = {
     postMessage: async (args: Posted) => {
       if (rejectFinalDelivery && !args.text.startsWith("🔎")) throw new Error("chat unavailable");
       posted.push({ ...args });
+      if (loseNextDigestPost && args.metadata?.event_type === "scriptorium_digest") {
+        loseNextDigestPost = false;
+        throw new Error("digest response lost");
+      }
       if (loseNextReminderPost && args.text.includes("Reminder:")) {
         loseNextReminderPost = false;
         throw new Error("socket hang up");
@@ -130,6 +135,7 @@ beforeEach(async () => {
   threadReplies = [];
   lastPrompt = "";
   loseNextReminderPost = false;
+  loseNextDigestPost = false;
   rejectFinalDelivery = false;
   channelKinds = {};
   infoCalls = [];
@@ -704,7 +710,66 @@ describe("admin controls", () => {
   });
 });
 
+describe("scheduled digest delivery", () => {
+  const now = new Date("2026-11-09T09:00:00Z");
+  const digestConfig = () => ({ ...config(), teammate: { ...config().teammate, digestChannel: "C1" } }) as AppConfig;
+
+  it("tags the digest and keeps its sources and run, once per week across restarts", async () => {
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "Digests go out at 09:00 [[docs/digest-emails]]." };
+    const core = await createTeammate(digestConfig(), vault, slack as never, "UBOT");
+    await core.checkDigest(now);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]?.metadata).toEqual({ event_type: "scriptorium_digest", event_payload: { week: "2026-W46" } });
+    expect(posted[0]?.text).toContain("*Weekly digest*");
+    expect(posted[0]?.text).toContain("AI-generated");
+    expect(JSON.stringify(posted[0]?.blocks)).toContain("docs/digest-emails");
+    lastPrompt = "not called again";
+    const restarted = await createTeammate(digestConfig(), vault, slack as never, "UBOT");
+    await restarted.checkDigest(now);
+    expect(lastPrompt).toBe("not called again");
+    expect(posted).toHaveLength(1);
+    await restarted.checkDigest(new Date("2026-11-16T09:00:00Z"));
+    expect(posted).toHaveLength(2);
+  });
+
+  it("recovers a pre-adapter digest record and tag without generating a second digest", async () => {
+    const { FileEffectLedger, opKey } = await import("@scriptorium/runtime");
+    const ledger = new FileEffectLedger(path.join(tmpRoot, "state", "effects.json"));
+    await ledger.put({ op: opKey("digest", "C1", "2026-W46"), status: "in-progress", startedAt: now.toISOString() });
+    posted.push({ channel: "C1", text: "Old digest", metadata: { event_type: "scriptorium_digest", event_payload: { week: "2026-W46" } } });
+    const core = await createTeammate(digestConfig(), vault, slack as never, "UBOT");
+    lastPrompt = "no generation";
+    await core.checkDigest(now);
+    expect(lastPrompt).toBe("no generation");
+    expect(posted).toHaveLength(1);
+    expect((await ledger.get(opKey("digest", "C1", "2026-W46")))?.status).toBe("done");
+  });
+
+  it("a lost digest response is found on retry before another model call", async () => {
+    script = { calls: [{ name: "search_vault", input: { query: "digest" } }], reply: "At 09:00 [[docs/digest-emails]]." };
+    const core = await createTeammate(digestConfig(), vault, slack as never, "UBOT");
+    loseNextDigestPost = true;
+    await expect(core.checkDigest(now)).rejects.toThrow("digest response lost");
+    lastPrompt = "no second generation";
+    await core.checkDigest(now);
+    expect(posted).toHaveLength(1);
+    expect(lastPrompt).toBe("no second generation");
+  });
+});
+
 describe("reminders", () => {
+  it("a pre-adapter sent record settles a pending reminder without sending it again", async () => {
+    const { reminderTools } = await import("@scriptorium/agents");
+    const { FileEffectLedger, opKey } = await import("@scriptorium/runtime");
+    const reminders = new FileEffectLedger(path.join(tmpRoot, "state", "reminders.json"));
+    await reminderTools(reminders)[0]!.run({ channel: "C1", at: new Date(Date.now() + 60_000).toISOString(), text: "Already sent" }, { approval: { id: "old-reminder" } });
+    const effects = new FileEffectLedger(path.join(tmpRoot, "state", "effects.json"));
+    await effects.put({ op: opKey("teammate.reminder.post", "old-reminder"), status: "done", startedAt: "then", result: "old-ts" });
+    const core = await createTeammate(config(), vault, slack as never, "UBOT");
+    await core.checkReminders(new Date(Date.now() + 120_000));
+    expect(posted).toEqual([]);
+    expect(await reminders.inProgress()).toEqual([]);
+  });
   it("a reminder is approved once, posted once when due, escaped, and only in the channel that asked", async () => {
     const core = await createTeammate(config(), vault, slack as never, "UBOT");
     const at = new Date(Date.now() + 3_600_000).toISOString();

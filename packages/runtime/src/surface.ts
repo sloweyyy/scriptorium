@@ -44,6 +44,8 @@ export interface ChatTarget {
 /** Markdown and provenance, before a surface renders them into its own markup or cards. */
 export interface ChatMessage {
   text: string;
+  /** Explicit notifications, from trusted configuration, as surface-qualified account ids. */
+  notify?: readonly string[];
   sources?: { citations: string[]; links?: Map<string, string> };
   request?: { key: string; url: string };
   footer?: { text: string; link?: { label: string; url: string } };
@@ -54,6 +56,22 @@ export interface ChatOutbound {
   readonly surface: string;
   post(target: ChatTarget, message: ChatMessage): Promise<string>;
   update(target: ChatTarget, messageId: string, message: ChatMessage): Promise<boolean>;
+}
+
+/** A stable correlation tag, interpreted as data rather than embedded in message text. */
+export interface ChatPostTag {
+  type: string;
+  data: Readonly<Record<string, string>>;
+}
+
+/** Scheduled posts can be found after an interrupted send, without reposting blindly. */
+export interface TaggedChatOutbound extends ChatOutbound {
+  postTagged(target: ChatTarget, message: ChatMessage, tag: ChatPostTag): Promise<string>;
+  /**
+   * Undefined means the complete search found no matching post. A failed or incomplete
+   * search must throw. `since` is an optional lower bound, in milliseconds since epoch.
+   */
+  findTagged(target: ChatTarget, tag: ChatPostTag, since?: number): Promise<string | undefined>;
 }
 
 /**

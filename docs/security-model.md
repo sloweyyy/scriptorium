@@ -117,8 +117,11 @@ The model is untrusted too. It proposes; the platform decides what runs.
 
 - A Jira comment restricted to a role or group, or marked internal in Jira Service
   Management, is answered at the same visibility. A restriction it can't read is not
-  answered at all. An approval outcome is said on the ticket only at a visibility the
-  process saw the request asked at. (`packages/jira/src/types.ts` `commentRestriction`;
+  answered at all. Each new approval request captures its triggering comment's visibility;
+  later questions and reuse of its pending card cannot overwrite it. Its outcome is posted
+  on the ticket only at that captured visibility. After a restart, unknown origins get no
+  Jira outcome comment; the approval conversation still gets the result.
+  (`packages/jira/src/types.ts` `commentRestriction`;
   `evals/teammate-e2e.test.ts`, mutant in `scripts/mutate.ts`)
 - Scribe works only from comments everyone on the ticket can see. Its drafts, their
   attachments, the published doc and lessons are public, so feedback or a command in a

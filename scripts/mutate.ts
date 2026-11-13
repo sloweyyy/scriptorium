@@ -3231,6 +3231,35 @@ export const MUTANTS: Mutant[] = [
     evals: ["evals/teammate-e2e.test.ts"],
   },
   {
+    control: "Jira approval origins are scoped to requests, not tickets",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "jiraRestrictions.set(request.id, structuredClone(restriction));",
+    replace: "jiraRestrictions.set(request.key, structuredClone(restriction));",
+    also: [{ find: "const restriction = jiraRestrictions.get(request.id);", replace: "const restriction = jiraRestrictions.get(request.key);" }],
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "a Jira turn passes its original restriction into approval creation",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "{ ...turnDeps(key, restriction), ...spendAgainst(scope) },",
+    replace: "{ ...turnDeps(key), ...spendAgainst(scope) },",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "unknown Jira approval visibility after a restart is never guessed public",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "const restriction = jiraRestrictions.get(request.id);",
+    replace: "const restriction = jiraRestrictions.get(request.id) ?? {};",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
+    control: "the Jira approval outcome carries the request's original restriction",
+    file: "apps/agents/src/teammate-bot.ts",
+    find: "(await jira.client.addComment(issueKey, markdownToJira(text), { op, restriction })).id",
+    replace: "(await jira.client.addComment(issueKey, markdownToJira(text), { op })).id",
+    evals: ["evals/teammate-e2e.test.ts"],
+  },
+  {
     control: "every Teammate write is approve-tier",
     file: "apps/agents/src/agents/teammate.ts",
     find: "      jira_create_issue: write,",
@@ -3317,8 +3346,8 @@ export const MUTANTS: Mutant[] = [
   {
     control: "the model's tool input never binds an alias (only the tool's own output does)",
     file: "apps/agents/src/teammate-bot.ts",
-    find: "onRan: (tool, _input, result) => bindCreated(key, tool, result) });",
-    replace: "onRan: (tool, _input, result) => bindCreated(key, tool, `Created ${JSON.stringify(_input).match(/jira:(?:issue:)?([A-Z]+-\\d+)/)?.[0]?.replace(\"issue:\", \"\")} https://x\\n${result}`) });",
+    find: "onRan: (tool, _input, result) => bindCreated(key, tool, result)",
+    replace: "onRan: (tool, _input, result) => bindCreated(key, tool, `Created ${JSON.stringify(_input).match(/jira:(?:issue:)?([A-Z]+-\\d+)/)?.[0]?.replace(\"issue:\", \"\")} https://x\\n${result}`)",
     evals: ["evals/anchors.test.ts"],
   },
   {

@@ -168,7 +168,7 @@ export async function createTeammate(
   // Cards follow the request: its channel thread; a PR → the PR channel; a DM or Jira → notify.
   /** Triage is rate-capped per project per hour: a bulk import is not N model calls and N comments. */
   const triageRate = new HourlyCap(settings.triagePerHour ?? 20);
-  /** The visibility each Jira conversation was last asked at (public is `{}`), for replies. */
+  /** Visibility captured for each approval request, never the latest question on its ticket. */
   const jiraRestrictions = new Map<string, CommentRestriction>();
   /** A running PR check's summary message, keyed by conversation: its card threads under it. */
   const prThreads = new Map<string, string>();
@@ -197,7 +197,20 @@ export async function createTeammate(
       await audit(config.auditFile, { type: bound ? "anchor.bound" : "anchor.bind_refused", actor: "teammate", key, anchor, alias, tool }).catch(() => undefined);
     }
   };
-  const guardDepsFor = (key: string): GuardDeps => ({ store, channel: approvalChannel, auditFile: config.auditFile, key, onRan: (tool, _input, result) => bindCreated(key, tool, result) });
+  const guardDepsFor = (key: string, restriction?: CommentRestriction): GuardDeps => ({
+    store,
+    channel: restriction === undefined ? approvalChannel : {
+      async post(request) {
+        // Called only for a newly created request. Reusing a pending card must not replace
+        // its origin's visibility with that of a later public or restricted question.
+        jiraRestrictions.set(request.id, structuredClone(restriction));
+        await approvalChannel.post(request);
+      },
+    },
+    auditFile: config.auditFile,
+    key,
+    onRan: (tool, _input, result) => bindCreated(key, tool, result),
+  });
   // Spend caps per channel per day, seeded from today's audit so a restart is not a reset.
   const budget = new DailyBudget(settings.dailyTokens);
   // Per scope, each DM is its own channel: N people each get the full cap. The total caps them all.
@@ -237,7 +250,7 @@ export async function createTeammate(
       return true;
     }
   };
-  const turnDeps = (key: string) => ({ vault, config: { ...hostConfig, tools: narrowTools(hostConfig.tools, current) }, skills, connectorTools, guardDeps: guardDepsFor(key), auditFile: config.auditFile, openTicket: gapTicketOpener(config, options.gapTickets), signingKey: config.signingKey });
+  const turnDeps = (key: string, restriction?: CommentRestriction) => ({ vault, config: { ...hostConfig, tools: narrowTools(hostConfig.tools, current) }, skills, connectorTools, guardDeps: guardDepsFor(key, restriction), auditFile: config.auditFile, openTicket: gapTicketOpener(config, options.gapTickets), signingKey: config.signingKey });
 
   const gate = new Gate({
     selfIds: [self],
@@ -352,8 +365,6 @@ export async function createTeammate(
   async function answerOnJira(key: string, event: AgentEvent): Promise<void> {
     if (!jira) return;
     const { issueKey, commentId, question, restriction = {} } = event.payload as { issueKey: string; commentId: string; question: string; restriction?: CommentRestriction };
-    // Whatever the Teammate says next on this ticket's thread is said at this visibility.
-    jiraRestrictions.set(keys.jiraIssue(issueKey), restriction);
     const scope = `jira:${issueKey.split("-")[0]}`;
     // A restricted comment, or any comment on an issue with a security level, is a private turn.
     const restricted = Boolean(restriction.visibility || restriction.internal) || (await securedIssue(issueKey));
@@ -361,7 +372,7 @@ export async function createTeammate(
       ? Promise.resolve({ kind: "refused" as const, text: LIMIT_NOTICE })
       : runTeammateTurn(
           { question: `${question}\n\n(Asked on jira:${issueKey}.)`, askedBy: event.actor.id, budgetScope: scope, private: restricted },
-          { ...turnDeps(key), ...spendAgainst(scope) },
+          { ...turnDeps(key, restriction), ...spendAgainst(scope) },
         )
     ).catch(
       // The exception belongs in the audit log, not on a ticket other people read.
@@ -427,9 +438,9 @@ export async function createTeammate(
       return;
     }
     const issue = request.key.match(/^jira:issue:(.+)$/);
-    // Only at a visibility this process saw the request asked at. Unknown (a restart since):
-    // say nothing on the ticket — the card's own thread already has the outcome.
-    const restriction = jiraRestrictions.get(request.key);
+    // Only at this request's original visibility. After a restart it is unknown: a new
+    // question on the same ticket cannot supply it. The card's thread still has the result.
+    const restriction = jiraRestrictions.get(request.id);
     if (issue && jira && restriction) {
       const issueKey = issue[1] as string;
       await once(ledger, op, async () => (await jira.client.addComment(issueKey, markdownToJira(text), { op, restriction })).id, {

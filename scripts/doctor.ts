@@ -1,5 +1,5 @@
 /**
- * `pnpm doctor` — is this deployment set up the way its safety depends on?
+ * `pnpm run doctor` — is this deployment set up the way its safety depends on?
  *
  * Checks the model, signing, where the audit log lives, approvers and admins, spend caps,
  * the Slack app (token, scopes against the manifest, channel membership), Confluence spaces,

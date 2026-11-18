@@ -102,14 +102,18 @@ pnpm privacy:erase <person> --by <you> [--dry-run]   # erase one person (audit t
    Content is split across two repos: `scriptorium-docs` (public, `main`/`docs/`, PRs
    only) and `scriptorium-vault` (private, `vault-live`/`internal/`, basic-auth site).
    Internal notes never fall back to the docs repo — no `VAULT_REPO_URL`, no push.
-   Left: redeploy with the split (second deploy key, `VAULT_REPO_*` env, docs-repo
-   webhook, GitHub App on `scriptorium-docs`), then one live `approve` -> push -> PR
-   round trip.
-6. `samples/prd-002-*` exists — the full demo run (lesson transfer across two PRDs) does not.
+   Redeployed with the split on 2026-11-18 (Anthropic API, a deploy key per repo,
+   `VAULT_REPO_*`, the GitHub App on `scriptorium-docs` only). Verified live: Jira
+   `approve` or the Slack button → PR + vault push → a human merges → the docs-repo
+   webhook → the ticket's "now live" comment.
+6. [x] **Lesson transfer across two PRDs** — feedback on PRD-001's ticket became a
+   proposed house rule, approved (signed) from Jira, and the PRD-002 draft applied it:
+   timezones named, an inline warning at the irreversible step. Verified live 2026-11-18.
 7. Demo video.
 
-Not code: reinstall the Curator Slack app for `reactions:write`, and `/invite @Curator`
-to the notify channel.
+Not code: the Teammate has no Atlassian account or GitHub App of its own, so its writes
+(Jira, Confluence, PR comments) are never offered; create them for that path. Its
+approval cards need a second person: whoever asks for a write cannot approve it.
 
 Slack Scribe bot (`apps/agents/src/scribe-bot.ts`) stays as a thin secondary surface —
 do not extend it further; Jira is Agent A's primary interface now.

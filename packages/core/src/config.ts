@@ -1,7 +1,10 @@
 import path from "node:path";
 import { config as loadDotenv } from "dotenv";
 
-loadDotenv({ quiet: true });
+// The evals turn this off (vitest.config.ts): an operator's .env holds a signing key,
+// approvers and channels, and a guardrail eval that reads them tests the operator's setup
+// instead of the guardrail. They get the model provider settings from it and nothing else.
+if (process.env.SCRIPTORIUM_DOTENV !== "off") loadDotenv({ quiet: true });
 
 /** Comma-separated env value → trimmed, non-empty items. */
 function list(value: string | undefined): string[] {

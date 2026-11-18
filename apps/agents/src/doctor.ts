@@ -3,7 +3,7 @@ import path from "node:path";
 import { docsRepoReady, jiraReady, previousSigningKeys, repoSlugFromUrl, vaultRepoReady, type AppConfig } from "@scriptorium/core";
 
 /**
- * `pnpm doctor`: is this deployment set up the way its safety depends on? Every check names
+ * `pnpm run doctor`: is this deployment set up the way its safety depends on? Every check names
  * what is wrong and the one thing to do about it. The checks are pure over injected probes,
  * so each one is pinned by evals without a live Slack, Confluence or GitHub; the script wires
  * the real clients in.

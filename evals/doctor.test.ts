@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AppConfig } from "@scriptorium/core";
 import { formatChecks, manifestBotScopes, runDoctor } from "@scriptorium/agents";
 
-/** `pnpm doctor`: each misconfiguration a deployment's safety depends on is named, with its fix. */
+/** `pnpm run doctor`: each misconfiguration a deployment's safety depends on is named, with its fix. */
 
 function config(overrides: { teammate?: Partial<AppConfig["teammate"]>; docsRepo?: Partial<AppConfig["docsRepo"]>; top?: Partial<AppConfig> } = {}): AppConfig {
   return {
@@ -29,7 +29,7 @@ const slack = (scopes: string[], members: string[] = ["C1"]) => ({
 
 const levels = (checks: Awaited<ReturnType<typeof runDoctor>>, area: string) => checks.filter((check) => check.area === area).map((check) => check.level);
 
-describe("pnpm doctor", () => {
+describe("pnpm run doctor", () => {
   it("a well-set-up deployment has nothing to fix", async () => {
     const checks = await runDoctor(config(), slack(["app_mentions:read", "chat:write", "commands"]));
     expect(checks.filter((check) => check.level === "fail")).toEqual([]);

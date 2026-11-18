@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Vault, type AppConfig } from "@scriptorium/core";
 import { FileApprovalStore } from "@scriptorium/policy";
+import type { CommentRestriction } from "@scriptorium/jira";
+import { opKey } from "@scriptorium/runtime";
 
 /**
  * The Teammate end to end: Slack mention in, reply out; approval card in, action carried
@@ -1101,6 +1103,138 @@ describe("restricted Jira comments", () => {
       visibility: { type: "group", value: "staff" },
       properties: [{ key: "scriptorium.op", value: { op: "o1" } }, { key: "sd.public.comment", value: { internal: true } }],
     });
+  });
+});
+
+describe("Jira approval outcome visibility", () => {
+  function harness() {
+    const comments: Array<{ issue: string; body: string; op?: string; restriction?: CommentRestriction }> = [];
+    const jira = {
+      accountId: "tm-1",
+      client: {
+        addComment: async (issue: string, body: string, options: { op?: string; restriction?: CommentRestriction } = {}) => {
+          comments.push({ issue, body, ...options });
+          return { id: String(comments.length), body, created: "now" };
+        },
+        findCommentByOp: async (issue: string, op: string) => comments.find((comment) => comment.issue === issue && comment.op === op),
+      } as never,
+    };
+    const settings = { ...config(), slack: { notifyChannel: "CN" }, teammate: { ...config().teammate, jiraProjects: ["DOC"] } } as AppConfig;
+    return { comments, start: () => createTeammate(settings, vault, slack as never, "UBOT", jira) };
+  }
+
+  const legal: CommentRestriction = { visibility: { type: "role", value: "Legal", identifier: "role-7" } };
+  const staff: CommentRestriction = { visibility: { type: "group", value: "staff", identifier: "group-9" } };
+  const ask = async (core: Awaited<ReturnType<typeof createTeammate>>, commentId: string, restriction: CommentRestriction, authorId = "human-1") => {
+    await core.onJiraComment({ issueKey: "DOC-7", commentId, body: "[~accountid:tm-1] remember the launch review rule", authorId, restriction });
+  };
+  const propose = () => { script = { calls: [{ name: "memory_save", input: { text: "Launches need a review.", scope: "global" } }], reply: "Asked." }; };
+  const requests = () => new FileApprovalStore(path.join(tmpRoot, "state", "approvals.json")).all();
+  const decide = (core: Awaited<ReturnType<typeof createTeammate>>, id: string, action = APPROVE_ACTION) =>
+    core.onApprovalClick(action, { actions: [{ value: id }], user: { id: "UPM", username: "priya" }, channel: { id: "CN" }, message: { ts: "9.1" } });
+
+  for (const [name, restriction] of [["role", legal], ["group", staff], ["internal", { internal: true }]] as const) {
+    it(`a later public mention cannot widen a ${name}-restricted approval outcome, including a reused request`, async () => {
+      const { comments, start } = harness();
+      const core = await start();
+      propose();
+      await ask(core, "private", restriction);
+      await ask(core, "public", {});
+      expect(await settle(core)).toBe(true);
+      const pending = await requests();
+      expect(pending).toHaveLength(1); // Same action and asker: the second turn reuses the card.
+      await decide(core, pending[0]!.id);
+      const outcomes = comments.filter((comment) => comment.op === opKey("teammate.approval.outcome", pending[0]!.id));
+      expect(outcomes).toHaveLength(1);
+      expect(outcomes[0]?.restriction).toEqual(restriction);
+      expect(outcomes[0]?.body).toContain("Done, approved by priya");
+    });
+  }
+
+  it("a rejection uses the request's restriction after another public question", async () => {
+    const { comments, start } = harness();
+    const core = await start();
+    propose();
+    await ask(core, "private", legal);
+    await ask(core, "public", {});
+    await settle(core);
+    const [request] = await requests();
+    await decide(core, request!.id, REJECT_ACTION);
+    const outcomes = comments.filter((comment) => comment.op === opKey("teammate.approval.outcome", request!.id));
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]?.restriction).toEqual(legal);
+    expect(outcomes[0]?.body).toContain("Rejected by priya");
+    expect(await vault.listNotes("_memory")).toEqual([]);
+  });
+
+  it("two requests on the same ticket retain different original audiences", async () => {
+    const { comments, start } = harness();
+    const core = await start();
+    propose();
+    await ask(core, "legal", legal, "human-1");
+    await ask(core, "staff", staff, "human-2");
+    await settle(core);
+    const pending = await requests();
+    expect(pending).toHaveLength(2);
+    for (const request of pending) {
+      await decide(core, request.id);
+      const outcomes = comments.filter((comment) => comment.op === opKey("teammate.approval.outcome", request.id));
+      expect(outcomes).toHaveLength(1);
+      expect(outcomes[0]?.restriction).toEqual(request.requestedBy === "jira:human-1" ? legal : staff);
+    }
+  });
+
+  it("a public request keeps its own visibility when a later restricted mention reuses it", async () => {
+    const { comments, start } = harness();
+    const core = await start();
+    propose();
+    await ask(core, "public", {});
+    await ask(core, "private", legal);
+    await settle(core);
+    const [request] = await requests();
+    await decide(core, request!.id);
+    const outcomes = comments.filter((comment) => comment.op === opKey("teammate.approval.outcome", request!.id));
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]?.restriction).toEqual({});
+  });
+
+  it("after a restart a public mention cannot supply the missing visibility of an older request", async () => {
+    const { comments, start } = harness();
+    const before = await start();
+    propose();
+    await ask(before, "private", legal);
+    await settle(before);
+    const [request] = await requests();
+    const after = await start();
+    await ask(after, "public-after-restart", {});
+    await settle(after);
+    expect(await requests()).toHaveLength(1);
+    await decide(after, request!.id);
+    expect(comments.filter((comment) => comment.op === opKey("teammate.approval.outcome", request!.id))).toEqual([]);
+    expect((await requests())[0]?.status).toBe("consumed");
+    expect(await vault.listNotes("_memory")).toHaveLength(1);
+    expect(posted.at(-1)?.text).toContain("Done"); // The card's own conversation still hears it.
+  });
+
+  it("a new public request after a restart does not grant visibility to an older restricted one", async () => {
+    const { comments, start } = harness();
+    const before = await start();
+    propose();
+    await ask(before, "private", legal);
+    await settle(before);
+    const [old] = await requests();
+    const after = await start();
+    await ask(after, "new-public", {}, "human-2");
+    await settle(after);
+    const pending = await requests();
+    expect(pending).toHaveLength(2);
+    const fresh = pending.find((request) => request.id !== old!.id)!;
+    await decide(after, old!.id);
+    expect(comments.filter((comment) => comment.op === opKey("teammate.approval.outcome", old!.id))).toEqual([]);
+    await decide(after, fresh.id);
+    const outcomes = comments.filter((comment) => comment.op === opKey("teammate.approval.outcome", fresh.id));
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]?.restriction).toEqual({});
   });
 });
 
